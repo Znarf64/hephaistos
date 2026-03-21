@@ -859,6 +859,9 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 				location = u32(arg.location)
 			}
 			spv.OpDecorate(&ctx.annotations, id, .Location, location)
+			if types.is_integer(arg.type) || (types.is_vector(arg.type) && types.is_integer(types.vector_elem(arg.type))) {
+				spv.OpDecorate(&ctx.annotations, id, .Flat)
+			}
 		}
 		label := spv.OpLabel(&ctx.functions)
 		spv.OpName(&ctx.debug_b, label, "$FN_SETUP")
@@ -879,6 +882,9 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 					location = u32(ret.location)
 				}
 				spv.OpDecorate(&ctx.annotations, id, .Location, location)
+				if types.is_integer(ret.type) || (types.is_vector(ret.type) && types.is_integer(types.vector_elem(ret.type))) {
+					spv.OpDecorate(&ctx.annotations, id, .Flat)
+				}
 			}
 		}
 	} else {
