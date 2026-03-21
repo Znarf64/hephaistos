@@ -1628,7 +1628,7 @@ _cg_expr :: proc(
 				x := cg_expr(ctx, builder, v.args[0].value)
 				y := cg_expr(ctx, builder, v.args[1].value)
 				a := cg_expr(ctx, builder, v.args[2].value)
-				return { id = spv_glsl.OpFMix(builder, ti.type, x.id, y.id, a.id), }
+				return { id = spv_glsl.OpFMix(builder, ti.type, x.id, y.id, cg_cast(ctx, builder, a, v.type)), }
 			case .Smooth_Step:
 				x := cg_expr(ctx, builder, v.args[0].value)
 				y := cg_expr(ctx, builder, v.args[1].value)
