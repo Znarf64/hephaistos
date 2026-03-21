@@ -1232,7 +1232,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 		return types.vector_new(type_info_to_type(v.elem, allocator), v.count, allocator)
 	case reflect.Type_Info_Enumerated_Array:
 		unimplemented()
-	case reflect.Type_Info_Dynamic_Array:
+	case reflect.Type_Info_Dynamic_Array, reflect.Type_Info_Fixed_Capacity_Dynamic_Array:
 		panic("dynamic array types can not be shared")
 	case reflect.Type_Info_Slice:
 		panic("slice types can not be shared")
