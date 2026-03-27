@@ -1831,8 +1831,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 		if lhs.type.kind == .Vector {
 			duplicates := false
+			seen: [4]bool
 			for char in v.selector.text {
-				seen: [4]bool
 				index: int = -1
 				switch char {
 				case 'r', 'x':

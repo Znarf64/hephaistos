@@ -138,8 +138,9 @@ when SHADOW_PASS {
 
 		a: [4]f32 = { aces_approx(f_color.rgb), 0, }
 
-		lighting := clamp(dot(v_normal, shadow_uniforms.light_direction), 0, 1)
-		f_color   = (0.2 + 0.8 * lighting * f32(1 - shadow)) * texture[v_tex_coords]
+		lighting   := clamp(dot(v_normal, shadow_uniforms.light_direction), 0, 1)
+		f_color     = (0.2 + 0.8 * lighting * f32(1 - shadow)) * texture[v_tex_coords]
+		f_color.brg = f_color.rgb
 		return aces_approx(f_color)
 	}
 

@@ -2269,7 +2269,14 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 					continue
 				}
 				if len(lhs.swizzle) != 0 {
-					unimplemented()
+					elem     := cg_type(ctx, types.vector_elem(lhs.type))
+					elem_ptr := cg_type_ptr(ctx, elem, lhs.storage_class)
+					for dst_component, src_component in lhs.swizzle {
+						value := spv.OpCompositeExtract(builder, elem.type, rhs.id, u32(src_component))
+						ptr   := spv.OpAccessChain(builder, elem_ptr, lhs.id, cg_constant(ctx, i64(dst_component), nil).id)
+						spv.OpStore(builder, ptr, value)
+					}
+					continue
 				}
 				if lhs.storage_class == .Image {
 					ctx.capabilities[.StorageImageWriteWithoutFormat] = {}
