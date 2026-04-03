@@ -1461,7 +1461,7 @@ _cg_expr :: proc(
 			}
 		}
 
-		if len(indices) == 1 {
+		if len(indices) == 1 && lhs.storage_class != .Image {
 			t := types.vector_elem(lhs.type)
 			if lhs.storage_class != nil {
 				id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, t, lhs.storage_class), lhs.id, cg_constant(ctx, i64(indices[0]), nil).id)
@@ -1478,6 +1478,7 @@ _cg_expr :: proc(
 			real_type     = lhs.type,
 			swizzle       = indices[:],
 			storage_class = lhs.storage_class,
+			coord         = lhs.coord,
 		}
 
 	case ^ast.Expr_Call:
@@ -1661,13 +1662,12 @@ _cg_expr :: proc(
 			case .Image_Size:
 				ctx.capabilities[.ImageQuery] = {}
 				image := cg_expr(ctx, builder, v.args[0].value).id
-				lod: spv.Id
 				if len(v.args) == 1 {
-					lod = cg_constant(ctx, i64(0), nil).id
+					return { id = spv.OpImageQuerySize(builder, cg_type(ctx, v.type).type, image), }
 				} else {
-					lod = cg_expr(ctx, builder, v.args[1].value).id
+					lod := cg_expr(ctx, builder, v.args[1].value).id
+					return { id = spv.OpImageQuerySizeLod(builder, cg_type(ctx, v.type).type, image, lod), }
 				}
-				return { id = spv.OpImageQuerySizeLod(builder, cg_type(ctx, v.type).type, image, lod), }
 			case .Bit_Count:
 				return { id = spv.OpBitCount(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Bit_Reverse:
@@ -2257,6 +2257,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 					type := lhs.type.variant.(^types.Struct)
 					// TODO: handle members that are structs
 					for f, i in type.fields {
+						assert(f.type.kind != .Struct)
 						field_ti  := cg_type(ctx, f.type, { .Explicit_Layout, })
 						val       := spv.OpCompositeExtract(builder, field_ti.type, rhs.id, u32(i))
 						field_ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, field_ti, lhs.storage_class), lhs.id, cg_constant(ctx, i64(i), nil).id)
@@ -2268,21 +2269,48 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 					}
 					continue
 				}
+
 				if len(lhs.swizzle) != 0 {
-					elem     := cg_type(ctx, types.vector_elem(lhs.type))
-					elem_ptr := cg_type_ptr(ctx, elem, lhs.storage_class)
-					for dst_component, src_component in lhs.swizzle {
-						value := spv.OpCompositeExtract(builder, elem.type, rhs.id, u32(src_component))
-						ptr   := spv.OpAccessChain(builder, elem_ptr, lhs.id, cg_constant(ctx, i64(dst_component), nil).id)
-						spv.OpStore(builder, ptr, value)
+					type := cg_type(ctx, lhs.real_type)
+					elem := cg_type(ctx, types.vector_elem(lhs.real_type))
+
+					lhs_ptr       := lhs.id
+					storage_class := lhs.storage_class
+					if lhs.storage_class == .Image {
+						lhs_ptr  = spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, type, .Function), .Function)
+						read    := spv.OpImageRead(builder, type.type, lhs.id, lhs.coord)
+						spv.OpStore(builder, lhs_ptr, read)
+						spv.OpName(&ctx.debug_b, lhs_ptr, "__tmp_image_texel")
+
+						storage_class = .Function
 					}
+
+					elem_ptr := cg_type_ptr(ctx, elem, storage_class)
+					if len(lhs.swizzle) == 1 {
+						ptr := spv.OpAccessChain(builder, elem_ptr, lhs_ptr, cg_constant(ctx, i64(lhs.swizzle[0]), nil).id)
+						spv.OpStore(builder, ptr, rhs.id)
+					} else {
+						for dst_component, src_component in lhs.swizzle {
+							value := spv.OpCompositeExtract(builder, elem.type, rhs.id, u32(src_component))
+							ptr   := spv.OpAccessChain(builder, elem_ptr, lhs_ptr, cg_constant(ctx, i64(dst_component), nil).id)
+							spv.OpStore(builder, ptr, value)
+						}
+					}
+
+					if lhs.storage_class == .Image {
+						ctx.capabilities[.StorageImageWriteWithoutFormat] = {}
+						spv.OpImageWrite(builder, lhs.id, lhs.coord, spv.OpLoad(builder, type.type, lhs_ptr))
+					}
+
 					continue
 				}
+
 				if lhs.storage_class == .Image {
 					ctx.capabilities[.StorageImageWriteWithoutFormat] = {}
 					spv.OpImageWrite(builder, lhs.id, lhs.coord, rhs.id)
 					continue
 				}
+
 				if v.op == nil {
 					if lhs.storage_class == .Physical_Storage_Buffer {
 						spv.OpStore(builder, lhs.id, cg_cast(ctx, builder, rhs, lhs.type), spv.MemoryAccess{ .Aligned, }, u32(lhs.type.align))

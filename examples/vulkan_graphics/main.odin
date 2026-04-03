@@ -10,8 +10,6 @@ import "core:os"
 import "core:mem"
 import "core:time"
 import "core:strings"
-import glm "core:math/linalg/glsl"
-import la "core:math/linalg"
 
 import "vendor:glfw"
 import vk "vendor:vulkan"
@@ -190,7 +188,6 @@ debug_messenger_destroy :: proc(instance: vk.Instance, debug_messenger: vk.Debug
 @(rodata)
 device_extensions := []cstring {
 	vk.KHR_SWAPCHAIN_EXTENSION_NAME,
-	vk.KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
 }
 
 @(require_results)
@@ -210,15 +207,18 @@ pick_physical_device :: proc(
 
 	best_score: int
 	find_device_loop: for physical_device in physical_devices {
-		props:    vk.PhysicalDeviceProperties
-		features: vk.PhysicalDeviceFeatures
+		props: vk.PhysicalDeviceProperties
 		vk.GetPhysicalDeviceProperties(physical_device, &props)
-		vk.GetPhysicalDeviceFeatures(physical_device, &features)
 
 		score := int(props.limits.maxImageDimension2D)
 		if props.deviceType == .DISCRETE_GPU {
 			score += 10000
 		}
+
+		features2: vk.PhysicalDeviceFeatures2 = {
+			sType = .PHYSICAL_DEVICE_FEATURES_2,
+		}
+		vk.GetPhysicalDeviceFeatures2(physical_device, &features2)
 
 		extension_count: u32
 		vk.EnumerateDeviceExtensionProperties(physical_device, nil, &extension_count, nil)
@@ -351,6 +351,34 @@ get_surface_capabilities :: proc(
 	return
 }
 
+required_device_features: vk.PhysicalDeviceFeatures2 = {
+	sType    = .PHYSICAL_DEVICE_FEATURES_2,
+	features = {
+		samplerAnisotropy = true,
+	},
+	pNext = &required_device_11_features,
+}
+
+required_device_11_features: vk.PhysicalDeviceVulkan11Features = {
+	sType                         = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+	variablePointers              = true,
+	variablePointersStorageBuffer = true,
+	pNext                         = &required_device_12_features,
+}
+
+required_device_12_features: vk.PhysicalDeviceVulkan12Features = {
+	sType                       = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+	bufferDeviceAddress         = true,
+	scalarBlockLayout           = true,
+	separateDepthStencilLayouts = true,
+	pNext                       = &required_device_13_features,
+}
+
+required_device_13_features: vk.PhysicalDeviceVulkan13Features = {
+	sType            = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+	dynamicRendering = true,
+}
+
 @(require_results)
 device_create :: proc(physical_device: vk.PhysicalDevice, queue_index: u32) -> (device: vk.Device, queue: vk.Queue) {
 	priority: f32 = 1
@@ -363,35 +391,13 @@ device_create :: proc(physical_device: vk.PhysicalDevice, queue_index: u32) -> (
 		},
 	}
 
-	features: vk.PhysicalDeviceFeatures2 = {
-		sType    = .PHYSICAL_DEVICE_FEATURES_2,
-		features = {
-			samplerAnisotropy = true,
-		},
-		pNext = &vk.PhysicalDeviceVulkan12Features {
-			sType                       = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-			bufferDeviceAddress         = true,
-			scalarBlockLayout           = true,
-			separateDepthStencilLayouts = true,
-			pNext                       = &vk.PhysicalDeviceVulkan11Features {
-				sType                         = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-				variablePointers              = true,
-				variablePointersStorageBuffer = true,
-				pNext                         = &vk.PhysicalDeviceVulkan13Features {
-					sType            = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-					dynamicRendering = true,
-				},
-			},
-		},
-	}
-
 	create_info := vk.DeviceCreateInfo {
 		sType                   = .DEVICE_CREATE_INFO,
 		queueCreateInfoCount    = u32(len(queue_create_infos)),
 		pQueueCreateInfos       = raw_data(queue_create_infos),
 		enabledExtensionCount   = u32(len(device_extensions)),
 		ppEnabledExtensionNames = raw_data(device_extensions),
-		pNext                   = &features,
+		pNext                   = &required_device_features,
 	}
 
 	if result := vk.CreateDevice(physical_device, &create_info, nil, &device); result != nil {
@@ -734,9 +740,7 @@ Vertex :: struct {
 }
 
 Push_Constants :: struct {
-	view, proj, model: glm.mat4,
-	normal_matrix:     glm.mat3,
-	vertex_buffer:     hep.Buffer_Address(Vertex),
+	vertex_buffer: hep.Buffer_Address(Vertex),
 }
 
 swapchain_destroy :: proc(ctx: Vulkan_Context, swapchain: Vulkan_Swapchain) {
@@ -1109,7 +1113,6 @@ main :: proc() {
 	})
 
 	ctx: Vulkan_Context
-	
 	ctx.instance = instance_create()
 	defer vk.DestroyInstance(ctx.instance, nil)
 	vk.load_proc_addresses(ctx.instance)
@@ -1154,7 +1157,7 @@ main :: proc() {
 
 	SHADER_PATH   :: "shader.hep"
 	shader_source := #load(SHADER_PATH, string)
-	shader_module := shader_create_hephaistos(ctx, SHADER_PATH, shader_source, { Push_Constants, }) or_else panic("failed to compile shader")
+	shader_module := shader_create(ctx, SHADER_PATH, shader_source, { Push_Constants, }) or_else panic("failed to compile shader")
 	defer shader_destroy(ctx, shader_module)
 	
 	pipeline := pipeline_create(
@@ -1331,21 +1334,13 @@ main :: proc() {
 				extent = { u32(window.width), u32(window.height), },
 			})
 
-			color_from_hex_rgba :: proc(hex: u32) -> (rgba: [4]f32) {
-				for i in 0 ..< u32(4) {
-					rgba[i] = f32((hex >> ((3 - i) * 8)) & 0xFF) / 255.999
-				}
-				return
-			}
-
-			clear_color := la.vector4_srgb_to_linear_f32(color_from_hex_rgba(0))
 			color_attachment := vk.RenderingAttachmentInfo {
 				sType              = .RENDERING_ATTACHMENT_INFO,
 				imageView          = swapchain.color_view,
 				imageLayout        = .COLOR_ATTACHMENT_OPTIMAL,
 				loadOp             = .CLEAR,
 				storeOp            = .STORE,
-				clearValue         = { color = { float32 = clear_color, }, },
+				clearValue         = { color = { float32 = 0, }, },
 				resolveMode        = { .AVERAGE, },
 				resolveImageView   = swapchain.image_views[image_index],
 				resolveImageLayout = .COLOR_ATTACHMENT_OPTIMAL,
@@ -1374,12 +1369,8 @@ main :: proc() {
 			vk.CmdBindPipeline(command_buffer, .GRAPHICS, pipeline.pipeline)
 
 			push_constants := Push_Constants {
-				view          = glm.mat4LookAt({}, {0, 0, 1}, {0, -1, 0}),
-				proj          = glm.mat4Perspective(la.to_radians(f32(90)), f32(window.width) / f32(window.height), 0.001, 1000),
-				model         = 1,
-				normal_matrix = 1,
 				vertex_buffer = {
-					address = vk.GetBufferDeviceAddressKHR(ctx.device, &{
+					address = vk.GetBufferDeviceAddress(ctx.device, &{
 						sType  = .BUFFER_DEVICE_ADDRESS_INFO,
 						buffer = vertex_buffer.buffer,
 					}),

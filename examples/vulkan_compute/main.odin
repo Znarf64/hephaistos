@@ -7,6 +7,7 @@ import "core:os"
 @(require)
 import "core:mem"
 import "core:strings"
+import "core:math/rand"
 
 import stbi "vendor:stb/image"
 import vk   "vendor:vulkan"
@@ -629,8 +630,9 @@ buffer_create_with_data :: proc(ctx: Vulkan_Context, data: $S/[]$E) -> (buffer: 
 }
 
 Compute_Constants :: struct {
-	image_size: [2]i32,
-	tint:       [4]f32,
+	background: [4]f32,
+	foreground: [4]f32,
+	noise:      f32,
 }
 
 @(require_results)
@@ -729,10 +731,10 @@ main :: proc() {
 	defer vk.DestroyInstance(ctx.instance, nil)
 	vk.load_proc_addresses(ctx.instance)
 
-	when ENABLE_VALIDATION_LAYERS {
-		debug_messenger := debug_messenger_create(ctx.instance)
-		defer debug_messenger_destroy(ctx.instance, debug_messenger)
-	}
+	// when ENABLE_VALIDATION_LAYERS {
+	// 	debug_messenger := debug_messenger_create(ctx.instance)
+	// 	defer debug_messenger_destroy(ctx.instance, debug_messenger)
+	// }
 	
 	queue_index: u32
 	physical_device_found: bool
@@ -772,11 +774,13 @@ main :: proc() {
 	pipeline := compute_pipeline_create(ctx, compute_shader)
 	defer pipeline_destroy(ctx, pipeline)
 
-	w, h, c: i32
-	image_data := stbi.load("input.png", &w, &h, &c, 4)
-	assert(image_data != nil)
+	w          := 2048
+	h          := 2048
+	noise_data := make([]byte, w * h * 4)
+	_           = rand.read(noise_data)
+	defer delete(noise_data)
 
-	input_image := image_create(ctx, u32(w), u32(h), .R8G8B8A8_UNORM, .OPTIMAL, { .STORAGE, .TRANSFER_DST, })
+	input_image := image_create(ctx, u32(w), u32(h), .R8_UNORM, .OPTIMAL, { .STORAGE, .TRANSFER_DST, })
 	defer image_destroy(ctx, input_image)
 
 	input_image_allocation := image_allocate(ctx, input_image, { .DEVICE_LOCAL, })
@@ -793,7 +797,7 @@ main :: proc() {
 	    { .TRANSFER_WRITE, },
 	)
 
-	staging_buffer := buffer_create_with_data(ctx, image_data[:w * h * 4])
+	staging_buffer := buffer_create_with_data(ctx, noise_data)
 	defer buffer_destroy(ctx, staging_buffer)
 
 	copy_buffer_to_image(ctx, staging_buffer, input_image, u32(w), u32(h))
@@ -809,7 +813,7 @@ main :: proc() {
 	    { .SHADER_READ, },
 	)
 
-	input_view := image_view_create(ctx, input_image, .R8G8B8A8_UNORM, .COLOR)
+	input_view := image_view_create(ctx, input_image, .R8_UNORM, .COLOR)
 	defer image_view_destroy(ctx, input_view)
 
 
@@ -864,8 +868,9 @@ main :: proc() {
 	vk.CmdBindDescriptorSets(ctx.command_buffer, .COMPUTE, pipeline.layout, 0, 1, &pipeline.descriptor_set, 0, nil)
 
 	compute_constants: Compute_Constants = {
-		image_size = { w, h, },
-		tint       = { 1, 1, 1, 1, },
+		background = { 0.1, 0.1, 0.1, 1, },
+		foreground = { 0.9, 0.9, 0.9, 1, },
+		noise      = 5,
 	}
 	vk.CmdPushConstants(ctx.command_buffer, pipeline.layout, { .COMPUTE, }, 0, size_of(Compute_Constants), &compute_constants)
 
@@ -909,5 +914,5 @@ main :: proc() {
 	pixels := make([]byte, w * h * 4, context.temp_allocator)
 	copy(pixels, mapped[:w * h * 4])
 
-	stbi.write_png("output.png", w, h, 4, raw_data(pixels), 0)
+	stbi.write_png("output.png", i32(w), i32(h), 4, raw_data(pixels), 0)
 }
