@@ -1007,6 +1007,8 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 			size = size_of(types.Enum)
 		case ^types.Bit_Set:
 			size = size_of(types.Bit_Set)
+		case ^types.Complex:
+			size = size_of(types.Complex)
 		}
 		mem.copy(dst, src, size)
 	}
@@ -1101,6 +1103,11 @@ check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt, ignore_constants 
 	return diverging
 }
 
+t_complex64:     ^types.Type
+t_complex128:    ^types.Type
+t_quaternion128: ^types.Type
+t_quaternion256: ^types.Type
+
 @(private = "file")
 checker_init :: proc(
 	checker:       ^Checker,
@@ -1134,6 +1141,18 @@ checker_init :: proc(
 	scope_insert_entity(checker, entity_new(.Type, { text = "f16",  }, types.t_f16,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "f32",  }, types.t_f32,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "f64",  }, types.t_f64,  allocator = allocator))
+
+	t_complex64  = types.complex_new(types.t_f32, allocator)
+	t_complex128 = types.complex_new(types.t_f64, allocator)
+
+	scope_insert_entity(checker, entity_new(.Type, { text = "complex64",  }, t_complex64,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "complex128", }, t_complex128, allocator = allocator))
+
+	t_quaternion128 = types.quaternion_new(types.t_f32, allocator)
+	t_quaternion256 = types.quaternion_new(types.t_f64, allocator)
+
+	scope_insert_entity(checker, entity_new(.Type, { text = "quaternion128", }, t_quaternion128, allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "quaternion256", }, t_quaternion256, allocator = allocator))
 
 	for name, builtin in builtin_names {
 		scope_insert_entity(checker, entity_new(.Builtin, { text = name, }, nil, builtin_id = builtin, allocator = allocator))
@@ -1605,8 +1624,6 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 
 	switch v in expr.derived_expr {
 	case ^ast.Expr_Constant:
-		operand.mode = .Const
-
 		switch val in v.value {
 		case i64:
 			operand.type  = types.t_int
@@ -1621,6 +1638,17 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			operand.type  = types.t_invalid
 			operand.value = val
 		}
+
+		operand.mode = .RValue
+		switch v.imaginary {
+		case .i:
+			operand.type = t_complex64
+		case .j, .k:
+			operand.type = t_quaternion128
+		case .real:
+			operand.mode = .Const
+		}
+
 		return
 
 	case ^ast.Expr_Config:
@@ -2142,18 +2170,19 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				operand.type = type
 			case .Normalize, .Length:
 				if len(v.args) != 1 {
-					error(checker, v, "builtin '%d' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
+					error(checker, v, "builtin '%v' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
 					return
 				}
-				x := args[0]
-				if !types.is_vector(x.type) || !types.is_float(types.vector_elem(x.type)) {
-					error(checker, x, "builtin '%d' expects a vector of floats, got %v", builtin_names[v.builtin], x.type)
+				x    := args[0]
+				type := types.base_type(x.type)
+				if !types.is_vector(type) || !types.is_float(types.vector_elem(type)) {
+					error(checker, x, "builtin '%v' expects a vector of floats, got %v", builtin_names[v.builtin], type)
 					return
 				}
 				operand.mode = .RValue
 				operand.type = x.type
 				if v.builtin == .Length {
-					operand.type = types.vector_elem(x.type)
+					operand.type = types.vector_elem(type)
 				}
 			case .Distance:
 				if len(v.args) != 2 {

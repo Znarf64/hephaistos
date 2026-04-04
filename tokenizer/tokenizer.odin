@@ -113,6 +113,13 @@ when ODIN_DEBUG {
 	}
 }
 
+Imaginary :: enum u8 {
+	real = 0,
+	i    = 'i',
+	j    = 'j',
+	k    = 'k',
+}
+
 Token :: struct {
 	location: Location,
 	text:     string,
@@ -130,7 +137,7 @@ Token :: struct {
 		Op,
 		String,
 	},
-	imaginary: u8, // 'i', 'j' or 'k'
+	imaginary: Imaginary,
 }
 
 Location :: struct {
@@ -417,7 +424,7 @@ tokenize :: proc(
 
 			switch source[current] {
 			case 'i', 'j', 'k':
-				token.imaginary = source[current]
+				token.imaginary = Imaginary(source[current])
 				current        += 1
 			}
 

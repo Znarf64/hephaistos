@@ -522,6 +522,10 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 			panic("Tried to generate constant with enum type")
 		case .Bit_Set:
 			panic("Tried to generate constant with bit_set type")
+		case .Complex:
+			panic("Tried to generate constant with complex type")
+		case .Quaternion:
+			panic("Tried to generate constant with quaternion type")
 
 		case .Matrix:
 			type = types.matrix_elem(type)
@@ -814,7 +818,7 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 				spv.OpMemberDecorate(&ctx.annotations, info.type, 0, .Offset, 0)
 			}
 		}
-	case .Invalid, .Enum, .Bit_Set:
+	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion:
 		unreachable()
 	}
 
@@ -1124,7 +1128,7 @@ cg_expr_binary :: proc(
 
 	Binary_Op_Proc :: proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id)
 
-	binary_op_inst :: proc(lhs_type, rhs_type, type: ^types.Type, op: tokenizer.Token_Kind) -> Binary_Op_Proc {
+	binary_op_inst :: proc(ctx: ^Context, lhs_type, rhs_type, type: ^types.Type, op: tokenizer.Token_Kind) -> Binary_Op_Proc {
 		#partial switch type.kind {
 		case .Int:
 			#partial switch op {
@@ -1173,7 +1177,7 @@ cg_expr_binary :: proc(
 			case .Multiply:
 				return spv.OpFMul
 			case .Modulo:
-				return spv.OpFMul
+				return spv.OpFMod
 			case .Divide:
 				return spv.OpFDiv
 			}
@@ -1205,13 +1209,65 @@ cg_expr_binary :: proc(
 			}
 
 			if lhs_type.kind == .Vector && rhs_type.kind == .Vector {
-				return binary_op_inst(types.vector_elem(lhs_type), types.vector_elem(rhs_type), types.vector_elem(type), op)
+				return binary_op_inst(ctx, types.vector_elem(lhs_type), types.vector_elem(rhs_type), types.vector_elem(type), op)
+			}
+		case .Complex:
+			@(static)
+			elem_type: spv.Id // hack
+
+			#partial switch op {
+			case .Add, .Subtract:
+				return binary_op_inst(ctx, types.complex_elem(lhs_type), types.complex_elem(rhs_type), types.complex_elem(type), op)
+			case .Multiply:
+				elem_type = cg_type(ctx, types.complex_elem(type)).type
+				return proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id) {
+					a0    := spv.OpCompositeExtract(builder, elem_type, operand_1, 0)
+					b0    := spv.OpCompositeExtract(builder, elem_type, operand_1, 1)
+					a1    := spv.OpCompositeExtract(builder, elem_type, operand_2, 0)
+					b1    := spv.OpCompositeExtract(builder, elem_type, operand_2, 1)
+
+					a0_a1 := spv.OpFMul(builder, elem_type, a0, a1)
+					b0_b1 := spv.OpFMul(builder, elem_type, b0, b1)
+
+					a0_b1 := spv.OpFMul(builder, elem_type, a0, b1)
+					a1_b0 := spv.OpFMul(builder, elem_type, a1, b0)
+
+					real  := spv.OpFSub(builder, elem_type, a0_a1, b0_b1)
+					imag  := spv.OpFAdd(builder, elem_type, a0_b1, a1_b0)
+
+					return spv.OpCompositeConstruct(builder, result_type, real, imag)
+				}
+			case .Divide:
+				elem_type = cg_type(ctx, types.complex_elem(type)).type
+				return proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id) {
+					a0       := spv.OpCompositeExtract(builder, elem_type, operand_1, 0)
+					b0       := spv.OpCompositeExtract(builder, elem_type, operand_1, 1)
+					a1       := spv.OpCompositeExtract(builder, elem_type, operand_2, 0)
+					b1       := spv.OpCompositeExtract(builder, elem_type, operand_2, 1)
+
+					a0_a1    := spv.OpFMul(builder, elem_type, a0, a1)
+					b0_b1    := spv.OpFMul(builder, elem_type, b0, b1)
+					b0_a1    := spv.OpFMul(builder, elem_type, b0, a1)
+					a0_b1    := spv.OpFMul(builder, elem_type, a0, b1)
+					a1_a1    := spv.OpFMul(builder, elem_type, a1, a1)
+					b1_b1    := spv.OpFMul(builder, elem_type, b1, b1)
+
+					denom    := spv.OpFAdd(builder, elem_type, a1_a1, b1_b1)
+
+					real_num := spv.OpFAdd(builder, elem_type, a0_a1, b0_b1)
+					imag_num := spv.OpFSub(builder, elem_type, b0_a1, a0_b1)
+
+					real     := spv.OpFDiv(builder, elem_type, real_num, denom)
+					imag     := spv.OpFDiv(builder, elem_type, imag_num, denom)
+
+					return spv.OpCompositeConstruct(builder, result_type, real, imag)
+				}
 			}
 		}
 		return nil
 	}
 
-	op_fn := binary_op_inst(lhs_type, rhs_type, type^, op)
+	op_fn := binary_op_inst(ctx, lhs_type, rhs_type, type^, op)
 	assert(op_fn != nil)
 	return op_fn(builder, type_info.type, lhs, rhs)
 }
@@ -1281,13 +1337,13 @@ cg_cast :: proc(
 	value:    Value,
 	type:    ^types.Type,
 ) -> spv.Id {
-	type               := types.base_type(type)
+	type               := types.base_type(type, true)
 	v_type             := types.base_type(value.type)
 	value              := value
 	value.id            = cg_deref(ctx, builder, value)
 	value.storage_class = nil
 
-	if types.equal(v_type, type) {
+	if types.equal(v_type, types.base_type(type)) {
 		return value.id
 	}
 
@@ -1343,6 +1399,9 @@ cg_cast :: proc(
 	}
 
 	#partial switch type.kind {
+	case .Complex:
+		zero := cg_nil_value(ctx, ti)
+		return spv.OpCompositeInsert(builder, ti.type, value.id, zero, 0)
 	case .Vector:
 		type := type.variant.(^types.Vector)
 		if types.is_numeric(v_type) {
@@ -1393,6 +1452,23 @@ _cg_expr :: proc(
 	assert(expr.type != nil)
 
 	if expr.const_value != nil {
+		if v, ok := expr.derived_expr.(^ast.Expr_Constant); ok && v.imaginary != nil {
+			val  := cg_constant(ctx, expr.const_value, types.complex_elem(expr.type))
+			ti   := cg_type(ctx, expr.type)
+			zero := cg_nil_value(ctx, ti)
+			index: u32
+			#partial switch v.imaginary {
+			case .i:
+				index = 1
+			case .j:
+				index = 2
+			case .k:
+				index = 3
+			}
+			value.id   = spv.OpCompositeInsert(builder, ti.type, val.id, zero, index)
+			value.type = expr.type
+			return
+		}
 		return cg_constant(ctx, expr.const_value, expr.type)
 	}
 
@@ -1600,7 +1676,13 @@ _cg_expr :: proc(
 				return { id = spv_glsl.OpNormalize(builder, cg_type(ctx, v.type).type, v.id), }
 			case .Length:
 				v := cg_expr(ctx, builder, v.args[0].value)
-				return { id = spv_glsl.OpLength(builder, cg_type(ctx, types.vector_elem(v.type)).type, v.id), }
+				t: ^types.Type
+				if types.is_vector(v.type) {
+					t = types.vector_elem(v.type)
+				} else {
+					t = types.complex_elem(v.type)
+				}
+				return { id = spv_glsl.OpLength(builder, cg_type(ctx, t).type, v.id), }
 			case .Distance:
 				a := cg_expr(ctx, builder, v.args[0].value).id
 				b := cg_expr(ctx, builder, v.args[1].value).id
@@ -1870,22 +1952,23 @@ _cg_expr :: proc(
 	case ^ast.Expr_Cast:
 		return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.value), v.type), }
 	case ^ast.Expr_Unary:
-		e  := cg_expr(ctx, builder, v.expr)
-		ti := cg_type(ctx, expr.type)
+		e    := cg_expr(ctx, builder, v.expr)
+		type := types.base_type(expr.type)
+		ti   := cg_type(ctx, type)
 		#partial switch v.op {
 		case .Xor:
 			return { id = spv.OpNot(builder, ti.type, e.id), }
 		case .Subtract:
-			#partial switch expr.type.kind {
+			#partial switch type.kind {
 			case .Matrix:
-				#partial switch types.matrix_elem(expr.type).kind {
+				#partial switch types.matrix_elem(type).kind {
 				case .Int, .Uint:
 					return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
 				case .Float:
 					return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
 				}
 			case .Vector:
-				#partial switch types.vector_elem(expr.type).kind {
+				#partial switch types.vector_elem(type).kind {
 				case .Int, .Uint:
 					return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
 				case .Float:

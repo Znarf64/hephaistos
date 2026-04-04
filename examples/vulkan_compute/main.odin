@@ -80,6 +80,7 @@ shader_create_hephaistos :: proc(
 		}
 		return
 	}
+	_ = os.write_entire_file("a.spv", mem.slice_to_bytes(code))
 	return shader_create_spirv(ctx, code)
 }
 
@@ -870,7 +871,7 @@ main :: proc() {
 	compute_constants: Compute_Constants = {
 		background = { 0.1, 0.1, 0.1, 1, },
 		foreground = { 0.9, 0.9, 0.9, 1, },
-		noise      = 5,
+		noise      = 0.02,
 	}
 	vk.CmdPushConstants(ctx.command_buffer, pipeline.layout, { .COMPUTE, }, 0, size_of(Compute_Constants), &compute_constants)
 

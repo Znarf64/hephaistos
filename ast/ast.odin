@@ -54,6 +54,7 @@ Expr_Ternary :: struct {
 Expr_Constant :: struct {
 	using node: Expr,
 	value:      types.Const_Value,
+	imaginary:  tokenizer.Imaginary,
 }
 
 Expr_Ident :: struct {

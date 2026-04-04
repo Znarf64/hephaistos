@@ -237,6 +237,7 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 		case:
 			unreachable()
 		}
+		expr.imaginary = token.imaginary
 		return expr, true
 
 	case .Open_Brace:
@@ -384,7 +385,7 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 
 	case .Add, .Subtract, .Xor, .Not:
 		token_advance(parser)
-		expr      := parse_expr(parser, allow_compound_literals = allow_compound_literals) or_return
+		expr      := parse_atom_expr(parser, allow_compound_literals = allow_compound_literals) or_return
 		unary     := ast.new(ast.Expr_Unary, token.location, parser.end_location, parser.allocator)
 		unary.expr = expr
 		unary.op   = token.kind

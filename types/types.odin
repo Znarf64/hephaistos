@@ -39,6 +39,11 @@ Vector :: struct {
 	elem:       ^Type,
 }
 
+Complex :: struct {
+	using base: Type,
+	vector:     ^Vector,
+}
+
 Buffer :: struct {
 	using base: Type,
 	elem:       ^Type,
@@ -93,6 +98,8 @@ Kind :: enum {
 	Image,
 	Enum,
 	Bit_Set,
+	Complex,
+	Quaternion,
 
 	Tuple,
 }
@@ -110,6 +117,7 @@ Type :: struct {
 		^Image,
 		^Enum,
 		^Bit_Set,
+		^Complex,
 	},
 }
 
@@ -242,6 +250,10 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 		} else {
 			fmt.wprintf(w, "f%d", type.size * 8)
 		}
+	case .Complex:
+		fmt.wprintf(w, "complex%d", type.size * 8)
+	case .Quaternion:
+		fmt.wprintf(w, "quaternion%d", type.size * 8)
 	case .Tuple:
 		fmt.wprint(w, "(")
 		for type, i in type.variant.(^Struct).fields {
@@ -378,7 +390,7 @@ equal :: proc(a, b: ^Type) -> bool {
 }
 
 @(require_results)
-base_type :: proc(type: ^Type) -> ^Type {
+base_type :: proc(type: ^Type, keep_complex := false) -> ^Type {
 	type := type
 	for {
 		#partial switch type.kind {
@@ -388,6 +400,11 @@ base_type :: proc(type: ^Type) -> ^Type {
 			type = type.variant.(^Enum).backing
 		case .Bit_Set:
 			type = type.variant.(^Bit_Set).backing
+		case .Quaternion, .Complex:
+			if keep_complex {
+				return type
+			}
+			type = type.variant.(^Complex).vector
 		case:
 			return type
 		}
@@ -500,6 +517,16 @@ is_vector :: proc(type: ^Type) -> bool {
 }
 
 @(require_results)
+is_complex :: proc(type: ^Type) -> bool {
+	return type.kind == .Complex
+}
+
+@(require_results)
+is_quaternion :: proc(type: ^Type) -> bool {
+	return type.kind == .Quaternion
+}
+
+@(require_results)
 is_tuple :: proc(type: ^Type) -> bool {
 	return type.kind == .Tuple
 }
@@ -562,6 +589,11 @@ vector_elem :: proc(type: ^Type) -> ^Type {
 }
 
 @(require_results)
+complex_elem :: proc(type: ^Type) -> ^Type {
+	return type.variant.(^Complex).vector.elem
+}
+
+@(require_results)
 buffer_elem :: proc(type: ^Type) -> ^Type {
 	return type.variant.(^Buffer).elem
 }
@@ -586,6 +618,8 @@ type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
 	case ^Vector:
 		h = type_hash(v.elem, h)
 		h = hash.fnv64a(to_bytes(&v.count), h)
+	case ^Complex:
+		h = type_hash(v.vector, h)
 	case ^Proc:
 		for field in v.args {
 			h = type_hash(field.type, h)
@@ -703,6 +737,32 @@ vector_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Vector
 	type.count = count
 	type.align = elem.align
 	type.size  = mem.align_forward_int(count * elem.size, type.align)
+
+	return type
+}
+
+@(require_results)
+complex_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Complex {
+	assert(elem      != nil)
+	assert(elem.size != 0)
+
+	type       := new(.Complex, Complex, allocator)
+	type.vector = vector_new(elem, 2, allocator)
+	type.size   = type.vector.size
+	type.align  = type.vector.align
+
+	return type
+}
+
+@(require_results)
+quaternion_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Complex {
+	assert(elem      != nil)
+	assert(elem.size != 0)
+
+	type       := new(.Quaternion, Complex, allocator)
+	type.vector = vector_new(elem, 4, allocator)
+	type.size   = type.vector.size
+	type.align  = type.vector.align
 
 	return type
 }
@@ -844,6 +904,8 @@ operator_applicable :: proc(type: ^Type, op: tokenizer.Token_Kind) -> bool {
 		}
 	case .Vector:
 		return operator_applicable(vector_elem(type), op)
+	case .Complex:
+		return operator_applicable(complex_elem(type), op)
 	case .Matrix:
 		return operator_applicable(matrix_elem(type), op)
 	}
