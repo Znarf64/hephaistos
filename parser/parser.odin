@@ -781,7 +781,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 						case:
 							token_expect(parser, .Range_Less) or_return
 						}
-						end := parse_expr(parser) or_return
+						end := parse_expr(parser, allow_compound_literals = false) or_return
 						token_expect(parser, .Open_Brace) or_return
 						body := parse_stmt_list(parser) or_return
 						token_advance(parser)
