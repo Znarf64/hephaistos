@@ -3,6 +3,7 @@
 # Hephaistos
 Hephaistos is a shading language heavily inspired by the [Odin](https://odin-lang.org/) programming language.
 
+### Graphics Pipeline Example:
 ```odin
 // VERTEX SHADER
 
@@ -49,13 +50,52 @@ fragment_main :: proc(
 
 ```
 
+### Compute Example:
 ```odin
-spirv_code, errors := hephaistos.compile_shader(
-    "shader.hep",
-    #load("shader.hep"),
-    shared_types = { Vertex_Shader_Constants, Fragment_Shader_Uniforms, },
-)
+@(uniform, binding = 0)
+noise:  image[2]f32
+@(uniform, binding = 1)
+output: image[2][4]f32
+
+@(push_constant)
+constants: #import(Compute_Constants)
+
+@(compute_shader)
+main :: proc() {
+	SAMPLES :: 4
+	coord      := $GlobalInvocationId.xy
+	image_size := image_size(output)
+
+	value: f32
+	for x in 0 ..< SAMPLES {
+		for y in 0 ..< SAMPLES {
+			uv         := 2 * (([2]f32)(coord) + [2]f32{ f32(x), f32(y), } / SAMPLES - 0.5) / ([2]f32)(image_size) - 1
+			uv.y       *= f32(image_size.y) / f32(image_size.x)
+			uv          = uv * 0.5 + 0.5
+
+			c := -0.4 + 0.6i
+			z := complex64(3 * (uv - 0.5))
+			i := 0.0
+			for i < 255 && length(z) < 2 {
+				z  = z * z + c
+				i += 1
+			}
+
+			value += i - log2(max(length(z), 1))
+		}
+	}
+
+	value /= SAMPLES * SAMPLES * 256
+
+	output[coord] = lerp(
+		constants.background,
+		constants.foreground,
+		value + (noise[coord] - 0.5) * constants.noise,
+	)
+}
 ```
+#### Output:
+<img width="2048" height="2048" alt="image" src="https://github.com/user-attachments/assets/c0728f43-3667-4155-a8d1-3909b8c69512" />
 
 ### Attributes
 | Attribute | Description |
