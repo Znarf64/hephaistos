@@ -931,7 +931,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 				error(checker, v.library, "Imported library does not exist: \"%v\"", library_name)
 			} else {
 				t        := v.library
-				t.text    = library_name
+				t.text    = v.name
 				e        := entity_new(.Library, t, nil, allocator = checker.allocator)
 				e.library = library_name
 				e.flags   = { .Resolved, }
@@ -1756,7 +1756,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			operand.mode = .Invalid
 			return
 		}
-		return entity_to_operand(e)
+		entity_to_operand(e, &operand)
+		return
 
 	case ^ast.Expr_Interface:
 		e, ok := reflect.enum_from_name(spv.BuiltIn, v.ident.text)
@@ -1879,7 +1880,8 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		if lhs.mode == .Library {
 			v.library = lhs.library
 			if e, ok := checker.libraries[lhs.library].entities[v.selector.text]; ok {
-				return entity_to_operand(e)
+				entity_to_operand(e, &operand)
+				return
 			} else {
 				error(checker, v.selector, "'%s' is not declared by '%s'", v.selector.text, lhs.library)
 				return
@@ -2999,8 +3001,7 @@ error :: proc {
 	error_start_end,
 }
 
-@(require_results)
-entity_to_operand :: proc(e: ^Entity) -> (operand: Operand) {
+entity_to_operand :: proc(e: ^Entity, operand: ^Operand) {
 	operand.type = e.type
 	switch e.kind {
 	case .Invalid:
@@ -3023,6 +3024,4 @@ entity_to_operand :: proc(e: ^Entity) -> (operand: Operand) {
 		operand.mode    = .Library
 		operand.library = e.library
 	}
-
-	return
 }

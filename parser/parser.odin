@@ -620,36 +620,6 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 				return se, true
 			}
 		}
-
-		// ident := token_advance(parser)
-
-		// token_expect(parser, .Colon) or_return
-
-		// type: ^ast.Expr
-		// #partial switch token_peek(parser).kind {
-		// case .Colon, .Assign:
-		// case:
-		// 	type = parse_expr(parser) or_return
-		// }
-
-		// value:  ^ast.Expr
-		// mutable: bool
-		// #partial switch token_peek(parser).kind {
-		// case .Assign:
-		// 	mutable = true
-		// 	fallthrough
-		// case .Colon:
-		// 	token_advance(parser)
-		// 	value = parse_expr(parser) or_return
-		// }
-
-		// value_decl := ast.new(ast.Decl_Value, ident.location, parser.end_location, parser.allocator)
-		// value_decl.type    = type
-		// value_decl.name    = ident
-		// value_decl.value   = value
-		// value_decl.mutable = mutable
-
-		// return value_decl, true
 	case .Return:
 		token_advance(parser)
 		values := make([dynamic]^ast.Expr, parser.allocator)
@@ -754,15 +724,43 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 		return parse_simple_stmt(parser, attributes)
 	case .Import:
 		token_advance(parser)
+		alias: tokenizer.Token
 		if token_peek(parser).kind == .Ident {
-			unimplemented()
+			alias = token_advance(parser)
 		}
 		lit := token_expect(parser, .Literal, "import") or_return
 		if lit.value_kind != .String {
 			error(parser, token, "expected a string literal after `import` keyword")
 			return
 		}
+
+		name: string
+		if alias.text != "" {
+			name = alias.text
+		} else {
+			name = lit.text[1:len(lit.text) - 1]
+			cut := strings.last_index_any(name, ":/")
+			if cut != -1 && cut != len(name) - 1 {
+				name = name[cut + 1:]
+			}
+
+			valid := true
+			for char in name {
+				switch char {
+				case '0' ..= '9', 'a' ..= 'z', 'A' ..= 'Z', '_':
+					continue
+				}
+				valid = false
+				break
+			}
+
+			if !valid {
+				error(parser, lit, "'%s' is not a valid package name, consider renaming the imported package: `import foo %s`", name, lit.text)
+			}
+		}
+
 		import_decl        := ast.new(ast.Decl_Import, token.location, parser.end_location, parser.allocator)
+		import_decl.name    = name
 		import_decl.library = lit
 		return import_decl, true
 	case .Ident:

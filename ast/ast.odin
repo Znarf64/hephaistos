@@ -268,7 +268,7 @@ Decl_Value :: struct {
 Decl_Import :: struct {
 	using node: Decl,
 	library:    tokenizer.Token,
-	alias:      tokenizer.Token,
+	name:       string,
 }
 
 Stmt_Return :: struct {
