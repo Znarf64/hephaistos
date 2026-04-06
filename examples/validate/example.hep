@@ -153,4 +153,22 @@ when SHADOW_PASS {
 		e := 0.14
 	    return clamp((v * (a * v + b)) / (v * (c * v + d) + e), 0, 1)
 	}
+
+	test_complex :: proc(c: complex64) -> complex64 {
+		f: f32
+		c2 := c * c + f
+		c3 := c * f
+		c4 := c / f
+		return c2 + c3
+	}
+
+	test_quaternion :: proc(q: quaternion128) {
+		q2 := q + q
+		nq := -q
+
+		r := real(q2)
+		i := imag(q2)
+		j := jmag(q2)
+		k := kmag(q2)
+	}
 }

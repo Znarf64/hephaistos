@@ -67,6 +67,18 @@ Constant_Key :: struct {
 
 Constant_Cache :: hashmap.Hash_Map(Constant_Key, spv.Id)
 
+Runtime_Proc :: enum {
+	Complex64_Mul = 1,
+	Complex64_Div,
+	Complex128_Mul,
+	Complex128_Div,
+
+	Quaternion128_Mul,
+	Quaternion256_Mul,
+	Quaternion128_Div,
+	Quaternion256_Div,
+}
+
 Context :: struct {
 	constant_cache:     Constant_Cache,
 	string_cache:       map[string]spv.Id,
@@ -77,6 +89,8 @@ Context :: struct {
 	},
 	type_void:          spv.Id,
 	type_void_proc:     spv.Id,
+
+	runtime_procs:      [Runtime_Proc]spv.Id,
 
 	meta:               spv.Builder,
 	ext_inst:           spv.Builder,
@@ -458,6 +472,129 @@ generate :: proc(
 
 	b: spv.Builder = { current_id = &ctx.current_id }
 	cg_stmt_list(&ctx, &b, stmts, true)
+
+	for id, runtime_proc in ctx.runtime_procs {
+		if id == 0 {
+			continue
+		}
+
+		spv.OpName(&ctx.debug_b, id, fmt.tprintf("$BUILTIN_%v", runtime_proc))
+
+		return_type: ^types.Type
+		arg_types:   []types.Field
+		switch runtime_proc {
+		case .Complex64_Mul, .Complex64_Div:
+			return_type = types.t_complex64
+			arg_types   = {
+				{ type = types.t_complex64, },
+				{ type = types.t_complex64, },
+			}
+		case .Complex128_Mul, .Complex128_Div:
+			return_type = types.t_complex128
+			arg_types   = {
+				{ type = types.t_complex128, },
+				{ type = types.t_complex128, },
+			}
+
+		case .Quaternion128_Mul, .Quaternion128_Div:
+			return_type = types.t_quaternion128
+			arg_types   = {
+				{ type = types.t_quaternion128, },
+				{ type = types.t_quaternion128, },
+			}
+		case .Quaternion256_Mul, .Quaternion256_Div:
+			return_type = types.t_quaternion256
+			arg_types   = {
+				{ type = types.t_quaternion256, },
+				{ type = types.t_quaternion256, },
+			}
+		}
+
+		proc_type            := types.new(.Proc, types.Proc, checker.allocator)
+		proc_type.args        = arg_types
+		proc_type.return_type = return_type
+
+		return_type_id := cg_type(&ctx, return_type).type
+
+		id := id - 1
+		ctx.functions.current_id = &id
+		_ = spv.OpFunction(&ctx.functions, return_type_id, {}, cg_type(&ctx, proc_type).type)
+		ctx.functions.current_id = &ctx.current_id
+
+		_args: [10]spv.Id
+		args := _args[:len(arg_types)]
+		for &arg, i in args {
+			arg = spv.OpFunctionParameter(&ctx.functions, cg_type(&ctx, arg_types[i].type).type)
+		}
+
+		spv.OpLabel(&ctx.functions)
+
+		switch runtime_proc {
+		case .Complex64_Mul, .Complex128_Mul:
+			elem_type: spv.Id
+			if runtime_proc == .Complex64_Mul {
+				elem_type = cg_type(&ctx, types.t_f32).type
+			} else {
+				elem_type = cg_type(&ctx, types.t_f64).type
+			}
+
+			a0    := spv.OpCompositeExtract(&ctx.functions, elem_type, args[0], 0)
+			b0    := spv.OpCompositeExtract(&ctx.functions, elem_type, args[0], 1)
+			a1    := spv.OpCompositeExtract(&ctx.functions, elem_type, args[1], 0)
+			b1    := spv.OpCompositeExtract(&ctx.functions, elem_type, args[1], 1)
+
+			a0_a1 := spv.OpFMul(&ctx.functions, elem_type, a0, a1)
+			b0_b1 := spv.OpFMul(&ctx.functions, elem_type, b0, b1)
+
+			a0_b1 := spv.OpFMul(&ctx.functions, elem_type, a0, b1)
+			a1_b0 := spv.OpFMul(&ctx.functions, elem_type, a1, b0)
+
+			real  := spv.OpFSub(&ctx.functions, elem_type, a0_a1, b0_b1)
+			imag  := spv.OpFAdd(&ctx.functions, elem_type, a0_b1, a1_b0)
+
+			ret   := spv.OpCompositeConstruct(&ctx.functions, return_type_id, real, imag)
+			spv.OpReturnValue(&ctx.functions, ret)
+
+		case .Complex64_Div, .Complex128_Div:
+			elem_type: spv.Id
+			if runtime_proc == .Complex64_Div {
+				elem_type = cg_type(&ctx, types.t_f32).type
+			} else {
+				elem_type = cg_type(&ctx, types.t_f64).type
+			}
+
+			a0       := spv.OpCompositeExtract(&ctx.functions, elem_type, args[0], 0)
+			b0       := spv.OpCompositeExtract(&ctx.functions, elem_type, args[0], 1)
+			a1       := spv.OpCompositeExtract(&ctx.functions, elem_type, args[1], 0)
+			b1       := spv.OpCompositeExtract(&ctx.functions, elem_type, args[1], 1)
+
+			a0_a1    := spv.OpFMul(&ctx.functions, elem_type, a0, a1)
+			b0_b1    := spv.OpFMul(&ctx.functions, elem_type, b0, b1)
+			b0_a1    := spv.OpFMul(&ctx.functions, elem_type, b0, a1)
+			a0_b1    := spv.OpFMul(&ctx.functions, elem_type, a0, b1)
+			a1_a1    := spv.OpFMul(&ctx.functions, elem_type, a1, a1)
+			b1_b1    := spv.OpFMul(&ctx.functions, elem_type, b1, b1)
+
+			denom    := spv.OpFAdd(&ctx.functions, elem_type, a1_a1, b1_b1)
+
+			real_num := spv.OpFAdd(&ctx.functions, elem_type, a0_a1, b0_b1)
+			imag_num := spv.OpFSub(&ctx.functions, elem_type, b0_a1, a0_b1)
+
+			real     := spv.OpFDiv(&ctx.functions, elem_type, real_num, denom)
+			imag     := spv.OpFDiv(&ctx.functions, elem_type, imag_num, denom)
+
+			ret      := spv.OpCompositeConstruct(&ctx.functions, return_type_id, real, imag)
+			spv.OpReturnValue(&ctx.functions, ret)
+
+		case .Quaternion128_Mul, .Quaternion256_Mul:
+			unimplemented()
+
+		case .Quaternion128_Div, .Quaternion256_Div:
+			unimplemented()
+		}
+
+		spv.OpFunctionEnd(&ctx.functions)
+	}
 
 	for c in ctx.capabilities {
 		spv.OpCapability(&ctx.meta, c)
@@ -932,7 +1069,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 	append(&ctx.functions.data, ..body.data[:])
 	spv.OpFunctionEnd(&ctx.functions)
 
-	if p.shader_stage != .Invalid {
+	if p.shader_stage != nil {
 		execution_mode: spv.ExecutionModel
 		#partial switch p.shader_stage {
 		case .Vertex:
@@ -1129,6 +1266,7 @@ cg_expr_binary :: proc(
 	Binary_Op_Proc :: proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id)
 
 	binary_op_inst :: proc(ctx: ^Context, lhs_type, rhs_type, type: ^types.Type, op: tokenizer.Token_Kind) -> Binary_Op_Proc {
+		runtime_proc: Runtime_Proc
 		#partial switch type.kind {
 		case .Int:
 			#partial switch op {
@@ -1212,58 +1350,56 @@ cg_expr_binary :: proc(
 				return binary_op_inst(ctx, types.vector_elem(lhs_type), types.vector_elem(rhs_type), types.vector_elem(type), op)
 			}
 		case .Complex:
-			@(static)
-			elem_type: spv.Id // hack
-
 			#partial switch op {
 			case .Add, .Subtract:
 				return binary_op_inst(ctx, types.complex_elem(lhs_type), types.complex_elem(rhs_type), types.complex_elem(type), op)
 			case .Multiply:
-				elem_type = cg_type(ctx, types.complex_elem(type)).type
-				return proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id) {
-					a0    := spv.OpCompositeExtract(builder, elem_type, operand_1, 0)
-					b0    := spv.OpCompositeExtract(builder, elem_type, operand_1, 1)
-					a1    := spv.OpCompositeExtract(builder, elem_type, operand_2, 0)
-					b1    := spv.OpCompositeExtract(builder, elem_type, operand_2, 1)
-
-					a0_a1 := spv.OpFMul(builder, elem_type, a0, a1)
-					b0_b1 := spv.OpFMul(builder, elem_type, b0, b1)
-
-					a0_b1 := spv.OpFMul(builder, elem_type, a0, b1)
-					a1_b0 := spv.OpFMul(builder, elem_type, a1, b0)
-
-					real  := spv.OpFSub(builder, elem_type, a0_a1, b0_b1)
-					imag  := spv.OpFAdd(builder, elem_type, a0_b1, a1_b0)
-
-					return spv.OpCompositeConstruct(builder, result_type, real, imag)
+				switch types.complex_elem(type).size {
+				case 4:
+					runtime_proc = .Complex64_Mul
+				case 8:
+					runtime_proc = .Complex128_Mul
 				}
 			case .Divide:
-				elem_type = cg_type(ctx, types.complex_elem(type)).type
-				return proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id) {
-					a0       := spv.OpCompositeExtract(builder, elem_type, operand_1, 0)
-					b0       := spv.OpCompositeExtract(builder, elem_type, operand_1, 1)
-					a1       := spv.OpCompositeExtract(builder, elem_type, operand_2, 0)
-					b1       := spv.OpCompositeExtract(builder, elem_type, operand_2, 1)
+				switch types.complex_elem(type).size {
+				case 4:
+					runtime_proc = .Complex64_Div
+				case 8:
+					runtime_proc = .Complex128_Div
+				}
+			}
 
-					a0_a1    := spv.OpFMul(builder, elem_type, a0, a1)
-					b0_b1    := spv.OpFMul(builder, elem_type, b0, b1)
-					b0_a1    := spv.OpFMul(builder, elem_type, b0, a1)
-					a0_b1    := spv.OpFMul(builder, elem_type, a0, b1)
-					a1_a1    := spv.OpFMul(builder, elem_type, a1, a1)
-					b1_b1    := spv.OpFMul(builder, elem_type, b1, b1)
-
-					denom    := spv.OpFAdd(builder, elem_type, a1_a1, b1_b1)
-
-					real_num := spv.OpFAdd(builder, elem_type, a0_a1, b0_b1)
-					imag_num := spv.OpFSub(builder, elem_type, b0_a1, a0_b1)
-
-					real     := spv.OpFDiv(builder, elem_type, real_num, denom)
-					imag     := spv.OpFDiv(builder, elem_type, imag_num, denom)
-
-					return spv.OpCompositeConstruct(builder, result_type, real, imag)
+		case .Quaternion:
+			#partial switch op {
+			case .Add, .Subtract:
+				return binary_op_inst(ctx, types.complex_elem(lhs_type), types.complex_elem(rhs_type), types.complex_elem(type), op)
+			case .Multiply:
+				switch types.complex_elem(type).size {
+				case 4:
+					runtime_proc = .Quaternion128_Mul
+				case 8:
+					runtime_proc = .Quaternion256_Mul
+				}
+			case .Divide:
+				switch types.complex_elem(type).size {
+				case 4:
+					runtime_proc = .Quaternion128_Div
+				case 8:
+					runtime_proc = .Quaternion256_Div
 				}
 			}
 		}
+
+		if runtime_proc != nil {
+			@(static)
+			runtime_proc_id: spv.Id
+			runtime_proc_id = get_runtime_proc(ctx, runtime_proc)
+
+			return proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id) {
+				return spv.OpFunctionCall(builder, result_type, runtime_proc_id, operand_1, operand_2)
+			}
+		}
+
 		return nil
 	}
 
@@ -1754,6 +1890,9 @@ _cg_expr :: proc(
 				return { id = spv.OpBitCount(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Bit_Reverse:
 				return { id = spv.OpBitReverse(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Real, .Imag, .Jmag, .Kmag:
+				coord := u32(v.builtin - .Real)
+				return { id = spv.OpCompositeExtract(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id, coord), }
 			}
 
 			unreachable()
@@ -2446,4 +2585,15 @@ cg_stmt_list :: proc(ctx: ^Context, builder: ^spv.Builder, stmts: []^ast.Stmt, g
 		clear(&ctx.procs)
 	}
 	return returned
+}
+
+get_runtime_proc :: proc(ctx: ^Context, runtime_proc: Runtime_Proc) -> spv.Id {
+	assert(runtime_proc != nil)
+
+	if ctx.runtime_procs[runtime_proc] == 0 {
+		ctx.current_id                 += 1
+		ctx.runtime_procs[runtime_proc] = ctx.current_id
+	}
+
+	return ctx.runtime_procs[runtime_proc]
 }

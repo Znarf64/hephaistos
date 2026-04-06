@@ -139,6 +139,10 @@ Builtin_Id :: enum {
 	Abs,
 	Bit_Count,
 	Bit_Reverse,
+	Real,
+	Imag,
+	Jmag,
+	Kmag,
 
 	Texture_Size,
 	Image_Size,

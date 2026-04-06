@@ -117,6 +117,10 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Abs          = "abs",
 	.Bit_Count    = "bit_count",
 	.Bit_Reverse  = "bit_reverse",
+	.Real         = "real",
+	.Imag         = "imag",
+	.Jmag         = "jmag",
+	.Kmag         = "kmag",
 
 	.Texture_Size = "texture_size",
 	.Image_Size   = "image_size",
@@ -1103,11 +1107,6 @@ check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt, ignore_constants 
 	return diverging
 }
 
-t_complex64:     ^types.Type
-t_complex128:    ^types.Type
-t_quaternion128: ^types.Type
-t_quaternion256: ^types.Type
-
 @(private = "file")
 checker_init :: proc(
 	checker:       ^Checker,
@@ -1142,17 +1141,11 @@ checker_init :: proc(
 	scope_insert_entity(checker, entity_new(.Type, { text = "f32",  }, types.t_f32,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "f64",  }, types.t_f64,  allocator = allocator))
 
-	t_complex64  = types.complex_new(types.t_f32, allocator)
-	t_complex128 = types.complex_new(types.t_f64, allocator)
+	scope_insert_entity(checker, entity_new(.Type, { text = "complex64",  }, types.t_complex64,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "complex128", }, types.t_complex128, allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "complex64",  }, t_complex64,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "complex128", }, t_complex128, allocator = allocator))
-
-	t_quaternion128 = types.quaternion_new(types.t_f32, allocator)
-	t_quaternion256 = types.quaternion_new(types.t_f64, allocator)
-
-	scope_insert_entity(checker, entity_new(.Type, { text = "quaternion128", }, t_quaternion128, allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "quaternion256", }, t_quaternion256, allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "quaternion128", }, types.t_quaternion128, allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "quaternion256", }, types.t_quaternion256, allocator = allocator))
 
 	for name, builtin in builtin_names {
 		scope_insert_entity(checker, entity_new(.Builtin, { text = name, }, nil, builtin_id = builtin, allocator = allocator))
@@ -1642,9 +1635,9 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		operand.mode = .RValue
 		switch v.imaginary {
 		case .i:
-			operand.type = t_complex64
+			operand.type = types.t_complex64
 		case .j, .k:
-			operand.type = t_quaternion128
+			operand.type = types.t_quaternion128
 		case .real:
 			operand.mode = .Const
 		}
@@ -2251,6 +2244,30 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 				}
 				operand.type = args[0].type
 				operand.mode = .RValue
+			case .Real, .Imag:
+				if len(v.args) != 1 {
+					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
+					return
+				}
+				type := args[0].type
+				if !types.is_quaternion(type) && !types.is_complex(type) {
+					error(checker, v, "builtin '%s' expects a complex number or quaternion, got %v", builtin_names[v.builtin], type)
+					return
+				}
+				operand.type = types.complex_elem(type)
+				operand.mode = .RValue
+			case .Jmag, .Kmag:
+				if len(v.args) != 1 {
+					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
+					return
+				}
+				type := args[0].type
+				if !types.is_quaternion(type) {
+					error(checker, v, "builtin '%s' expects a quaternion, got %v", builtin_names[v.builtin], type)
+					return
+				}
+				operand.type = types.complex_elem(type)
+				operand.mode = .RValue
 			}
 			
 		case .Type:
@@ -2566,7 +2583,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		}
 		expr := check_expr(checker, v.expr)
 		if !types.operator_applicable(expr.type, v.op) && is_valid_unary_operator(v.op) {
-			error(checker, v, "operator `%v` is not defined for `%v%v`", tokenizer.to_string(v.op), expr.type, tokenizer.to_string(v.op))
+			error(checker, v, "operator `%v` is not defined for `%v%v`", tokenizer.to_string(v.op), tokenizer.to_string(v.op), expr.type)
 		}
 		operand.mode  = .RValue
 		operand.type  = expr.type

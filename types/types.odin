@@ -1,5 +1,7 @@
 package hephaistos_types
 
+import "base:runtime"
+
 import "core:io"
 import "core:fmt"
 import "core:strings"
@@ -164,6 +166,37 @@ t_u64     := &Type{kind = .Uint,    size = 8, align = 8}
 t_f16     := &Type{kind = .Float,   size = 2, align = 2}
 t_f32     := &Type{kind = .Float,   size = 4, align = 4}
 t_f64     := &Type{kind = .Float,   size = 8, align = 8}
+
+t_vec2,  t_vec3,  t_vec4:  ^Type
+t_ivec2, t_ivec3, t_ivec4: ^Type
+
+t_complex64,     t_complex128:    ^Type
+t_quaternion128, t_quaternion256: ^Type
+
+_base_type_arena_mem: [1 << 12]byte
+_base_type_arena: mem.Arena
+
+@(init)
+_base_types_init :: proc "contextless" () {
+	context = runtime.default_context()
+
+	mem.arena_init(&_base_type_arena, _base_type_arena_mem[:])
+	allocator := mem.arena_allocator(&_base_type_arena)
+
+	t_vec2 = vector_new(t_f32, 2, allocator)
+	t_vec3 = vector_new(t_f32, 3, allocator)
+	t_vec4 = vector_new(t_f32, 4, allocator)
+
+	t_ivec2 = vector_new(t_i32, 2, allocator)
+	t_ivec3 = vector_new(t_i32, 3, allocator)
+	t_ivec4 = vector_new(t_i32, 4, allocator)
+
+	t_complex64  = complex_new(t_f32, allocator)
+	t_complex128 = complex_new(t_f64, allocator)
+
+	t_quaternion128 = quaternion_new(t_f32, allocator)
+	t_quaternion256 = quaternion_new(t_f64, allocator)
+}
 
 print_writer :: proc(w: io.Writer, type: ^Type) {
 	if type == nil {
@@ -905,6 +938,8 @@ operator_applicable :: proc(type: ^Type, op: tokenizer.Token_Kind) -> bool {
 	case .Vector:
 		return operator_applicable(vector_elem(type), op)
 	case .Complex:
+		return operator_applicable(complex_elem(type), op)
+	case .Quaternion:
 		return operator_applicable(complex_elem(type), op)
 	case .Matrix:
 		return operator_applicable(matrix_elem(type), op)
