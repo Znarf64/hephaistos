@@ -5,6 +5,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:reflect"
 import "core:slice"
+import "core:strings"
 
 import "../ast"
 import "../types"
@@ -107,6 +108,8 @@ Context :: struct {
 	current_id:         spv.Id,
 	checker:            ^checker.Checker,
 	scopes:             [dynamic]Scope,
+	libraries:          map[string]Library,
+	name_prefix:        string,
 
 	extensions:         map[string]struct{},
 	capabilities:       map[spv.Capability]struct{},
@@ -140,6 +143,10 @@ Scope_Kind :: enum {
 	Switch,
 }
 
+Library :: struct {
+	entities: map[string]Value,
+}
+
 Scope :: struct {
 	entities:     map[string]Value,
 	label:        string,
@@ -152,18 +159,18 @@ Scope :: struct {
 	kind:         Scope_Kind,
 }
 
-cg_lookup_entity :: proc(ctx: ^Context, name: string) -> ^Value {
+cg_lookup_entity :: proc(ctx: ^Context, name: string, library: string = "") -> Value {
+	if library != "" {
+		return ctx.libraries[library].entities[name] or_else panic("cg_lookup_entity failed (library)")
+	}
 	#reverse for scope in ctx.scopes {
-		e := &scope.entities[name]
-		if e != nil {
-			return e
-		}
+		return scope.entities[name] or_continue
 	}
 	panic("cg_lookup_entity failed")
 }
 
 cg_insert_entity :: proc(ctx: ^Context, name: string, storage_class: Storage_Class, type: ^types.Type, id: spv.Id) {
-	spv.OpName(&ctx.debug_b, id, name)
+	spv.OpName(&ctx.debug_b, id, strings.concatenate({ ctx.name_prefix, name, }))
 	ctx.scopes[len(ctx.scopes) - 1].entities[name] = {
 		type          = type,
 		id            = id,
@@ -267,6 +274,7 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 	}
 
 	switch v in decl.derived_decl {
+	case ^ast.Decl_Import:
 	case ^ast.Decl_Value:
 		if v.interface == .Uniform || v.interface == .Uniform_Buffer {
 			value_builder     = nil
@@ -471,6 +479,23 @@ generate :: proc(
 	spv.OpMemoryModel(&ctx.memory_model, .Logical, .Simple)
 
 	b: spv.Builder = { current_id = &ctx.current_id }
+
+	for name, lib in checker.libraries {
+		scope := scope_push(&ctx, kind = .Block)
+		defer scope_pop(&ctx)
+
+		ctx.name_prefix = strings.concatenate({ name, "::", })
+
+		for _, e in lib.entities {
+			cg_stmt(&ctx, &b, e.decl, true)
+		}
+
+		ctx.libraries[name] = {
+			entities = scope.entities,
+		}
+	}
+	ctx.name_prefix = ""
+
 	cg_stmt_list(&ctx, &b, stmts, true)
 
 	for id, runtime_proc in ctx.runtime_procs {
@@ -587,7 +612,63 @@ generate :: proc(
 			spv.OpReturnValue(&ctx.functions, ret)
 
 		case .Quaternion128_Mul, .Quaternion256_Mul:
-			unimplemented()
+			elem_type: spv.Id
+			if runtime_proc == .Quaternion128_Mul {
+				elem_type = cg_type(&ctx, types.t_f32).type
+			} else {
+				elem_type = cg_type(&ctx, types.t_f64).type
+			}
+
+			// q0, q1, q2, q3 := real(q), imag(q), jmag(q), kmag(q)
+			// r0, r1, r2, r3 := real(r), imag(r), jmag(r), kmag(r)
+
+			// t0 := r0*q0 - r1*q1 - r2*q2 - r3*q3
+			// t1 := r0*q1 + r1*q0 - r2*q3 + r3*q2
+			// t2 := r0*q2 + r1*q3 + r2*q0 - r3*q1
+			// t3 := r0*q3 - r1*q2 + r2*q1 + r3*q0
+
+			// return quaternion(w=t0, x=t1, y=t2, z=t3)
+
+			q := args[0]
+			r := args[0]
+
+			q0 := spv.OpCompositeExtract(&ctx.functions, elem_type, q, 3)
+			q1 := spv.OpCompositeExtract(&ctx.functions, elem_type, q, 0)
+			q2 := spv.OpCompositeExtract(&ctx.functions, elem_type, q, 1)
+			q3 := spv.OpCompositeExtract(&ctx.functions, elem_type, q, 2)
+
+			r0 := spv.OpCompositeExtract(&ctx.functions, elem_type, r, 3)
+			r1 := spv.OpCompositeExtract(&ctx.functions, elem_type, r, 0)
+			r2 := spv.OpCompositeExtract(&ctx.functions, elem_type, r, 1)
+			r3 := spv.OpCompositeExtract(&ctx.functions, elem_type, r, 2)
+
+			r0_q0 := spv.OpFMul(&ctx.functions, elem_type, r0, q0)
+			r1_q0 := spv.OpFMul(&ctx.functions, elem_type, r1, q0)
+			r2_q0 := spv.OpFMul(&ctx.functions, elem_type, r2, q0)
+			r3_q0 := spv.OpFMul(&ctx.functions, elem_type, r3, q0)
+
+			r0_q1 := spv.OpFMul(&ctx.functions, elem_type, r0, q1)
+			r1_q1 := spv.OpFMul(&ctx.functions, elem_type, r1, q1)
+			r2_q1 := spv.OpFMul(&ctx.functions, elem_type, r2, q1)
+			r3_q1 := spv.OpFMul(&ctx.functions, elem_type, r3, q1)
+
+			r0_q2 := spv.OpFMul(&ctx.functions, elem_type, r0, q2)
+			r1_q2 := spv.OpFMul(&ctx.functions, elem_type, r1, q2)
+			r2_q2 := spv.OpFMul(&ctx.functions, elem_type, r2, q2)
+			r3_q2 := spv.OpFMul(&ctx.functions, elem_type, r3, q2)
+
+			r0_q3 := spv.OpFMul(&ctx.functions, elem_type, r0, q3)
+			r1_q3 := spv.OpFMul(&ctx.functions, elem_type, r1, q3)
+			r2_q3 := spv.OpFMul(&ctx.functions, elem_type, r2, q3)
+			r3_q3 := spv.OpFMul(&ctx.functions, elem_type, r3, q3)
+
+			real := spv.OpFSub(&ctx.functions, elem_type, spv.OpFSub(&ctx.functions, elem_type, spv.OpFSub(&ctx.functions, elem_type, r0_q0, r1_q1), r2_q2), r3_q3)
+			imag := spv.OpFAdd(&ctx.functions, elem_type, spv.OpFSub(&ctx.functions, elem_type, spv.OpFAdd(&ctx.functions, elem_type, r0_q1, r1_q0), r2_q3), r3_q2)
+			jmag := spv.OpFSub(&ctx.functions, elem_type, spv.OpFAdd(&ctx.functions, elem_type, spv.OpFAdd(&ctx.functions, elem_type, r0_q2, r1_q3), r2_q0), r3_q1)
+			kmag := spv.OpFAdd(&ctx.functions, elem_type, spv.OpFAdd(&ctx.functions, elem_type, spv.OpFSub(&ctx.functions, elem_type, r0_q3, r1_q2), r2_q1), r3_q0)
+
+			ret := spv.OpCompositeConstruct(&ctx.functions, return_type_id, imag, jmag, kmag, real)
+			spv.OpReturnValue(&ctx.functions, ret)
 
 		case .Quaternion128_Div, .Quaternion256_Div:
 			unimplemented()
@@ -1608,17 +1689,8 @@ _cg_expr :: proc(
 		return cg_constant(ctx, expr.const_value, expr.type)
 	}
 
-	switch v in expr.derived_expr {
-	case ^ast.Expr_Interface:
-		return cg_interface(ctx, v.ident.text)
-	case ^ast.Expr_Constant:
-		panic("Constant expr without a constant value")
-	case ^ast.Expr_Binary:
-		lhs, rhs := cg_expr(ctx, builder, v.lhs), cg_expr(ctx, builder, v.rhs)
-		value.id  = cg_expr_binary(ctx, builder, v.op, lhs, rhs, &value.type)
-		return
-	case ^ast.Expr_Ident:
-		value = cg_lookup_entity(ctx, v.ident.text)^
+	cg_ident :: proc(ctx: ^Context, builder: ^spv.Builder, name: string, library: string = "") -> (value: Value) {
+		value = cg_lookup_entity(ctx, name, library)
 		#partial switch value.storage_class {
 		case .Push_Constant, .Storage_Buffer, .Uniform, .Uniform_Constant:
 			value.explicit_layout = true
@@ -1629,12 +1701,28 @@ _cg_expr :: proc(
 			}
 		}
 		return
+	}
+
+	switch v in expr.derived_expr {
+	case ^ast.Expr_Interface:
+		return cg_interface(ctx, v.ident.text)
+	case ^ast.Expr_Constant:
+		panic("Constant expr without a constant value")
+	case ^ast.Expr_Binary:
+		lhs, rhs := cg_expr(ctx, builder, v.lhs), cg_expr(ctx, builder, v.rhs)
+		value.id  = cg_expr_binary(ctx, builder, v.op, lhs, rhs, &value.type)
+		return
+	case ^ast.Expr_Ident:
+		return cg_ident(ctx, builder, v.ident.text)
 	case ^ast.Expr_Proc_Lit:
 		return cg_proc_lit(ctx, v)
 	case ^ast.Expr_Proc_Sig:
 	case ^ast.Expr_Paren:
 		return cg_expr(ctx, builder, v.expr)
 	case ^ast.Expr_Selector:
+		if v.library != "" {
+			return cg_ident(ctx, builder, v.selector.text, v.library)
+		}
 		lhs := cg_expr(ctx, builder, v.lhs, false)
 
 		lhs_type := v.lhs.type
@@ -2567,6 +2655,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 
 	case ^ast.Decl_Value:
 		cg_decl(ctx, builder, v, global)
+	case ^ast.Decl_Import:
 	}
 
 	return

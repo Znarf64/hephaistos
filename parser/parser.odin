@@ -404,7 +404,12 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 
 	case .Directive:
 		token_advance(parser)
-		directive := token_expect(parser, .Ident, "directive") or_return
+		directive: tokenizer.Token
+		if token_peek(parser).kind == .Import {
+			directive = token_advance(parser)
+		} else {
+			directive = token_expect(parser, .Ident, "directive") or_return
+		}
 		switch directive.text {
 		case "import":
 			token_expect(parser, .Open_Paren ) or_return
@@ -747,6 +752,19 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 		return parse_stmt(parser, label, parse_attributes(parser) or_return)
 	case .Return, .Continue, .Break, .Literal, .Open_Paren, .Cast, .Dollar:
 		return parse_simple_stmt(parser, attributes)
+	case .Import:
+		token_advance(parser)
+		if token_peek(parser).kind == .Ident {
+			unimplemented()
+		}
+		lit := token_expect(parser, .Literal, "import") or_return
+		if lit.value_kind != .String {
+			error(parser, token, "expected a string literal after `import` keyword")
+			return
+		}
+		import_decl        := ast.new(ast.Decl_Import, token.location, parser.end_location, parser.allocator)
+		import_decl.library = lit
+		return import_decl, true
 	case .Ident:
 		if token_peek(parser, 1).kind == .Colon {
 			#partial switch token_peek(parser, 2).kind {
@@ -1004,6 +1022,8 @@ print_stmt :: proc(b: ^strings.Builder, stmt: ^ast.Stmt, indent := 0) {
 	case ^ast.Decl_Value:
 		print_expr(b, v.type_expr,  indent + 1)
 		// print_expr(b, v.value, indent + 1)
+	case ^ast.Decl_Import:
+		fmt.println("IMPORT", v.library.text)
 	}
 }
 

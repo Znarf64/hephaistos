@@ -74,6 +74,7 @@ Token_Kind :: enum u16 {
 	Fallthrough,
 	In,
 	When,
+	Import,
 
 	Struct,
 	Enum,
@@ -543,6 +544,7 @@ token_strings := #sparse[Token_Kind]string {
 	.Fallthrough = "fallthrough",
 	.In          = "in",
 	.When        = "when",
+	.Import      = "import",
 
 	.Struct      = "struct",
 	.Enum        = "enum",

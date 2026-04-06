@@ -174,6 +174,7 @@ Expr_Selector :: struct {
 	using node: Expr,
 	lhs:       ^Expr,
 	selector:   tokenizer.Token,
+	library:    string,
 }
 
 Expr_Compound :: struct {
@@ -262,6 +263,12 @@ Decl_Value :: struct {
 	local_size:     [3]i32,
 	shader_stage:   Shader_Stage,
 	interface:      Interface_Kind,
+}
+
+Decl_Import :: struct {
+	using node: Decl,
+	library:    tokenizer.Token,
+	alias:      tokenizer.Token,
 }
 
 Stmt_Return :: struct {
@@ -388,6 +395,7 @@ Any_Node :: union {
 	^Stmt_When,
 
 	^Decl_Value,
+	^Decl_Import,
 }
 
 Any_Expr :: union {
@@ -418,6 +426,7 @@ Any_Expr :: union {
 
 Any_Decl :: union {
 	^Decl_Value,
+	^Decl_Import,
 }
 
 Any_Stmt :: union {
@@ -434,6 +443,7 @@ Any_Stmt :: union {
 	^Stmt_When,
 
 	^Decl_Value,
+	^Decl_Import,
 }
 
 new :: proc($T: typeid, start, end: tokenizer.Location, allocator: mem.Allocator) -> ^T {

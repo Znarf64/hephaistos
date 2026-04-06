@@ -14,6 +14,7 @@ Entity_Kind :: enum u32 {
 	Var,
 	Proc,
 	Builtin,
+	Library,
 }
 
 @(rodata)
@@ -24,6 +25,7 @@ entity_kind_string := [Entity_Kind]string{
 	.Var     = "variable",
 	.Proc    = "proc",
 	.Builtin = "builtin",
+	.Library = "library",
 }
 
 Entity_Flag :: enum {
@@ -41,6 +43,7 @@ Entity :: struct {
 	name:       string,
 	type:       ^types.Type,
 	decl:       ^ast.Decl,
+	library:    string,
 	value:      types.Const_Value,
 	builtin_id: ast.Builtin_Id,
 	flags:      Entity_Flags,

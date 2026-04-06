@@ -1,3 +1,5 @@
+import "math"
+
 Binding_Location :: #import(Binding_Location)
 
 SHADOW_PASS :: #config(SHADOW_PASS, false)
@@ -125,6 +127,11 @@ when SHADOW_PASS {
 	    	}
 		}
 
+		pi := math.PI
+		e  := math.e
+
+		foo := math.mathsy_proc(420)
+
 		Some_Enum :: enum {
 	
 		}
@@ -170,5 +177,7 @@ when SHADOW_PASS {
 		i := imag(q2)
 		j := jmag(q2)
 		k := kmag(q2)
+
+		q3 := q * q
 	}
 }

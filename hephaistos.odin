@@ -29,6 +29,7 @@ Checker_Flags      :: checker.Flags
 Buffer_Address     :: checker.Buffer_Address
 Reflection_Info    :: checker.Reflection_Info
 Entry_Point_Info   :: checker.Entry_Point_Info
+Library            :: checker.Library
 
 Const_Value        :: types.Const_Value
 Type               :: types.Type
@@ -97,11 +98,43 @@ SPIR_V_VERSION_1_5     :: 0x00010500
 SPIR_V_VERSION_1_6     :: 0x00010600
 
 @(require_results)
+check_library :: proc(
+	source:        string,
+	path:          string,
+	defines:       map[string]Const_Value = {},
+	shared_types:  []typeid               = {},
+	libraries:     map[string]Library     = {},
+	allocator       := context.allocator,
+	error_allocator := context.allocator,
+) -> (library: checker.Library, errors: []Error) {
+	tokens: []Token
+	tokens, errors = tokenize(source, false, context.temp_allocator, error_allocator)
+	if len(errors) != 0 {
+		return
+	}
+
+	stmts: []^Ast_Stmt
+	stmts, errors = parse(tokens, context.temp_allocator, error_allocator)
+	if len(errors) != 0 {
+		return
+	}
+
+	c: Checker
+	c, errors = check(stmts, defines, shared_types, libraries, {}, context.temp_allocator, error_allocator)
+	if len(errors) != 0 {
+		return
+	}
+
+	return checker.to_library(c), {}
+}
+
+@(require_results)
 compile_shader :: proc(
 	source:        string,
 	path:          string,
 	defines:       map[string]Const_Value = {},
 	shared_types:  []typeid               = {},
+	libraries:     map[string]Library     = {},
 	spirv_version: u32                    = SPIR_V_VERSION_CURRENT,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
@@ -119,7 +152,7 @@ compile_shader :: proc(
 	}
 
 	checker: Checker
-	checker, errors = check(stmts, defines, shared_types, {}, context.temp_allocator, error_allocator)
+	checker, errors = check(stmts, defines, shared_types, libraries, {}, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}

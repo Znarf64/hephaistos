@@ -23,11 +23,22 @@ Flag :: enum {
 
 Flags :: bit_set[Flag]
 
+Library :: struct {
+	entities: map[string]^Entity,
+}
+
+to_library :: proc(checker: Checker) -> Library {
+	return {
+		entities = checker.scope.elements,
+	}
+}
+
 Checker :: struct {
 	allocator:        runtime.Allocator,
 	errors:           [dynamic]tokenizer.Error,
 	error_allocator:  runtime.Allocator,
 
+	libraries:        map[string]Library,
 	shared_types:     map[string]^types.Type,
 	config_vars:      map[string]types.Const_Value,
 	flags:            Flags,
@@ -69,6 +80,7 @@ Addressing_Mode :: enum {
 	Proc,
 	Type,
 	Builtin,
+	Library,
 }
 
 @(rodata)
@@ -81,6 +93,7 @@ addressing_mode_string := [Addressing_Mode]string {
 	.Proc     = "proc",
 	.Type     = "type",
 	.Builtin  = "builtin",
+	.Library  = "library",
 }
 
 @(rodata)
@@ -141,6 +154,7 @@ Operand :: struct {
 	mode:       Addressing_Mode,
 	value:      types.Const_Value,
 	builtin_id: ast.Builtin_Id,
+	library:    string,
 	is_call:    bool,
 }
 
@@ -175,15 +189,10 @@ scope_new :: proc(parent: ^Scope, kind: Scope_Kind, allocator: mem.Allocator) ->
 }
 
 @(require_results)
-scope_lookup_current :: proc(s: ^Scope, name: string) -> (e: ^Entity, ok: bool) {
-	return s.elements[name]
-}
-
-@(require_results)
 scope_lookup :: proc(checker: ^Checker, name: string) -> (e: ^Entity, ok: bool) {
 	s := checker.scope
 	for s != nil {
-		e, ok = scope_lookup_current(s, name)
+		e, ok = s.elements[name]
 		if ok {
 			resolve_constant(checker, e)
 			return
@@ -630,6 +639,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		if name_i != len(names) {
 			error(checker, v, "assignment count mismatch: %v vs %v", len(names), name_i)
 		}
+	case ^ast.Decl_Import:
 	}
 
 	diverging = false
@@ -910,6 +920,25 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 
 collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entities: ^[dynamic]^Entity) {
 	for stmt in stmts {
+		if v, ok := stmt.derived_stmt.(^ast.Decl_Import); ok {
+			if checker.scope.kind != .Global {
+				error(checker, v, "Imports must be placed at file scope")
+				return
+			}
+
+			library_name := v.library.text[1:len(v.library.text) - 1]
+			if library, ok := checker.libraries[library_name]; !ok {
+				error(checker, v.library, "Imported library does not exist: \"%v\"", library_name)
+			} else {
+				t        := v.library
+				t.text    = library_name
+				e        := entity_new(.Library, t, nil, allocator = checker.allocator)
+				e.library = library_name
+				e.flags   = { .Resolved, }
+				scope_insert_entity(checker, e)
+			}
+			continue
+		}
 		d, ok := stmt.derived_stmt.(^ast.Decl_Value)
 		if !ok {
 			continue
@@ -1033,10 +1062,18 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 	case .Proc:
 		e.kind = .Proc
 	case .Const:
-		e.kind  = .Const
-		e.value = v.value
+		if d.mutable {
+			e.kind  = .Var
+		} else {
+			e.kind  = .Const
+			e.value = v.value
+		}
 	case:
-		error(checker, v, "Expected a constant expression or type in constant declaration")
+		if d.mutable {
+			error(checker, v, "Expected a constant expression in global variable declaration")
+		} else {
+			error(checker, v, "Expected a constant expression or type in constant declaration")
+		}
 		e.kind = .Invalid
 	}
 
@@ -1112,6 +1149,7 @@ checker_init :: proc(
 	checker:       ^Checker,
 	defines:       map[string]types.Const_Value,
 	shared_types:  []Shared_Type,
+	libraries:     map[string]Library,
 	flags:         Flags,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
@@ -1122,6 +1160,7 @@ checker_init :: proc(
 	checker.error_allocator                   = error_allocator
 	checker.errors                            = make([dynamic]tokenizer.Error, error_allocator)
 	checker.flags                             = flags
+	checker.libraries                         = libraries
 
 	scope_push(checker, .Global)
 
@@ -1332,16 +1371,30 @@ shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.alloca
 }
 
 @(require_results)
+check_library :: proc(
+	stmts:     []^ast.Stmt,
+	defines:   map[string]types.Const_Value,
+	types:     []typeid,
+	libraries: map[string]Library,
+	flags           := Flags{},
+	allocator       := context.allocator,
+	error_allocator := context.allocator,
+) -> (checker: Checker, errors: []tokenizer.Error) {
+	return
+}
+
+@(require_results)
 check :: proc(
-	stmts:   []^ast.Stmt,
-	defines: map[string]types.Const_Value,
-	types:   []typeid,
+	stmts:     []^ast.Stmt,
+	defines:   map[string]types.Const_Value,
+	types:     []typeid,
+	libraries: map[string]Library,
 	flags           := Flags{},
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
 	shared_types := shared_types_from_typeids(types, allocator)
-	checker_init(&checker, defines, shared_types, flags, allocator, error_allocator)
+	checker_init(&checker, defines, shared_types, libraries, flags, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
 	return checker, checker.errors[:]
 }
@@ -1703,25 +1756,7 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			operand.mode = .Invalid
 			return
 		}
-
-		operand.type = e.type
-		#partial switch e.kind {
-		case .Const:
-			operand.mode  = .Const
-			operand.value = e.value
-		case .Type:
-			operand.mode = .Type
-		case .Var:
-			operand.mode = .LValue
-			if .Readonly in e.flags {
-				operand.mode = .RValue
-			}
-		case .Proc:
-			operand.mode = .Proc
-		case .Builtin:
-			operand.mode       = .Builtin
-			operand.builtin_id = e.builtin_id
-		}
+		return entity_to_operand(e)
 
 	case ^ast.Expr_Interface:
 		e, ok := reflect.enum_from_name(spv.BuiltIn, v.ident.text)
@@ -1829,7 +1864,27 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			error(checker, v, "%s is not a variant of the enum type %v", v.selector.text, type_hint)
 			return
 		}
-		lhs := check_expr_or_type(checker, v.lhs)
+
+		lhs := check_expr_internal(checker, v.lhs, {})
+
+		#partial switch lhs.mode {
+		case .Builtin:
+			error(checker, operand, "expected an expression, got builtin")
+			return
+		case .NoValue:
+			error(checker, operand, "expected an expression, got no value")
+			return
+		}
+
+		if lhs.mode == .Library {
+			v.library = lhs.library
+			if e, ok := checker.libraries[lhs.library].entities[v.selector.text]; ok {
+				return entity_to_operand(e)
+			} else {
+				error(checker, v.selector, "'%s' is not declared by '%s'", v.selector.text, lhs.library)
+				return
+			}
+		}
 
 		if lhs.mode == .Type {
 			if lhs.type.kind != .Enum {
@@ -2835,6 +2890,8 @@ check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast
 		error(checker, operand, "expected an expression, got builtin")
 	case .NoValue:
 		error(checker, operand, "expected an expression, got no value")
+	case .Library:
+		error(checker, operand, "expected an expression, got library")
 	case .Invalid:
 	}
 
@@ -2860,6 +2917,8 @@ check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 			return
 		}
 		error(checker, operand, "expected an expression, got no value")
+	case .Library:
+		error(checker, operand, "expected an expression, got library")
 	case .Invalid:
 	}
 
@@ -2880,7 +2939,9 @@ check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 		assert(operand.type != nil)
 		return operand.type
 	case .NoValue:
-		error(checker, operand, "expected an expression, got no value")
+		error(checker, operand, "expected a type, got no value")
+	case .Library:
+		error(checker, operand, "expected a type, got library")
 	case .Invalid:
 	}
 
@@ -2936,4 +2997,32 @@ error :: proc {
 	error_token,
 	error_ast_node,
 	error_start_end,
+}
+
+@(require_results)
+entity_to_operand :: proc(e: ^Entity) -> (operand: Operand) {
+	operand.type = e.type
+	switch e.kind {
+	case .Invalid:
+	case .Const:
+		operand.mode  = .Const
+		operand.value = e.value
+	case .Type:
+		operand.mode = .Type
+	case .Var:
+		operand.mode = .LValue
+		if .Readonly in e.flags {
+			operand.mode = .RValue
+		}
+	case .Proc:
+		operand.mode = .Proc
+	case .Builtin:
+		operand.mode       = .Builtin
+		operand.builtin_id = e.builtin_id
+	case .Library:
+		operand.mode    = .Library
+		operand.library = e.library
+	}
+
+	return
 }

@@ -86,6 +86,25 @@ main :: proc() {
 	defines["SOME_CONFIG_VAR"] = true
 	defer delete(defines)
 
+	LIB_PATH :: "math.hep"
+	lib_source := #load(LIB_PATH, string)
+	math_lib, lib_errors := hep.check_library(
+		lib_source,
+		LIB_PATH,
+		error_allocator = context.temp_allocator,
+	)
+	if len(lib_errors) != 0 {
+		lines := strings.split_lines(lib_source, context.temp_allocator)
+		for error in lib_errors {
+			hep.print_error(os.to_stream(os.stderr), LIB_PATH, lines, error)
+		}
+		return
+	}
+
+	libraries: map[string]hep.Library
+	defer delete(libraries)
+	libraries["math"] = math_lib
+
 	FILE_NAME :: "example.hep"
 	source := #load(FILE_NAME, string)
 	code, errors := hep.compile_shader(
@@ -93,6 +112,7 @@ main :: proc() {
 		FILE_NAME,
 		defines         = defines,
 		shared_types    = { Vertex_Shader_Uniforms, Shadow_Uniforms, Some_Enum, Particle, Binding_Location, },
+		libraries       = libraries,
 		error_allocator = context.temp_allocator,
 	)
 	defer delete(code)
