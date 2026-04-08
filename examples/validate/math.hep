@@ -33,13 +33,3 @@ binomial :: proc(n, k: i32) -> i32 {
 	}
 	return b
 }
-
-math_foo :: proc() -> (a, b: f32) {
-	v: f32 = 69
-	return v, v + 1
-}
-
-math_bar :: proc() -> (a, b: f32) {
-	return math_foo()
-}
-

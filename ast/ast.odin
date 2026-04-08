@@ -93,9 +93,7 @@ shader_stage_names: [Shader_Stage]string = {
 }
 
 Expr_Proc_Lit :: struct {
-	using node:   Expr,
-	args:         []Field,
-	returns:      []Field,
+	using sig:    Expr_Proc_Sig,
 	body:         []^Stmt,
 	shader_stage: Shader_Stage,
 }
@@ -104,6 +102,11 @@ Expr_Proc_Sig :: struct {
 	using node: Expr,
 	args:       []Field,
 	returns:    []Field,
+}
+
+Expr_Proc_Group :: struct {
+	using node: Expr,
+	members:    []^Expr,
 }
 
 Builtin_Id :: enum {
@@ -158,11 +161,12 @@ Builtin_Id :: enum {
 }
 
 Expr_Call :: struct {
-	using node: Expr,
-	lhs:       ^Expr,
-	args:     []Field,
-	is_cast:    bool,
-	builtin:    Builtin_Id,
+	using node:   Expr,
+	lhs:         ^Expr,
+	args:       []Field,
+	group_member: Maybe(int),
+	is_cast:      bool,
+	builtin:      Builtin_Id,
 }
 
 Expr_Paren :: struct {
@@ -363,6 +367,7 @@ Any_Node :: union {
 	^Expr_Ident,
 	^Expr_Proc_Lit,
 	^Expr_Proc_Sig,
+	^Expr_Proc_Group,
 	^Expr_Paren,
 	^Expr_Selector,
 	^Expr_Call,
@@ -404,6 +409,7 @@ Any_Expr :: union {
 	^Expr_Ident,
 	^Expr_Proc_Lit,
 	^Expr_Proc_Sig,
+	^Expr_Proc_Group,
 	^Expr_Paren,
 	^Expr_Selector,
 	^Expr_Call,

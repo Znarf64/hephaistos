@@ -173,16 +173,6 @@ when SHADOW_PASS {
 		return c2 + c3
 	}
 
-	foo :: proc() -> [2]f32 {
-		v: [2]f32 = 69
-		return v
-	}
-
-	bar :: proc() -> [2]f32 {
-		v := foo()
-		return v
-	}
-
 	test_quaternion :: proc(q: quaternion128) {
 		q2 := q + q
 		nq := -q
@@ -194,4 +184,36 @@ when SHADOW_PASS {
 
 		q3 := q * q
 	}
+}
+
+foo :: proc() -> [2]f32 {
+	v: f32 = 69
+	return v
+}
+
+bar :: proc(f: f32) -> (a: [2]f32, b: i32) {
+	return foo(), -1
+}
+
+baz :: proc(f: [2]f32, g: i32) -> (a: [2]f32, b: i32, ok: bool) {
+	return bar(420), true
+}
+
+multi :: proc() {
+	v        := foo()
+	a, b     := bar(123)
+	a, b      = bar(123)
+	c, d, ok := baz(420, -1)
+
+	baz(bar(foo().x))
+
+	group :: proc{
+		foo,
+		bar,
+		baz,
+	}
+
+	f: f32
+	group(f, 123)
+	group(bar(1))
 }

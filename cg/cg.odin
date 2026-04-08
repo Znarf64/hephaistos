@@ -132,6 +132,7 @@ Value :: struct {
 	type:            ^types.Type,
 	real_type:       ^types.Type, // non swizzled type
 	swizzle:         []u32,
+	group_members:   []spv.Id,
 	explicit_layout: bool,
 	discard:         bool,
 	coord:           spv.Id, // texel reference for ImageStore
@@ -170,12 +171,18 @@ cg_lookup_entity :: proc(ctx: ^Context, name: string, library: string = "") -> V
 }
 
 cg_insert_entity :: proc(ctx: ^Context, name: string, storage_class: Storage_Class, type: ^types.Type, id: spv.Id) {
-	spv.OpName(&ctx.debug_b, id, strings.concatenate({ ctx.name_prefix, name, }))
-	ctx.scopes[len(ctx.scopes) - 1].entities[name] = {
+	cg_insert_entity_value(ctx, name, {
 		type          = type,
 		id            = id,
 		storage_class = storage_class,
+	})
+}
+
+cg_insert_entity_value :: proc(ctx: ^Context, name: string, value: Value) {
+	if value.id != 0 {
+		spv.OpName(&ctx.debug_b, value.id, strings.concatenate({ ctx.name_prefix, name, }))
 	}
+	ctx.scopes[len(ctx.scopes) - 1].entities[name] = value
 }
 
 scope_push :: proc(ctx: ^Context, label: string = "", kind: Scope_Kind = .Block) -> ^Scope {
@@ -352,48 +359,55 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 					}
 				}
 			} else {
-				for value, i in v.values {
-					type      := v.types[i]
-					type_info := cg_type(ctx, type, flags)
-					init: spv.Id
-					if global {
-						init = cg_expr(ctx, nil, value).id
-					} else {
-						init = cg_nil_value(ctx, type_info)
+				if global {
+					for value, i in v.values {
+						type      := v.types[i]
+						type_info := cg_type(ctx, type, flags)
+						init      := cg_expr(ctx, nil, value).id
+						id        := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
+						name      := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
+						cg_insert_entity(ctx, name, storage_class, type, id)
 					}
-					id := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
-					if !global {
-						assert(value_builder != nil)
+				} else {
+					lhs_i: int
+					for value in v.values {
 						init := cg_expr(ctx, value_builder, value)
-						// if v.type_expr != nil {
-						// 	init.id = cg_cast(ctx, builder, init, v.type_expr.type)
-						// } else if value.type.size != 0 {
-						// 	init.id = cg_cast(ctx, builder, init, value.type)
-						// }
-						spv.OpStore(value_builder, id, init.id)
+						values: []Value = { init, }
+						deconstruct_tuple(ctx, value_builder, value.type, &values)
+
+						for value in values {
+							type_info := cg_type(ctx, value.type, flags)
+							ptr       := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class)
+							spv.OpStore(value_builder, ptr, value.id)
+
+							name := v.lhs[lhs_i].derived_expr.(^ast.Expr_Ident).ident.text
+							cg_insert_entity(ctx, name, storage_class, value.type, ptr)
+
+							lhs_i += 1
+						}
 					}
-					name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
-					cg_insert_entity(ctx, name, storage_class, type, id)
 				}
 			}
 		} else {
 			for value, i in v.values {
-				if value.type.kind != .Proc {
-					continue
-				}
-
 				name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
 
-				prev_link_name := ctx.link_name
-				if v.link_name == "" {
-					ctx.link_name = name
-				}
-				defer if v.link_name == "" {
-					ctx.link_name = prev_link_name
-				}
+				#partial switch value.type.kind {
+				case .Proc:
+					prev_link_name := ctx.link_name
+					if v.link_name == "" {
+						ctx.link_name = name
+					}
+					defer if v.link_name == "" {
+						ctx.link_name = prev_link_name
+					}
 
-				id := cg_expr(ctx, nil, value)
-				cg_insert_entity(ctx, name, nil, value.type, id.id)
+					val := cg_expr(ctx, nil, value)
+					cg_insert_entity_value(ctx, name, val)
+				case .Proc_Group:
+					val := cg_expr(ctx, nil, value)
+					cg_insert_entity_value(ctx, name, val)
+				}
 			}
 		}
 	}
@@ -739,6 +753,8 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 			panic("Tried to generate constant with buffer type")
 		case .Proc:
 			panic("Tried to generate constant with proc type")
+		case .Proc_Group:
+			panic("Tried to generate constant with proc group type")
 		case .Tuple:
 			panic("Tried to generate constant with tuple type")
 		case .Enum:
@@ -1041,7 +1057,7 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 				spv.OpMemberDecorate(&ctx.annotations, info.type, 0, .Offset, 0)
 			}
 		}
-	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion:
+	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion, .Proc_Group:
 		unreachable()
 	}
 
@@ -1121,7 +1137,14 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 		}
 		label := spv.OpLabel(&ctx.functions)
 		spv.OpName(&ctx.debug_b, label, "$FN_SETUP")
-		if len(type.returns) != 0 {
+
+		switch len(type.returns) {
+		case 0: // do nothing
+		case 1:
+			return_value = spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function, cg_nil_value(ctx, return_type_info))
+			spv.OpName(&ctx.debug_b, return_value, "$return_value")
+			cg_insert_entity(ctx, type.returns[0].name.text, .Function, type.return_type, return_value)
+		case:
 			return_value = spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function, cg_nil_value(ctx, return_type_info))
 			spv.OpName(&ctx.debug_b, return_value, "$return_tuple")
 			for ret, i in type.returns {
@@ -1722,6 +1745,13 @@ _cg_expr :: proc(
 	case ^ast.Expr_Proc_Lit:
 		return cg_proc_lit(ctx, v)
 	case ^ast.Expr_Proc_Sig:
+	case ^ast.Expr_Proc_Group:
+		members := make([]spv.Id, len(v.members))
+		for m, i in v.members {
+			members[i] = cg_expr(ctx, builder, m).id
+		}
+		value.group_members = members
+		return
 	case ^ast.Expr_Paren:
 		return cg_expr(ctx, builder, v.expr)
 	case ^ast.Expr_Selector:
@@ -1995,23 +2025,30 @@ _cg_expr :: proc(
 			return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type), }
 		}
 
-		fn        := cg_expr(ctx, builder, v.lhs)
-		args      := make([]spv.Id, len(v.args))
-		proc_type := v.lhs.type.variant.(^types.Proc)
-		for &arg, i in args {
-			arg = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[i].value), proc_type.args[i].type)
+		_fn       := cg_expr(ctx, builder, v.lhs)
+		fn        := _fn.id
+		proc_type := v.lhs.type.variant.(^types.Proc) or_else nil
+		if member, ok := v.group_member.?; ok {
+			fn        = _fn.group_members[member]
+			proc_type = v.lhs.type.variant.(^types.Proc_Group).members[member]
+		}
+
+		args := make([dynamic]spv.Id, 0, len(v.args))
+		arg_i: int
+		for arg in v.args {
+			value  := cg_expr(ctx, builder, arg.value)
+			values := []Value{ value, }
+			deconstruct_tuple(ctx, builder, value.type, &values)
+
+			for value in values {
+				append(&args, cg_cast(ctx, builder, value, proc_type.args[arg_i].type))
+				arg_i += 1
+			}
 		}
 
 		return_type_info := cg_type(ctx, proc_type.return_type)
-		ret              := spv.OpFunctionCall(builder, return_type_info.type, fn.id, ..args)
+		ret              := spv.OpFunctionCall(builder, return_type_info.type, fn, ..args[:])
 
-		if len(proc_type.returns) == 1 {
-			type_info := cg_type(ctx, proc_type.returns[0].type)
-			copy      := spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function)
-			spv.OpStore(builder, copy, ret)
-			ptr       := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, .Function), copy, cg_constant(ctx, i64(0), nil).id)
-			return { id = spv.OpLoad(builder, type_info.type, ptr), }
-		}
 		return { id = ret, }
 	case ^ast.Expr_Compound:
 		if len(v.fields) == 0 {
@@ -2292,9 +2329,8 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 
 		proc_scope   := cg_lookup_proc_scope(ctx)
 		return_value := proc_scope.return_value
-		type         := proc_scope.return_type.variant.(^types.Struct)
 
-		if return_value == 0 {
+		if return_value == 0 { // return values are shader stage outputs
 			for value, i in v.values {
 				v   := cg_expr(ctx, builder, value)
 				ptr := proc_scope.outputs[i]
@@ -2302,24 +2338,34 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 			}
 			spv.OpReturn(builder)
 		} else {
-			return_ti := cg_type(ctx, type)
-			i: int
-			for value in v.values {
-				values := []Value{ cg_expr(ctx, builder, value), }
-				deconstruct_tuple(ctx, builder, value.type, &values)
+			return_ti := cg_type(ctx, proc_scope.return_type)
 
-				for v in values {
-					ptr := spv.OpAccessChain(
-						builder,
-						cg_type_ptr(ctx, type.fields[i].type, .Function),
-						return_value,
-						cg_constant(ctx, i64(i), nil).id,
-					)
-					spv.OpStore(builder, ptr, cg_cast(ctx, builder, v, type.fields[i].type))
+			if proc_scope.return_type.kind == .Tuple {
+				type := proc_scope.return_type.variant.(^types.Struct)
 
-					i += 1
+				i: int
+				for value in v.values {
+					values := []Value{ cg_expr(ctx, builder, value), }
+					deconstruct_tuple(ctx, builder, value.type, &values)
+
+					for v in values {
+						ptr := spv.OpAccessChain(
+							builder,
+							cg_type_ptr(ctx, type.fields[i].type, .Function),
+							return_value,
+							cg_constant(ctx, i64(i), nil).id,
+						)
+						spv.OpStore(builder, ptr, cg_cast(ctx, builder, v, type.fields[i].type))
+
+						i += 1
+					}
 				}
+			} else {
+				assert(len(v.values) == 1)
+				value := cg_expr(ctx, builder, v.values[0])
+				spv.OpStore(builder, return_value, cg_cast(ctx, builder, value, proc_scope.return_type))
 			}
+
 			spv.OpReturnValue(builder, spv.OpLoad(builder, return_ti.type, return_value))
 		}
 

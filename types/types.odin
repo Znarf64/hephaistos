@@ -65,6 +65,11 @@ Proc :: struct {
 	return_type: ^Type,
 }
 
+Proc_Group :: struct {
+	using base:  Type,
+	members:     []^Proc,
+}
+
 Image :: struct {
 	using base: Type,
 	dimensions: int,
@@ -96,6 +101,7 @@ Kind :: enum {
 	Vector,
 	Buffer,
 	Proc,
+	Proc_Group,
 	Sampler,
 	Image,
 	Enum,
@@ -116,6 +122,7 @@ Type :: struct {
 		^Vector,
 		^Buffer,
 		^Proc,
+		^Proc_Group,
 		^Image,
 		^Enum,
 		^Bit_Set,
@@ -267,6 +274,14 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 			print_writer(w, ret.type)
 		}
 		fmt.wprint(w, ")")
+	case .Proc_Group:
+		g := type.variant.(^Proc_Group)
+		fmt.wprint(w, "proc{ ")
+		for member in g.members {
+			print_writer(w, member)
+			fmt.wprint(w, ", ")
+		}
+		fmt.wprint(w, "}")
 	case .Int:
 		if type.size == 0 {
 			fmt.wprintf(w, "int")
@@ -507,8 +522,7 @@ default_type :: proc(type: ^Type) -> ^Type {
 		return t_bool
 	case .Float:
 		return t_f32
-
-	case .Proc, .Invalid, .Struct, .Matrix, .Vector, .Enum:
+	case:
 		return type
 	}
 
@@ -660,6 +674,8 @@ type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
 		for field in v.returns {
 			h = type_hash(field.type, h)
 		}
+	case ^Proc_Group:
+		unimplemented()
 	case ^Image:
 		h = type_hash(v.texel_type, h)
 		h = hash.fnv64a(to_bytes(&v.dimensions), h)

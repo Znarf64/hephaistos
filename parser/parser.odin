@@ -18,6 +18,7 @@ Parser :: struct {
 	error_allocator: runtime.Allocator,
 }
 
+@(require_results)
 token_peek :: proc(parser: ^Parser, lookahead := 0) -> tokenizer.Token {
 	return parser.tokens[min(parser.current + lookahead, len(parser.tokens) - 1)]
 }
@@ -248,6 +249,25 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 		return expr, true
 
 	case .Proc:
+		if token_peek(parser, 1).kind == .Open_Brace {
+			token_expect(parser, .Proc)
+			token_expect(parser, .Open_Brace)
+
+			members := make([dynamic]^ast.Expr, parser.allocator)
+			for {
+				if token_peek(parser).kind == .Close_Brace {
+					break
+				}
+
+				append(&members, parse_expr(parser) or_break)
+				token_expect(parser, .Comma) or_break
+			}
+			token_expect(parser, .Close_Brace)
+
+			group        := ast.new(ast.Expr_Proc_Group, token.location, parser.end_location, parser.allocator)
+			group.members = members[:]
+			return group, true
+		}
 		args, returns := parse_proc_signature(parser) or_return
 		if token_peek(parser).kind == .Open_Brace {
 			token_advance(parser)

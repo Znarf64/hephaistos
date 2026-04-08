@@ -74,10 +74,11 @@ Buffer_Address :: struct($T: typeid) #raw_union {
 Addressing_Mode :: enum {
 	Invalid = 0,
 	RValue,
-	NoValue,
+	No_Value,
 	LValue,
 	Const,
 	Proc,
+	Proc_Group,
 	Type,
 	Builtin,
 	Library,
@@ -85,15 +86,16 @@ Addressing_Mode :: enum {
 
 @(rodata)
 addressing_mode_string := [Addressing_Mode]string {
-	.Invalid  = "<invalid>",
-	.NoValue  = "no value",
-	.RValue   = "rvalue",
-	.LValue   = "lvalue",
-	.Const    = "const",
-	.Proc     = "proc",
-	.Type     = "type",
-	.Builtin  = "builtin",
-	.Library  = "library",
+	.Invalid    = "<invalid>",
+	.No_Value   = "no value",
+	.RValue     = "rvalue",
+	.LValue     = "lvalue",
+	.Const      = "const",
+	.Proc       = "proc",
+	.Proc_Group = "proc",
+	.Type       = "type",
+	.Builtin    = "builtin",
+	.Library    = "library",
 }
 
 @(rodata)
@@ -194,7 +196,7 @@ scope_lookup :: proc(checker: ^Checker, name: string) -> (e: ^Entity, ok: bool) 
 	for s != nil {
 		e, ok = s.elements[name]
 		if ok {
-			resolve_constant(checker, e)
+			decl_resolve(checker, e)
 			return
 		}
 		s = s.parent
@@ -258,7 +260,11 @@ scope_insert_entity :: proc(checker: ^Checker, e: ^Entity) -> bool {
 		return true
 	}
 
-	assert(e.name  != "")
+	if e.name == "_" {
+		return true
+	}
+
+	assert(e.name != "")
 	assert(checker.scope != nil)
 	if e.name in checker.scope.elements {
 		error(checker, e.ident, "'%s' has already been defined in this scope", e.name)
@@ -284,18 +290,16 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				continue
 			}
 
-			if value.type.kind == .Tuple {
-				for type in value.type.variant.(^types.Struct).fields {
-					if !types.implicitly_castable(type.type, proc_type.returns[return_index].type) {
-						error(checker, value, "mismatched type in return statement: %v vs %v", proc_type.returns[return_index].type, type.type)
-					}
-					return_index += 1
+			ts := []^types.Type{ value.type, }
+			deconstruct_tuple(checker, &ts)
+
+			for type in ts {
+				if !types.implicitly_castable(type, proc_type.returns[return_index].type) {
+					error(checker, value, "mismatched type in return statement: expected %v, got %v", proc_type.returns[return_index].type, type)
 				}
-			} else {
-				if !types.implicitly_castable(value.type, proc_type.returns[return_index].type) {
-					error(checker, value, "mismatched type in return statement: %v vs %v", proc_type.returns[return_index].type, value.type)
+				if len(ts) == 1 {
+					e.type = proc_type.returns[return_index].type
 				}
-				e.type        = proc_type.returns[return_index].type
 				return_index += 1
 			}
 		}
@@ -452,10 +456,11 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 			value := check_expr(checker, c.value, type_hint = cond.type)
 			if !types.implicitly_castable(value.type, cond.type) {
-				error(checker, value, "type of case value does not match selector type: %v vs %v", cond.type, value.type)
+				error(checker, value, "type of case value does not match selector type: expected %v, got %v", cond.type, value.type)
 			}
 			if value.mode != .Const {
 				v.constant_cases = false
+				error(checker, value, "switch statement cases have to be constants (for now)")
 			}
 			check_stmt_list(checker, c.body)
 		}
@@ -480,30 +485,23 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			if lhs_i < len(lhs) {
 				type_hint = lhs[lhs_i].type
 			}
-			r := check_expr(checker, r_expr, type_hint = type_hint)
-			if r.type.kind == .Tuple {
-				for field in r.type.variant.(^types.Struct).fields {
-					if lhs_i >= len(lhs) {
-						lhs_i += 1
-						continue
-					}
-					if !types.implicitly_castable(field.type, lhs[lhs_i].type) {
-						error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, field.type)
-					}
-					v.types[lhs_i] = types.op_result_type(lhs[lhs_i].type, field.type)
-					lhs_i         += 1
-				}
-			} else {
+			rhs       := check_expr(checker, r_expr, type_hint = type_hint)
+			rhs_types := []^types.Type { rhs.type, }
+			deconstruct_tuple(checker, &rhs_types)
+
+			for type in rhs_types {
 				if lhs_i >= len(lhs) {
 					lhs_i += 1
 					continue
 				}
-				result_type := types.op_result_type(lhs[lhs_i].type, r.type)
-				if !types.implicitly_castable(r.type, lhs[lhs_i].type) {
-					error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, r.type)
+				result_type := types.op_result_type(lhs[lhs_i].type, type)
+				if !types.implicitly_castable(type, lhs[lhs_i].type) {
+					error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, type)
+				}
+				if len(rhs_types) == 1 {
+					r_expr.type = result_type
 				}
 				v.types[lhs_i] = result_type
-				r_expr.type    = result_type
 				lhs_i         += 1
 			}
 		}
@@ -569,40 +567,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 
 		name_i := 0
-		check_decl_types: for &r in values {
-			if r.type.kind == .Tuple {
-				for field in r.type.variant.(^types.Struct).fields {
-					if name_i >= len(names) {
-						name_i += 1
-						continue
-					}
-					name        := names[name_i]
-					entity_kind := Entity_Kind.Var
-
-					type := explicit_type
-					if type == nil {
-						type = field.type
-						if entity_kind != .Const {
-							type = types.default_type(type)
-						}
-					} else {
-						if !types.implicitly_castable(field.type, explicit_type) {
-							error(checker, stmt, "mismatched types in value declaration: %v vs %v", explicit_type, field.type)
-						}
-					}
-					v.types[name_i] = type
-
-					scope_insert_entity(checker, entity_new(
-						entity_kind,
-						name,
-						type,
-						decl      = v,
-						flags     = flags,
-						allocator = checker.allocator,
-					))
-					name_i += 1
-				}
-			} else {
+		check_decl_types: for &rhs in values {
+			rhs_types := []^types.Type{ rhs.type, }
+			tuple     := deconstruct_tuple(checker, &rhs_types)
+			for rhs_type in rhs_types {
 				if name_i >= len(names) {
 					name_i += 1
 					continue
@@ -612,17 +580,19 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 				type := explicit_type
 				if type == nil {
-					type = r.type
+					type = rhs_type
 					if entity_kind != .Const {
 						type = types.default_type(type)
 					}
 				} else {
-					if !types.implicitly_castable(r.type, explicit_type) {
-						error(checker, stmt, "mismatched types in value declaration: %v vs %v", explicit_type, r.type)
+					if !types.implicitly_castable(rhs_type, explicit_type) {
+						error(checker, stmt, "mismatched types in value declaration: %v vs %v", explicit_type, rhs_type)
 					}
 				}
-				v.types[name_i]       = type
-				v.values[name_i].type = type
+				v.types[name_i] = type
+				if !tuple {
+					v.values[name_i].type = type
+				}
 
 				scope_insert_entity(checker, entity_new(
 					entity_kind,
@@ -987,7 +957,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 	}
 }
 
-resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
+decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 	if .Resolved in e.flags {
 		return
 	}
@@ -1033,6 +1003,8 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 			size = size_of(types.Buffer)
 		case ^types.Proc:
 			size = size_of(types.Proc)
+		case ^types.Proc_Group:
+			size = size_of(types.Proc_Group)
 		case ^types.Image:
 			size = size_of(types.Image)
 		case ^types.Enum:
@@ -1053,13 +1025,15 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 		return
 	}
 
-	v := check_expr_or_type(checker, d.values[value_index], d.attributes, type, false)
+	v := check_expr_or_type(checker, d.values[value_index], d.attributes, type, false, true)
 
 	#partial switch v.mode {
 	case .Type:
 		e.kind = .Type
 	case .Proc:
 		e.kind = .Proc
+	case .Proc_Group:
+		e.kind = .Proc_Group
 	case .Const:
 		if d.mutable {
 			e.kind  = .Var
@@ -1129,7 +1103,7 @@ check_const_stmts :: proc(checker: ^Checker, stmts: []^ast.Stmt) {
 	entities := make([dynamic]^Entity, context.temp_allocator)
 	collect_decls(checker, stmts, checker.scope.kind == .Global, &entities)
 	for e in entities {
-		resolve_constant(checker, e)
+		decl_resolve(checker, e)
 	}
 }
 
@@ -1554,7 +1528,7 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: types.Const_Value,
 }
 
 @(require_results)
-check_proc_type :: proc(checker: ^Checker, p: $T) -> ^types.Proc {
+check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc {
 	check_field_list :: proc(checker: ^Checker, fields: []ast.Field, usage: string) -> (out_fields: [dynamic]types.Field) {
 		out_fields.allocator = checker.allocator
 		reserve(&out_fields, len(fields))
@@ -1657,9 +1631,13 @@ check_proc_type :: proc(checker: ^Checker, p: $T) -> ^types.Proc {
 	t.args    = args[:]
 	t.returns = returns[:]
 
-	return_type       := types.new(.Tuple, types.Struct, checker.allocator)
-	return_type.fields = returns[:]
-	t.return_type      = return_type
+	if len(returns) == 1 {
+		t.return_type = returns[0].type
+	} else {
+		return_type       := types.new(.Tuple, types.Struct, checker.allocator)
+		return_type.fields = returns[:]
+		t.return_type      = return_type
+	}
 
 	return t
 }
@@ -1855,6 +1833,31 @@ check_expr_internal :: proc(
 	case ^ast.Expr_Proc_Sig:
 		operand.type = check_proc_type(checker, v)
 		operand.mode = .Type
+
+	case ^ast.Expr_Proc_Group:
+		members := make([]^types.Proc, len(v.members), checker.allocator)
+		for member, i in v.members {
+			if _, ok := member.derived.(^ast.Expr_Proc_Lit); ok {
+				error(checker, member, "members of procedure groups need to be named, got procedure literal")
+				continue
+			}
+
+			m := check_expr(checker, member)
+			if m.mode != .Proc {
+				error(checker, m, "expected a procedure as proc group member")
+			} else {
+				members[i] = m.type.variant.(^types.Proc)
+			}
+		}
+
+		// TODO: check for duplicates in members
+
+		type        := types.new(.Proc_Group, types.Proc_Group, checker.allocator)
+		type.members = members
+
+		operand.mode = .Proc_Group
+		operand.type = type
+		return
 	case ^ast.Expr_Paren:
 		return check_expr_internal(checker, v.expr, {})
 	case ^ast.Expr_Selector:
@@ -1888,7 +1891,7 @@ check_expr_internal :: proc(
 		case .Builtin:
 			error(checker, operand, "expected an expression, got builtin")
 			return
-		case .NoValue:
+		case .No_Value:
 			error(checker, operand, "expected an expression, got no value")
 			return
 		}
@@ -1923,7 +1926,22 @@ check_expr_internal :: proc(
 			return
 		}
 
-		if lhs.type.kind == .Vector {
+		type := lhs.type
+		if type.kind == .Tuple {
+			tuple := type.variant.(^types.Struct)
+			switch len(tuple.fields) {
+			case 0:
+				error(checker, lhs, "expected a single expression, got no value")
+				return
+			case 1:
+				type = tuple.fields[0].type
+			case:
+				error(checker, lhs, "expected a single expression, got multiple values")
+				return
+			}
+		}
+
+		if type.kind == .Vector {
 			duplicates := false
 			seen: [4]bool
 			for char in v.selector.text {
@@ -1938,8 +1956,8 @@ check_expr_internal :: proc(
 				case 'a', 'w':
 					index = 3
 				}
-				if index == -1 || index > types.vector_len(lhs.type) {
-					error(checker, v, "can not swizzle vector of type '%s' with coordinate '%v'", lhs.type, char)
+				if index == -1 || index > types.vector_len(type) {
+					error(checker, v, "can not swizzle vector of type '%s' with coordinate '%v'", type, char)
 				}
 				if index != -1 {
 					if seen[index] {
@@ -1950,12 +1968,12 @@ check_expr_internal :: proc(
 			}
 
 			if len(v.selector.text) == 1 {
-				operand.type = types.vector_elem(lhs.type)
+				operand.type = types.vector_elem(type)
 				operand.mode = lhs.mode
 				return
 			}
 
-			operand.type = types.vector_new(types.vector_elem(lhs.type), len(v.selector.text), checker.allocator)
+			operand.type = types.vector_new(types.vector_elem(type), len(v.selector.text), checker.allocator)
 			operand.mode = lhs.mode
 			if duplicates {
 				operand.mode = .RValue
@@ -1963,8 +1981,8 @@ check_expr_internal :: proc(
 			return
 		}
 
-		if lhs.type.kind == .Struct {
-			for field in lhs.type.variant.(^types.Struct).fields {
+		if type.kind == .Struct {
+			for field in type.variant.(^types.Struct).fields {
 				if field.name.text == v.selector.text {
 					operand.type = field.type
 					operand.mode = lhs.mode
@@ -1972,7 +1990,7 @@ check_expr_internal :: proc(
 				}
 			}
 		}
-		error(checker, v, "expression of type %v has no field called '%s'", lhs.type, v.selector.text)
+		error(checker, v, "expression of type %v has no field called '%s'", type, v.selector.text)
 
 	case ^ast.Expr_Call:
 		fn := check_expr_internal(checker, v.lhs, {})
@@ -2275,7 +2293,7 @@ check_expr_internal :: proc(
 					return
 				}
 				operand.type    = types.t_invalid
-				operand.mode    = .NoValue
+				operand.mode    = .No_Value
 				operand.is_call = true
 			case .Texture_Size:
 				if len(v.args) != 1 {
@@ -2356,6 +2374,99 @@ check_expr_internal :: proc(
 			}
 			operand.type = fn.type
 			operand.mode = .RValue
+		case .Proc_Group:
+			group      := fn.type.variant.(^types.Proc_Group)
+			candidates := make([dynamic]^types.Proc, len(group.members), context.temp_allocator)
+			copy(candidates[:], group.members[:])
+
+			arg_index := 0
+			for arg in v.args {
+				type_hint: ^types.Type
+				if len(candidates) == 1 {
+					candidate := candidates[0]
+					if arg_index < len(candidate.args) {
+						type_hint = candidate.args[arg_index].type
+					}
+				}
+
+				args := []^types.Type{ check_expr(checker, arg.value, type_hint = type_hint).type, }
+				deconstruct_tuple(checker, &args)
+
+				for arg in args {
+					i := 0
+					for i := 0; i < len(candidates); {
+						remove: bool
+						defer if remove {
+							unordered_remove(&candidates, i)
+						} else {
+							i += 1
+						}
+
+						candidate := candidates[i]
+						if arg_index >= len(candidate.args) {
+							remove = true
+							continue
+						}
+
+						if !types.implicitly_castable(arg, candidate.args[arg_index].type) {
+							remove = true
+							continue
+						}
+					}
+					arg_index += 1
+				}
+			}
+
+			for i := 0; i < len(candidates); {
+				candidate := candidates[i]
+				if arg_index != len(candidate.args) {
+					unordered_remove(&candidates, i)
+				} else {
+					i += 1
+				}
+			}
+
+			switch len(candidates) {
+			case 0:
+				error(checker, fn, "no matching overload in procedure group: %v", group)
+			case 1:
+				for member, i in group.members {
+					if member == candidates[0] {
+						v.group_member = i
+						break
+					}
+				}
+
+				{
+					fn := candidates[0]
+					arg_index := 0
+					for arg in v.args {
+						type_hint: ^types.Type
+						type_hint = fn.args[arg_index].type
+
+						args := []^types.Type{ check_expr(checker, arg.value, type_hint = type_hint).type, }
+						deconstruct_tuple(checker, &args)
+
+						if len(args) == 1 {
+							v.args[arg_index].value.type = fn.args[arg_index].type
+						}
+						arg_index += len(args)
+					}
+				}
+
+				operand.mode    = .RValue
+				operand.type    = candidates[0].return_type
+			    operand.is_call = true
+				return
+			case:
+				error(checker, fn, "ambigous overloads in procedure group: %v", group)
+			}
+
+			operand.type = types.t_invalid
+			operand.mode = .Invalid
+			operand.is_call = true
+			return
+
 		case:
 			if fn.type.kind != .Proc {
 				error(checker, v, "expected a procedure in call expression")
@@ -2375,22 +2486,19 @@ check_expr_internal :: proc(
 					continue
 				}
 
-				if value.type.kind == .Tuple {
-					for field_type in value.type.variant.(^types.Struct).fields {
-						if arg_index >= len(proc_type.args) {
-							break
-						}
-						if !types.implicitly_castable(field_type.type, proc_type.args[arg_index].type) {
-							error(checker, value, "mismatched type in at argument %d: %v vs %v", arg_index, proc_type.args[arg_index].type, value.type)
-						}
+				arg_types: []^types.Type = { value.type, }
+				deconstruct_tuple(checker, &arg_types)
+
+				for arg_type in arg_types {
+					if arg_index >= len(proc_type.args) {
+						break
+					}
+					if !types.implicitly_castable(arg_type, proc_type.args[arg_index].type) {
+						error(checker, value, "mismatched type at argument %d: expected %v, got %v", arg_index, proc_type.args[arg_index].type, arg_type)
+					}
+					if len(arg_types) == 1 {
 						e.value.type = proc_type.args[arg_index].type
-						arg_index += 1
 					}
-				} else {
-					if !types.implicitly_castable(value.type, proc_type.args[arg_index].type) {
-						error(checker, value, "mismatched type in at argument %d: %v vs %v", arg_index, proc_type.args[arg_index].type, value.type)
-					}
-					e.value.type = proc_type.args[arg_index].type
 					arg_index += 1
 				}
 			}
@@ -2904,15 +3012,21 @@ check_expr_or_type :: proc(
 	attributes:        []ast.Field = {},
 	type_hint:         ^types.Type = nil,
 	check_proc_bodies: bool        = true,
+	allow_proc_groups: bool        = false,
 ) -> (operand: Operand) {
 	operand = check_expr_internal(checker, expr, attributes, type_hint, check_proc_bodies)
 	switch operand.mode {
 	case .RValue, .LValue, .Const, .Type, .Proc:
 		assert(operand.type != nil)
 		return
+	case .Proc_Group:
+		if allow_proc_groups {
+			return
+		}
+		error(checker, operand, "expected an expression, got procedure group")
 	case .Builtin:
 		error(checker, operand, "expected an expression, got builtin")
-	case .NoValue:
+	case .No_Value:
 		error(checker, operand, "expected an expression, got no value")
 	case .Library:
 		error(checker, operand, "expected an expression, got library")
@@ -2929,14 +3043,14 @@ check_expr_or_type :: proc(
 check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}, type_hint: ^types.Type = nil, allow_no_value := false) -> (operand: Operand) {
 	operand = check_expr_internal(checker, expr, attributes, type_hint)
 	switch operand.mode {
-	case .RValue, .LValue, .Const, .Proc:
+	case .RValue, .LValue, .Const, .Proc, .Proc_Group:
 		assert(operand.type != nil)
 		return
 	case .Builtin:
 		error(checker, operand, "expected an expression, got builtin")
 	case .Type:
 		error(checker, operand, "expected an expression, got type")
-	case .NoValue:
+	case .No_Value:
 		if allow_no_value {
 			return
 		}
@@ -2955,14 +3069,14 @@ check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}) -> ^types.Type {
 	operand := check_expr_internal(checker, expr, attributes)
 	switch operand.mode {
-	case .RValue, .LValue, .Const, .Proc:
+	case .RValue, .LValue, .Const, .Proc, .Proc_Group:
 		error(checker, operand, "expected a type, got expression")
 	case .Builtin:
 		error(checker, operand, "expected a type, got builtin")
 	case .Type:
 		assert(operand.type != nil)
 		return operand.type
-	case .NoValue:
+	case .No_Value:
 		error(checker, operand, "expected a type, got no value")
 	case .Library:
 		error(checker, operand, "expected a type, got library")
@@ -3039,6 +3153,8 @@ entity_to_operand :: proc(e: ^Entity, operand: ^Operand) {
 		}
 	case .Proc:
 		operand.mode = .Proc
+	case .Proc_Group:
+		operand.mode = .Proc_Group
 	case .Builtin:
 		operand.mode       = .Builtin
 		operand.builtin_id = e.builtin_id
@@ -3046,4 +3162,19 @@ entity_to_operand :: proc(e: ^Entity, operand: ^Operand) {
 		operand.mode    = .Library
 		operand.library = e.library
 	}
+}
+
+deconstruct_tuple :: proc(checker: ^Checker, ts: ^[]^types.Type) -> bool {
+	type := ts[0]
+	if type.kind != .Tuple {
+		return false
+	}
+
+	tuple := type.variant.(^types.Struct)
+	ts^    = make([]^types.Type, len(tuple.fields), context.temp_allocator)
+	for field, i in tuple.fields {
+		ts[i] = field.type
+	}
+
+	return true
 }
