@@ -490,6 +490,11 @@ generate :: proc(
 			cg_stmt(&ctx, &b, e.decl, true)
 		}
 
+		for p in ctx.procs {
+			cg_proc_internal(&ctx, p.expr, p.id, strings.concatenate({ ctx.name_prefix, p.link_name, }))
+		}
+		clear(&ctx.procs)
+
 		ctx.libraries[name] = {
 			entities = scope.entities,
 		}
@@ -2298,10 +2303,22 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 			spv.OpReturn(builder)
 		} else {
 			return_ti := cg_type(ctx, type)
-			for value, i in v.values {
-				v   := cg_expr(ctx, builder, value)
-				ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, type.fields[i].type, .Function), return_value, cg_constant(ctx, i64(i), nil).id)
-				spv.OpStore(builder, ptr, cg_cast(ctx, builder, v, type.fields[i].type))
+			i: int
+			for value in v.values {
+				values := []Value{ cg_expr(ctx, builder, value), }
+				deconstruct_tuple(ctx, builder, value.type, &values)
+
+				for v in values {
+					ptr := spv.OpAccessChain(
+						builder,
+						cg_type_ptr(ctx, type.fields[i].type, .Function),
+						return_value,
+						cg_constant(ctx, i64(i), nil).id,
+					)
+					spv.OpStore(builder, ptr, cg_cast(ctx, builder, v, type.fields[i].type))
+
+					i += 1
+				}
 			}
 			spv.OpReturnValue(builder, spv.OpLoad(builder, return_ti.type, return_value))
 		}
@@ -2540,29 +2557,12 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		lhs_i := 0
 		for value in v.rhs {
 			values := []Value{ cg_expr(ctx, builder, value), }
-			deconstruct_tuple: if value.type.kind == .Tuple {
-				type := value.type.variant.(^types.Struct)
-				v    := values[0]
+			deconstruct_tuple(ctx, builder, value.type, &values)
 
-				if len(type.fields) == 1 {
-					values[0] = {
-						type = type.fields[0].type,
-						id   = v.id,
-					}
-					break deconstruct_tuple
-				}
-
-				values = make([]Value, len(type.fields), context.temp_allocator)
-				for &val, i in values {
-					ti := cg_type(ctx, type.fields[i].type)
-					val = {
-						type = type.fields[i].type,
-						id   = spv.OpCompositeExtract(builder, ti.type, v.id, u32(i)),
-					}
-				}
-			}
 			for rhs in values {
-				lhs := cg_expr(ctx, builder, v.lhs[lhs_i], deref = false)
+				lhs   := cg_expr(ctx, builder, v.lhs[lhs_i], deref = false)
+				lhs_i += 1
+
 				if lhs.explicit_layout {
 					type := lhs.type.variant.(^types.Struct)
 					// TODO: handle members that are structs
@@ -2644,7 +2644,6 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 				} else {
 					spv.OpStore(builder, lhs.id, value)
 				}
-				lhs_i += 1
 			}
 		}
 	case ^ast.Stmt_Expr:
@@ -2685,4 +2684,30 @@ get_runtime_proc :: proc(ctx: ^Context, runtime_proc: Runtime_Proc) -> spv.Id {
 	}
 
 	return ctx.runtime_procs[runtime_proc]
+}
+
+deconstruct_tuple :: proc(ctx: ^Context, builder: ^spv.Builder, type: ^types.Type, values: ^[]Value) {
+	if type.kind != .Tuple {
+		return
+	}
+
+	type := type.variant.(^types.Struct)
+	v    := values[0]
+
+	if len(type.fields) == 1 {
+		values[0] = {
+			type = type.fields[0].type,
+			id   = v.id,
+		}
+		return
+	}
+
+	values^ = make([]Value, len(type.fields), context.temp_allocator)
+	for &val, i in values {
+		ti := cg_type(ctx, type.fields[i].type)
+		val = {
+			type = type.fields[i].type,
+			id   = spv.OpCompositeExtract(builder, ti.type, v.id, u32(i)),
+		}
+	}
 }

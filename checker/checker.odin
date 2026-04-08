@@ -295,6 +295,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				if !types.implicitly_castable(value.type, proc_type.returns[return_index].type) {
 					error(checker, value, "mismatched type in return statement: %v vs %v", proc_type.returns[return_index].type, value.type)
 				}
+				e.type        = proc_type.returns[return_index].type
 				return_index += 1
 			}
 		}
@@ -608,7 +609,6 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				}
 				name        := names[name_i]
 				entity_kind := Entity_Kind.Var
-				value: types.Const_Value
 
 				type := explicit_type
 				if type == nil {
@@ -628,7 +628,6 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					entity_kind,
 					name,
 					type,
-					value     = value,
 					decl      = v,
 					flags     = flags,
 					allocator = checker.allocator,
@@ -1054,7 +1053,7 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 		return
 	}
 
-	v := check_expr_or_type(checker, d.values[value_index], d.attributes, type)
+	v := check_expr_or_type(checker, d.values[value_index], d.attributes, type, false)
 
 	#partial switch v.mode {
 	case .Type:
@@ -1088,6 +1087,14 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 		}
 	}
 
+	assign_type(e.type, type)
+
+	if v.mode == .Proc {
+		e.flags -= { .In_Progress, }
+		e.flags += { .Resolved, }
+		_        = check_expr_or_type(checker, d.values[value_index], d.attributes, type, true)
+	}
+
 	if .Enable_Reflection not_in checker.flags && d.shader_stage != nil {
 		type    := type.variant.(^types.Proc)
 		inputs  := make([]Reflection_Info, len(type.args),    checker.allocator)
@@ -1116,8 +1123,6 @@ resolve_constant :: proc(checker: ^Checker, e: ^Entity) {
 
 	d.types[value_index]       = type
 	d.values[value_index].type = type
-
-	assign_type(e.type, type)
 }
 
 check_const_stmts :: proc(checker: ^Checker, stmts: []^ast.Stmt) {
@@ -1660,7 +1665,13 @@ check_proc_type :: proc(checker: ^Checker, p: $T) -> ^types.Proc {
 }
 
 @(require_results)
-check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field, type_hint: ^types.Type = nil) -> (operand: Operand) {
+check_expr_internal :: proc(
+	checker:           ^Checker,
+	expr:              ^ast.Expr,
+	attributes:        []ast.Field,
+	type_hint:         ^types.Type = nil,
+	check_proc_bodies: bool        = true,
+) -> (operand: Operand) {
 	operand.expr = expr
 
 	defer {
@@ -1817,6 +1828,10 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 		operand.type = type
 		operand.mode = .Proc
 
+		if !check_proc_bodies {
+			return
+		}
+
 		scope_push(checker, .Proc).procedure = Scope_Proc_Info { type = type, lit = v, }
 		defer scope_pop(checker)
 
@@ -1826,14 +1841,15 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 			}
 		}
 
-		scope_push(checker, .Block)
-		defer scope_pop(checker)
-
 		for ret in type.returns {
 			if ret.name.text != "" {
 				scope_insert_entity(checker, entity_new(.Var, ret.name, ret.type, flags = { .Resolved, }, allocator = checker.allocator))
 			}
 		}
+
+		scope_push(checker, .Block)
+		defer scope_pop(checker)
+
 		check_stmt_list(checker, v.body)
 
 	case ^ast.Expr_Proc_Sig:
@@ -2882,8 +2898,14 @@ check_expr_internal :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []as
 }
 
 @(require_results)
-check_expr_or_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}, type_hint: ^types.Type = nil) -> (operand: Operand) {
-	operand = check_expr_internal(checker, expr, attributes, type_hint)
+check_expr_or_type :: proc(
+	checker:           ^Checker,
+	expr:              ^ast.Expr,
+	attributes:        []ast.Field = {},
+	type_hint:         ^types.Type = nil,
+	check_proc_bodies: bool        = true,
+) -> (operand: Operand) {
+	operand = check_expr_internal(checker, expr, attributes, type_hint, check_proc_bodies)
 	switch operand.mode {
 	case .RValue, .LValue, .Const, .Type, .Proc:
 		assert(operand.type != nil)

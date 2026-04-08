@@ -537,7 +537,7 @@ parse_expr :: proc(parser: ^Parser, min_power := 0, allow_compound_literals := t
 		}
 
 		token_advance(parser)
-		rhs := parse_expr(parser, power) or_return
+		rhs := parse_expr(parser, power, allow_compound_literals) or_return
 		e   := ast.new(ast.Expr_Binary, lhs.start, parser.end_location, parser.allocator)
 
 		e.op  = op.kind

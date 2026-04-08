@@ -173,6 +173,16 @@ when SHADOW_PASS {
 		return c2 + c3
 	}
 
+	foo :: proc() -> [2]f32 {
+		v: [2]f32 = 69
+		return v
+	}
+
+	bar :: proc() -> [2]f32 {
+		v := foo()
+		return v
+	}
+
 	test_quaternion :: proc(q: quaternion128) {
 		q2 := q + q
 		nq := -q
