@@ -217,3 +217,15 @@ multi :: proc() {
 	group(f, 123)
 	group(bar(1))
 }
+
+@(fragment_shader)
+foo_shader :: proc() -> (
+	a: f32 @ 0,
+	b: f32 @ 1,
+) {
+	bar :: proc() -> (a, b: f32) {
+		return 1, 2
+	}
+
+	return bar()
+}

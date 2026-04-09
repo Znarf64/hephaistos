@@ -280,134 +280,135 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 		spv_storage_class = .Private
 	}
 
-	switch v in decl.derived_decl {
-	case ^ast.Decl_Import:
-	case ^ast.Decl_Value:
-		if v.interface == .Uniform || v.interface == .Uniform_Buffer {
-			value_builder     = nil
-			decl_builder      = &ctx.globals
-			storage_class     = .Uniform
-			spv_storage_class = .Uniform
-			flags             = { .Block, .Explicit_Layout, }
-			has_nil_value     = false
-			annotate          = true
-		}
+	v, ok := decl.derived_decl.(^ast.Decl_Value)
+	if !ok {
+		return
+	}
 
-		if v.interface == .Push_Constant {
-			value_builder     = nil
-			decl_builder      = &ctx.globals
-			storage_class     = .Push_Constant
-			spv_storage_class = .PushConstant
-			flags             = { .Block, .Explicit_Layout, }
-			has_nil_value     = false
-		}
+	if v.interface == .Uniform || v.interface == .Uniform_Buffer {
+		value_builder     = nil
+		decl_builder      = &ctx.globals
+		storage_class     = .Uniform
+		spv_storage_class = .Uniform
+		flags             = { .Block, .Explicit_Layout, }
+		has_nil_value     = false
+		annotate          = true
+	}
 
-		if v.interface == .Storage_Buffer {
-			ctx.extensions["SPV_KHR_storage_buffer_storage_class"] = {}
+	if v.interface == .Push_Constant {
+		value_builder     = nil
+		decl_builder      = &ctx.globals
+		storage_class     = .Push_Constant
+		spv_storage_class = .PushConstant
+		flags             = { .Block, .Explicit_Layout, }
+		has_nil_value     = false
+	}
 
-			value_builder     = nil
-			decl_builder      = &ctx.globals
-			storage_class     = .Storage_Buffer
-			spv_storage_class = .StorageBuffer
-			flags             = { .Block, .Explicit_Layout, }
-			has_nil_value     = false
-			annotate          = true
-		}
+	if v.interface == .Storage_Buffer {
+		ctx.extensions["SPV_KHR_storage_buffer_storage_class"] = {}
 
-		prev_link_name := ctx.link_name
-		if v.link_name != "" {
-			ctx.link_name = v.link_name
-		}
-		defer if v.link_name != "" {
-			ctx.link_name = prev_link_name
-		}
+		value_builder     = nil
+		decl_builder      = &ctx.globals
+		storage_class     = .Storage_Buffer
+		spv_storage_class = .StorageBuffer
+		flags             = { .Block, .Explicit_Layout, }
+		has_nil_value     = false
+		annotate          = true
+	}
 
-		if v.local_size != 0 {
-			ctx.local_size = v.local_size
-		}
+	prev_link_name := ctx.link_name
+	if v.link_name != "" {
+		ctx.link_name = v.link_name
+	}
+	defer if v.link_name != "" {
+		ctx.link_name = prev_link_name
+	}
 
-		if v.mutable {
-			if len(v.values) == 0 {
-				for type, i in v.types {
-					if types.is_sampler(type) || types.is_image(type) && v.interface == .Uniform {
-						assert(len(v.types) == 1)
-						storage_class     = .Uniform_Constant
-						spv_storage_class = .UniformConstant
-						has_nil_value     = false
-						annotate          = true
-					}
+	if v.local_size != 0 {
+		ctx.local_size = v.local_size
+	}
 
-					type_info := cg_type(ctx, type, flags)
-					init: Maybe(spv.Id)
-					if has_nil_value {
-						init = cg_nil_value(ctx, type_info)
-					}
-					id   := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
-					name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
-					cg_insert_entity(ctx, name, storage_class, type, id)
-
-					if annotate {
-						if v.binding != -1 {
-							spv.OpDecorate(&ctx.annotations, id, .Binding, u32(v.binding))
-						}
-						if v.descriptor_set != -1 {
-							spv.OpDecorate(&ctx.annotations, id, .DescriptorSet, u32(v.descriptor_set))
-						}
-						if v.location != -1 {
-							spv.OpDecorate(&ctx.annotations, id, .Location, u32(v.location))
-						}
-					}
+	if v.mutable {
+		if len(v.values) == 0 {
+			for type, i in v.types {
+				if types.is_sampler(type) || types.is_image(type) && v.interface == .Uniform {
+					assert(len(v.types) == 1)
+					storage_class     = .Uniform_Constant
+					spv_storage_class = .UniformConstant
+					has_nil_value     = false
+					annotate          = true
 				}
-			} else {
-				if global {
-					for value, i in v.values {
-						type      := v.types[i]
-						type_info := cg_type(ctx, type, flags)
-						init      := cg_expr(ctx, nil, value).id
-						id        := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
-						name      := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
-						cg_insert_entity(ctx, name, storage_class, type, id)
+
+				type_info := cg_type(ctx, type, flags)
+				init: Maybe(spv.Id)
+				if has_nil_value {
+					init = cg_nil_value(ctx, type_info)
+				}
+				id   := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
+				name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
+				cg_insert_entity(ctx, name, storage_class, type, id)
+
+				if annotate {
+					if v.binding != -1 {
+						spv.OpDecorate(&ctx.annotations, id, .Binding, u32(v.binding))
 					}
-				} else {
-					lhs_i: int
-					for value in v.values {
-						init := cg_expr(ctx, value_builder, value)
-						values: []Value = { init, }
-						deconstruct_tuple(ctx, value_builder, value.type, &values)
-
-						for value in values {
-							type_info := cg_type(ctx, value.type, flags)
-							ptr       := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class)
-							spv.OpStore(value_builder, ptr, value.id)
-
-							name := v.lhs[lhs_i].derived_expr.(^ast.Expr_Ident).ident.text
-							cg_insert_entity(ctx, name, storage_class, value.type, ptr)
-
-							lhs_i += 1
-						}
+					if v.descriptor_set != -1 {
+						spv.OpDecorate(&ctx.annotations, id, .DescriptorSet, u32(v.descriptor_set))
+					}
+					if v.location != -1 {
+						spv.OpDecorate(&ctx.annotations, id, .Location, u32(v.location))
 					}
 				}
 			}
 		} else {
-			for value, i in v.values {
-				name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
-
-				#partial switch value.type.kind {
-				case .Proc:
-					prev_link_name := ctx.link_name
-					if v.link_name == "" {
-						ctx.link_name = name
-					}
-					defer if v.link_name == "" {
-						ctx.link_name = prev_link_name
-					}
-
-					val := cg_expr(ctx, nil, value)
-					cg_insert_entity_value(ctx, name, val)
-				case .Proc_Group:
-					val := cg_expr(ctx, nil, value)
-					cg_insert_entity_value(ctx, name, val)
+			if global {
+				for value, i in v.values {
+					type      := v.types[i]
+					type_info := cg_type(ctx, type, flags)
+					init      := cg_expr(ctx, nil, value).id
+					id        := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
+					name      := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
+					cg_insert_entity(ctx, name, storage_class, type, id)
 				}
+			} else {
+				lhs_i: int
+				for value in v.values {
+					init := cg_expr(ctx, value_builder, value)
+					values: []Value = { init, }
+					deconstruct_tuple(ctx, value_builder, value.type, &values)
+
+					for value in values {
+						type_info := cg_type(ctx, value.type, flags)
+						ptr       := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class)
+						spv.OpStore(value_builder, ptr, value.id)
+
+						name := v.lhs[lhs_i].derived_expr.(^ast.Expr_Ident).ident.text
+						cg_insert_entity(ctx, name, storage_class, value.type, ptr)
+
+						lhs_i += 1
+					}
+				}
+			}
+		}
+	} else {
+		for value, i in v.values {
+			name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
+
+			#partial switch value.type.kind {
+			case .Proc:
+				prev_link_name := ctx.link_name
+				if v.link_name == "" {
+					ctx.link_name = name
+				}
+				defer if v.link_name == "" {
+					ctx.link_name = prev_link_name
+				}
+
+				val := cg_expr(ctx, nil, value)
+				cg_insert_entity_value(ctx, name, val)
+			case .Proc_Group:
+				val := cg_expr(ctx, nil, value)
+				cg_insert_entity_value(ctx, name, val)
 			}
 		}
 	}
@@ -2329,19 +2330,32 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 
 		proc_scope   := cg_lookup_proc_scope(ctx)
 		return_value := proc_scope.return_value
+		return_type  := proc_scope.return_type
 
 		if return_value == 0 { // return values are shader stage outputs
-			for value, i in v.values {
-				v   := cg_expr(ctx, builder, value)
-				ptr := proc_scope.outputs[i]
-				spv.OpStore(builder, ptr, v.id)
+			type_fields: []types.Field
+			if types.is_tuple(return_type) {
+				type_fields = return_type.variant.(^types.Struct).fields
+			} else {
+				type_fields = { { type = return_type, }, }
+			}
+			i: int
+			for value in v.values {
+				values := []Value{ cg_expr(ctx, builder, value), }
+				deconstruct_tuple(ctx, builder, value.type, &values)
+
+				for v in values {
+					ptr := proc_scope.outputs[i]
+					spv.OpStore(builder, ptr, cg_cast(ctx, builder, v, type_fields[i].type))
+					i += 1
+				}
 			}
 			spv.OpReturn(builder)
 		} else {
-			return_ti := cg_type(ctx, proc_scope.return_type)
+			return_ti := cg_type(ctx, return_type)
 
-			if proc_scope.return_type.kind == .Tuple {
-				type := proc_scope.return_type.variant.(^types.Struct)
+			if types.is_tuple(return_type) {
+				type := return_type.variant.(^types.Struct)
 
 				i: int
 				for value in v.values {
@@ -2363,7 +2377,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 			} else {
 				assert(len(v.values) == 1)
 				value := cg_expr(ctx, builder, v.values[0])
-				spv.OpStore(builder, return_value, cg_cast(ctx, builder, value, proc_scope.return_type))
+				spv.OpStore(builder, return_value, cg_cast(ctx, builder, value, return_type))
 			}
 
 			spv.OpReturnValue(builder, spv.OpLoad(builder, return_ti.type, return_value))

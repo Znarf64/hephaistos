@@ -49,7 +49,6 @@ Entity :: struct {
 	value:      types.Const_Value,
 	builtin_id: ast.Builtin_Id,
 	flags:      Entity_Flags,
-	group_members: []^types.Type,
 }
 
 @(require_results)
@@ -57,10 +56,9 @@ entity_new :: proc(
 	kind:       Entity_Kind,
 	ident:      tokenizer.Token,
 	type:       ^types.Type,
-	value:      types.Const_Value = nil,
-	decl:       ^ast.Decl         = nil,
-	builtin_id: ast.Builtin_Id    = nil,
-	flags:      Entity_Flags      = {},
+	decl:       ^ast.Decl      = nil,
+	builtin_id: ast.Builtin_Id = nil,
+	flags:      Entity_Flags   = {},
 	allocator:  mem.Allocator,
 ) -> ^Entity {
 	e := new(Entity, allocator)
@@ -68,7 +66,6 @@ entity_new :: proc(
 	e.type       = type
 	e.ident      = ident
 	e.name       = ident.text
-	e.value      = value
 	e.decl       = decl
 	e.builtin_id = builtin_id
 	e.flags      = flags
