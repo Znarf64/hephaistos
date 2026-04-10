@@ -2,9 +2,10 @@ package hephaistos_checker
 
 import "base:runtime"
 
-import spv "../spirv-odin"
-import "../types"
 import "../ast"
+import "../types"
+
+import spv "../spirv-odin"
 
 Interface_Usage :: enum {
 	In = 1,

@@ -2,13 +2,13 @@ package example
 
 import "base:runtime"
 
-import "core:slice"
-import "core:strings"
-import "core:mem"
 import "core:fmt"
+import glm "core:math/linalg/glsl"
+import "core:mem"
 import "core:os"
 import "core:prof/spall"
-import glm "core:math/linalg/glsl"
+import "core:slice"
+import "core:strings"
 
 import hep "../.."
 
@@ -29,6 +29,9 @@ when ENABLE_SPALL {
 	spall_exit :: proc "contextless" (proc_address, call_site_return_address: rawptr, loc: runtime.Source_Code_Location) {
 		spall._buffer_end(&spall_ctx, &spall_buffer)
 	}
+} else {
+	_ :: runtime
+	_ :: spall
 }
 
 main :: proc() {
@@ -47,7 +50,7 @@ main :: proc() {
 		spall_ctx = spall.context_create("trace.spall")
 		defer spall.context_destroy(&spall_ctx)
 
-		buffer_backing := make([]u8, spall.BUFFER_DEFAULT_SIZE)
+		buffer_backing := make([]u8, 1 << 24)
 		defer delete(buffer_backing)
 
 		spall_buffer = spall.buffer_create(buffer_backing)

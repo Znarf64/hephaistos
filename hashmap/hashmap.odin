@@ -1,7 +1,7 @@
 package hashmap
 
-import "base:runtime"
 import "base:builtin"
+import "base:runtime"
 
 import "core:fmt"
 import "core:io"

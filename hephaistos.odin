@@ -2,19 +2,18 @@ package hephaistos
 
 import "base:runtime"
 
-import "core:io"
 import "core:fmt"
+import "core:io"
 import "core:reflect"
 import "core:terminal/ansi"
 
-_ :: reflect
-
-import "tokenizer"
-import "parser"
 import "ast"
-import "checker"
-import "types"
 import "cg"
+import "checker"
+import "parser"
+import "tokenizer"
+import "types"
+
 import spv "spirv-odin"
 
 Token              :: tokenizer.Token
@@ -200,6 +199,9 @@ when !HEPHAISTOS_NO_TYPE_FORMATTER {
 
 		delete(_user_formatters)
 	}
+} else {
+	_ :: reflect
+	_ :: runtime
 }
 
 print_error :: proc(w: io.Writer, file_name: string, lines: []string, error: Error) -> (n: int) {

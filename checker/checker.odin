@@ -10,6 +10,7 @@ import "core:reflect"
 import "../ast"
 import "../tokenizer"
 import "../types"
+
 import spv "../spirv-odin"
 
 @(require)
@@ -29,7 +30,7 @@ Library :: struct {
 
 to_library :: proc(checker: Checker) -> Library {
 	return {
-		entities = checker.scope.elements,
+		entities = checker.scope.entities,
 	}
 }
 
@@ -160,16 +161,10 @@ Operand :: struct {
 	is_call:    bool,
 }
 
-Scope_Proc_Info :: struct {
-	type: ^types.Proc,
-	lit:  ^ast.Expr_Proc_Lit,
-}
-
 Scope :: struct {
 	parent:    ^Scope,
-	elements:  map[string]^Entity,
-	procedure: Maybe(Scope_Proc_Info),
-	label:     Maybe(tokenizer.Token),
+	entities:  map[string]^Entity,
+	proc_type: ^types.Proc,
 	kind:      Scope_Kind,
 }
 
@@ -186,32 +181,33 @@ scope_new :: proc(parent: ^Scope, kind: Scope_Kind, allocator: mem.Allocator) ->
 	s, _ := new(Scope, allocator)
 	s.parent = parent
 	s.kind   = kind
-	s.elements.allocator = allocator
+	s.entities.allocator = allocator
 	return s
 }
 
 @(require_results)
-scope_lookup :: proc(checker: ^Checker, name: string) -> (e: ^Entity, ok: bool) {
+scope_lookup :: proc(checker: ^Checker, token: tokenizer.Token) -> (e: ^Entity, ok: bool) {
 	s := checker.scope
 	for s != nil {
-		e, ok = s.elements[name]
+		e, ok = s.entities[token.text]
 		if ok {
 			decl_resolve(checker, e)
 			return
 		}
 		s = s.parent
 	}
+	error(checker, token, "unknown identifier: '%s'", token.text)
 	return
 }
 
-@(require_results)
-scope_lookup_label :: proc(checker: ^Checker, name: string) -> (s: ^Scope, ok: bool) {
-	s = checker.scope
-	for s != nil {
-		if label, ok := s.label.?; ok && label.text == name {
-			return s, true
-		}
-		s = s.parent
+scope_lookup_label :: proc(checker: ^Checker, label: tokenizer.Token) -> (s: ^Scope, ok: bool) {
+	e := scope_lookup(checker, label) or_return
+	s  = e.scope
+
+
+	if e.kind != .Label {
+		error(checker, label, "expected a label, got %v", entity_kind_strings[e.kind])
+		ok = false
 	}
 
 	return
@@ -221,9 +217,8 @@ scope_lookup_label :: proc(checker: ^Checker, name: string) -> (s: ^Scope, ok: b
 lookup_proc_type :: proc(checker: ^Checker) -> (e: ^types.Proc, ok: bool) {
 	s := checker.scope
 	for s != nil {
-		p, ok := s.procedure.?
-		if ok {
-			return p.type, true
+		if s.proc_type != nil {
+			return s.proc_type, true
 		}
 		s = s.parent
 	}
@@ -244,15 +239,22 @@ lookup_scope_by_kind :: proc(checker: ^Checker, mask: bit_set[Scope_Kind]) -> (s
 	return
 }
 
-scope_push :: proc(c: ^Checker, kind: Scope_Kind) -> ^Scope {
-	c.scope = scope_new(c.scope, kind, c.allocator)
-	return c.scope
+scope_push :: proc(checker: ^Checker, kind: Scope_Kind, label: tokenizer.Token = {}) -> ^Scope {
+	checker.scope = scope_new(checker.scope, kind, checker.allocator)
+
+	if label.text != "" {
+		e      := entity_new(.Label, label, nil, flags = { .Resolved, }, allocator = checker.allocator)
+		e.scope = checker.scope
+		scope_insert_entity(checker, e)
+	}
+
+	return checker.scope
 }
 
-scope_pop :: proc(c: ^Checker) -> ^Scope {
-	s := c.scope
-	c.scope = s.parent
-	return s
+scope_pop :: proc(checker: ^Checker) -> (s: ^Scope) {
+	s             = checker.scope
+	checker.scope = s.parent
+	return
 }
 
 scope_insert_entity :: proc(checker: ^Checker, e: ^Entity) -> bool {
@@ -266,12 +268,12 @@ scope_insert_entity :: proc(checker: ^Checker, e: ^Entity) -> bool {
 
 	assert(e.name != "")
 	assert(checker.scope != nil)
-	if e.name in checker.scope.elements {
+	if e.name in checker.scope.entities {
 		error(checker, e.ident, "'%s' has already been defined in this scope", e.name)
 		return false
 	}
 
-	checker.scope.elements[e.name] = e
+	checker.scope.entities[e.name] = e
 	return true
 }
 
@@ -311,10 +313,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		return true
 	case ^ast.Stmt_Break:
 		if v.label.text != "" {
-			_, ok := scope_lookup_label(checker, v.label.text)
-			if !ok {
-				error(checker, v, "unknown label: '%s'", v.label.text)
-			}
+			scope_lookup_label(checker, v.label)
 		} else {
 			_, ok := lookup_scope_by_kind(checker, { .Loop, .Switch, })
 			if !ok {
@@ -325,10 +324,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		return true
 	case ^ast.Stmt_Continue:
 		if v.label.text != "" {
-			scope, ok := scope_lookup_label(checker, v.label.text)
-			if !ok {
-				error(checker, v, "unknown label: '%s'", v.label.text)
-			}
+			scope := scope_lookup_label(checker, v.label) or_break
 			if scope.kind != .Loop {
 				error(checker, v, "continue can only be used in loops")
 			}
@@ -341,7 +337,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		return true
 	case ^ast.Stmt_For_Range:
-		scope_push(checker, .Loop).label = v.label
+		scope_push(checker, .Loop, v.label)
 		defer scope_pop(checker)
 
 		start := check_expr(checker, v.start_expr)
@@ -369,7 +365,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		check_stmt_list(checker, v.body)
 		return false
 	case ^ast.Stmt_For:
-		scope_push(checker, .Loop).label = v.label
+		scope_push(checker, .Loop, v.label)
 		defer scope_pop(checker)
 
 		if v.init != nil {
@@ -392,12 +388,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		check_stmt_list(checker, v.body)
 		return false
 	case ^ast.Stmt_Block:
-		scope_push(checker, .Block).label = v.label
+		scope_push(checker, .Block, v.label)
 		defer scope_pop(checker)
 
 		return check_stmt_list(checker, v.body)
 	case ^ast.Stmt_If:
-		scope_push(checker, .Block).label = v.label
+		scope_push(checker, .Block, v.label)
 		defer scope_pop(checker)
 
 		if v.init != nil {
@@ -426,7 +422,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		return false
 
 	case ^ast.Stmt_Switch:
-		scope_push(checker, .Block).label = v.label
+		scope_push(checker, .Block, v.label)
 		defer scope_pop(checker)
 
 		if v.init != nil {
@@ -444,14 +440,14 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					seen_default = true
 				}
 
-				scope_push(checker, .Switch).label = v.label
+				scope_push(checker, .Switch)
 				defer scope_pop(checker)
 
 				check_stmt_list(checker, c.body)
 				continue
 			}
 
-			scope_push(checker, .Switch).label = v.label
+			scope_push(checker, .Switch)
 			defer scope_pop(checker)
 
 			value := check_expr(checker, c.value, type_hint = cond.type)
@@ -896,7 +892,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 			}
 
 			library_name := v.library.text[1:len(v.library.text) - 1]
-			if library, ok := checker.libraries[library_name]; !ok {
+			if library_name not_in checker.libraries {
 				error(checker, v.library, "Imported library does not exist: \"%v\"", library_name)
 			} else {
 				t        := v.library
@@ -1175,7 +1171,7 @@ checker_init :: proc(
 		checker.shared_types[s.name] = s.type
 	}
 
-	for _, &e in checker.scope.elements {
+	for _, &e in checker.scope.entities {
 		e.flags += { .Resolved, }
 	}
 
@@ -1365,10 +1361,10 @@ check_library :: proc(
 @(require_results)
 check :: proc(
 	stmts:     []^ast.Stmt,
-	defines:   map[string]types.Const_Value,
-	types:     []typeid,
-	libraries: map[string]Library,
-	flags           := Flags{},
+	defines:   map[string]types.Const_Value = {},
+	types:     []typeid                     = {},
+	libraries: map[string]Library           = {},
+	flags:     Flags                        = {},
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
@@ -1738,14 +1734,13 @@ check_expr_internal :: proc(
 		}
 
 	case ^ast.Expr_Ident:
-		e, ok := scope_lookup(checker, v.ident.text)
+		e, ok := scope_lookup(checker, v.ident)
 		if !ok {
-			error(checker, expr, "unknown identifier: '%s'", v.ident.text)
 			operand.type = types.t_invalid
 			operand.mode = .Invalid
 			return
 		}
-		entity_to_operand(e, &operand)
+		entity_to_operand(checker, e, &operand)
 		return
 
 	case ^ast.Expr_Interface:
@@ -1810,7 +1805,7 @@ check_expr_internal :: proc(
 			return
 		}
 
-		scope_push(checker, .Proc).procedure = Scope_Proc_Info { type = type, lit = v, }
+		scope_push(checker, .Proc).proc_type = type
 		defer scope_pop(checker)
 
 		for arg in type.args {
@@ -1899,7 +1894,7 @@ check_expr_internal :: proc(
 		if lhs.mode == .Library {
 			v.library = lhs.library
 			if e, ok := checker.libraries[lhs.library].entities[v.selector.text]; ok {
-				entity_to_operand(e, &operand)
+				entity_to_operand(checker, e, &operand)
 				return
 			} else {
 				error(checker, v.selector, "'%s' is not declared by '%s'", v.selector.text, lhs.library)
@@ -2393,7 +2388,6 @@ check_expr_internal :: proc(
 				deconstruct_tuple(checker, &args)
 
 				for arg in args {
-					i := 0
 					for i := 0; i < len(candidates); {
 						remove: bool
 						defer if remove {
@@ -3137,7 +3131,7 @@ error :: proc {
 	error_start_end,
 }
 
-entity_to_operand :: proc(e: ^Entity, operand: ^Operand) {
+entity_to_operand :: proc(checker: ^Checker, e: ^Entity, operand: ^Operand) {
 	operand.type = e.type
 	switch e.kind {
 	case .Invalid:
@@ -3161,6 +3155,10 @@ entity_to_operand :: proc(e: ^Entity, operand: ^Operand) {
 	case .Library:
 		operand.mode    = .Library
 		operand.library = e.library
+	case .Label:
+		error(checker, operand^, "Invalid use of label")
+		operand.type = types.t_invalid
+		operand.mode = .Invalid
 	}
 }
 

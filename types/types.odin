@@ -2,11 +2,11 @@ package hephaistos_types
 
 import "base:runtime"
 
-import "core:io"
 import "core:fmt"
-import "core:strings"
 import "core:hash"
+import "core:io"
 import "core:mem"
+import "core:strings"
 
 import "../tokenizer"
 

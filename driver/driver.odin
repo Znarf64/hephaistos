@@ -5,10 +5,10 @@ import "base:runtime"
 import "core:flags"
 import "core:fmt"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
-import "core:path/filepath"
 
 import hep ".."
 
@@ -117,7 +117,7 @@ main :: proc() {
 	}
 
 	checker: hep.Checker
-	checker, errors = hep.check(stmts, options.defines, {}, flags, context.temp_allocator)
+	checker, errors = hep.check(stmts, options.defines, flags = flags, allocator = context.temp_allocator)
 	if len(errors) != 0 {
 		return
 	}

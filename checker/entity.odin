@@ -16,10 +16,11 @@ Entity_Kind :: enum u32 {
 	Proc_Group,
 	Builtin,
 	Library,
+	Label,
 }
 
 @(rodata)
-entity_kind_string := [Entity_Kind]string{
+entity_kind_strings := [Entity_Kind]string{
 	.Invalid    = "invalid",
 	.Const      = "const",
 	.Type       = "type",
@@ -28,6 +29,7 @@ entity_kind_string := [Entity_Kind]string{
 	.Proc_Group = "proc group",
 	.Builtin    = "builtin",
 	.Library    = "library",
+	.Label      = "Label",
 }
 
 Entity_Flag :: enum {
@@ -49,6 +51,7 @@ Entity :: struct {
 	value:      types.Const_Value,
 	builtin_id: ast.Builtin_Id,
 	flags:      Entity_Flags,
+	scope:      ^Scope,
 }
 
 @(require_results)
