@@ -5,6 +5,8 @@ Binding_Location :: #import(Binding_Location)
 
 SHADOW_PASS :: #config(SHADOW_PASS, false)
 
+#assert(!SHADOW_PASS)
+
 /* VERTEX SHADER */
 
 @(push_constant)
@@ -57,7 +59,7 @@ when SHADOW_PASS {
 		v_tex_coords:      [2]f32 @ 2,
 		v_shadow_position: [3]f32 @ 3,
 	) {
-		
+
 	}
 } else {
 	@(uniform, binding = Binding_Location.Texture)
@@ -137,7 +139,7 @@ when SHADOW_PASS {
 		foo := math.mathsy_proc(420)
 
 		Some_Enum :: enum {
-	
+
 		}
 
 		f: f32
@@ -227,5 +229,15 @@ foo_shader :: proc() -> (
 		return 1, 2
 	}
 
+	foo :: proc() -> f32 {
+		return 69
+	}
+
+	position: [3]f32
+	p: [4]f32 = { xyz = position, w = 1, }
+
 	return bar()
 }
+
+@(uniform, binding = Binding_Location.Image)
+img2: #format(rg8i)image[2][4]f32

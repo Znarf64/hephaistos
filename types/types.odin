@@ -74,6 +74,7 @@ Image :: struct {
 	using base: Type,
 	dimensions: int,
 	texel_type: ^Type,
+	format:     string,
 }
 
 Enum :: struct {
@@ -431,6 +432,10 @@ equal :: proc(a, b: ^Type) -> bool {
 			return false
 		}
 
+		if a.format != b.format {
+			return false
+		}
+
 		return equal(a.texel_type, b.texel_type)
 	}
 
@@ -679,6 +684,7 @@ type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
 	case ^Image:
 		h = type_hash(v.texel_type, h)
 		h = hash.fnv64a(to_bytes(&v.dimensions), h)
+		h = hash.fnv64a(transmute([]byte)v.format, h)
 	case ^Enum:
 		for &val in v.values {
 			h = hash.fnv64a(to_bytes(&val.value), h)
@@ -690,7 +696,7 @@ type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
 		h = type_hash(v.enum_type, h)
 		h = type_hash(v.backing,   h)
 	}
-	
+
 	return h
 }
 
@@ -843,13 +849,14 @@ sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator
 }
 
 @(require_results)
-image_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator) -> ^Image {
+image_new :: proc(texel_type: ^Type, dimensions: int, format: string, allocator: mem.Allocator) -> ^Image {
 	assert(texel_type      != nil)
 	assert(texel_type.size != 0 || texel_type.kind == .Invalid)
 
 	type           := new(.Image, Image, allocator)
 	type.texel_type = texel_type
 	type.dimensions = dimensions
+	type.format     = format
 
 	return type
 }

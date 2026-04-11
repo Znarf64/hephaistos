@@ -6,6 +6,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:reflect"
+import "core:strings"
 
 import "../ast"
 import "../tokenizer"
@@ -504,7 +505,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		if lhs_i != len(lhs) {
 			error(checker, v, "assignment count mismatch: %v vs %v", len(lhs), lhs_i)
 		}
-		
+
 	case ^ast.Stmt_Expr:
 		operand := check_expr(checker, v.expr, allow_no_value = true)
 		if !operand.is_call {
@@ -686,7 +687,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 	if .Enable_Reflection not_in checker.flags {
 		return
 	}
-	
+
 	for lhs in decl.lhs {
 		ident := lhs.derived_expr.(^ast.Expr_Ident).ident.text
 		checker.reflection.interface[ident] = {
@@ -1162,7 +1163,9 @@ checker_init :: proc(
 	scope_insert_entity(checker, entity_new(.Type, { text = "quaternion256", }, types.t_quaternion256, allocator = allocator))
 
 	for name, builtin in builtin_names {
-		scope_insert_entity(checker, entity_new(.Builtin, { text = name, }, nil, builtin_id = builtin, allocator = allocator))
+		if name != "" {
+			scope_insert_entity(checker, entity_new(.Builtin, { text = name, }, nil, builtin_id = builtin, allocator = allocator))
+		}
 	}
 
 	checker.shared_types.allocator = allocator
@@ -1579,7 +1582,7 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 					type     = nil, // patched later
 					location = location,
 				})
-				
+
 				if field.type == nil {
 					if field.value != nil {
 						type = check_expr(checker, field.value).type
@@ -1681,25 +1684,6 @@ check_expr_internal :: proc(
 		}
 
 		return
-
-	case ^ast.Expr_Config:
-		default := check_expr(checker, v.default)
-		switch _ in default.value {
-		case i64, f64, bool:
-		case string:
-			error(checker, default, "default value for config variable has to be a constant boolean or number, got: %v")
-			return
-		}
-		operand.value = default.value
-		if definition, ok := checker.config_vars[v.ident.text]; ok {
-			if reflect.get_union_variant_raw_tag(definition) != reflect.get_union_variant_raw_tag(default.value) {
-				error(checker, v, "type of defined value does not have same type as the default value")
-				return
-			}
-			operand.value = definition
-		}
-		operand.type = default.type
-		operand.mode = .Const
 
 	case ^ast.Expr_Binary:
 		lhs := check_expr(checker, v.lhs)
@@ -1951,7 +1935,7 @@ check_expr_internal :: proc(
 				case 'a', 'w':
 					index = 3
 				}
-				if index == -1 || index > types.vector_len(type) {
+				if index == -1 || index >= types.vector_len(type) {
 					error(checker, v, "can not swizzle vector of type '%s' with coordinate '%v'", type, char)
 				}
 				if index != -1 {
@@ -1988,6 +1972,120 @@ check_expr_internal :: proc(
 		error(checker, v, "expression of type %v has no field called '%s'", type, v.selector.text)
 
 	case ^ast.Expr_Call:
+		if directive, ok := v.lhs.derived_expr.(^ast.Expr_Directive); ok {
+			v.is_directive = true
+			operand.type   = types.t_invalid
+			switch directive.directive {
+			case .Invalid:
+				operand.type = types.t_invalid
+				operand.mode = .Invalid
+			case .Assert:
+				cond:    bool
+				message: string
+				switch len(v.args) {
+				case 0:
+					error(checker, v, "#assert expects one to two arguments, got 0")
+				case:
+					error(checker, v, "#assert expects one to two arguments, got %d", len(v.args))
+					fallthrough
+				case 2:
+					msg := check_expr(checker, v.args[1].value)
+					ok: bool
+					message, ok = msg.value.(string)
+					if !ok {
+						error(checker, v.args[1].value, "expected a constant string as #assert message")
+					}
+					fallthrough
+				case 1:
+					e := check_expr(checker, v.args[0].value)
+					ok: bool
+					cond, ok = e.value.(bool)
+					if !ok {
+						error(checker, v.args[1].value, "expected a constant boolean in #assert")
+						cond = true
+					}
+				}
+				if !cond {
+					error(checker, v, "Compile time assertion failure: %v", message)
+				}
+				operand.mode    = .No_Value
+				operand.is_call = true
+			case .Panic:
+				message: string
+				switch len(v.args) {
+				case 0:
+					error(checker, v, "#panic expects one argument, got 0")
+				case:
+					error(checker, v, "#panic expects one argument, got %d", len(v.args))
+					fallthrough
+				case 1:
+					msg := check_expr(checker, v.args[0].value)
+					ok: bool
+					message, ok = msg.value.(string)
+					if !ok {
+						error(checker, v.args[0].value, "expected a constant string as #panic message")
+					}
+				}
+				error(checker, v, "Compile time panic: %v", message)
+				operand.mode    = .No_Value
+				operand.is_call = true
+			case .Import:
+				if len(v.args) != 1 {
+					error(checker, v, "#import directive expects one argument, got %d", len(v.args))
+					return
+				}
+
+				name: tokenizer.Token
+				if ident, ok := v.args[0].value.derived_expr.(^ast.Expr_Ident); ok {
+					name = ident.ident
+				} else {
+					error(checker, v.args[0].value, "expected an identifier as the name of the config variable")
+					return
+				}
+
+				type, ok := checker.shared_types[name.text]
+				if !ok {
+					error(checker, name, "unknown shared type: %s", name.text)
+					operand.mode = .Type
+					operand.type = types.t_invalid
+					return
+				}
+				operand.type = type
+				operand.mode = .Type
+			case .Config:
+				if len(v.args) != 2 {
+					error(checker, v, "#config directive expects two arguments, got %d", len(v.args))
+					return
+				}
+				default := check_expr(checker, v.args[1].value)
+				#partial switch _ in default.value {
+				case i64, f64, bool:
+				case:
+					error(checker, default, "default value for config variable has to be a constant boolean or number, got: %v")
+					return
+				}
+				operand.value = default.value
+				operand.type = default.type
+				operand.mode = .Const
+
+				name: tokenizer.Token
+				if ident, ok := v.args[0].value.derived_expr.(^ast.Expr_Ident); ok {
+					name = ident.ident
+				} else {
+					error(checker, v.args[0].value, "expected an identifier as the name of the config variable")
+					return
+				}
+
+				if definition, ok := checker.config_vars[name.text]; ok {
+					if reflect.get_union_variant_raw_tag(definition) != reflect.get_union_variant_raw_tag(default.value) {
+						error(checker, v, "type of defined value does not match the type of the default value")
+						return
+					}
+					operand.value = definition
+				}
+			}
+			return
+		}
 		fn := check_expr_internal(checker, v.lhs, {})
 		#partial switch fn.mode {
 		case .Invalid:
@@ -2001,7 +2099,7 @@ check_expr_internal :: proc(
 			case .Size_Of, .Align_Of, .Min, .Max:
 				allow_types = true
 			}
-			
+
 			args := make([]Operand, len(v.args), context.temp_allocator)
 			for &arg, i in args {
 				if allow_types {
@@ -2355,10 +2453,10 @@ check_expr_internal :: proc(
 				operand.type = types.complex_elem(type)
 				operand.mode = .RValue
 			}
-			
+
 		case .Type:
 			v.is_cast = true
-			
+
 			if len(v.args) != 1 {
 				error(checker, v, "too many arguments in cast to %v", fn.type)
 				return
@@ -2450,7 +2548,7 @@ check_expr_internal :: proc(
 
 				operand.mode    = .RValue
 				operand.type    = candidates[0].return_type
-			    operand.is_call = true
+				operand.is_call = true
 				return
 			case:
 				error(checker, fn, "ambigous overloads in procedure group: %v", group)
@@ -2530,7 +2628,12 @@ check_expr_internal :: proc(
 				named = len(f.ident.text) != 0
 			}
 			if named != (len(f.ident.text) != 0) {
-				error(checker, f.value, "mixture of 'field = value' and value elements is not allowed")
+				err := "mixture of 'field = value' and value elements is not allowed"
+				if len(f.ident.text) != 0 {
+					error(checker, f.ident, err)
+				} else {
+					error(checker, f.value, err)
+				}
 			}
 		}
 		v.named = named
@@ -2589,7 +2692,49 @@ check_expr_internal :: proc(
 		case .Vector:
 			type := type.variant.(^types.Vector)
 			if named {
-				error(checker, v, "named values are not supported for vector literals")
+				seen: [4]bool
+				for field in v.fields {
+					coords: [4]int
+					n := len(field.ident.text)
+					for char, i in field.ident.text {
+						index: int = -1
+						switch char {
+						case 'r', 'x':
+							index = 0
+						case 'g', 'y':
+							index = 1
+						case 'b', 'z':
+							index = 2
+						case 'a', 'w':
+							index = 3
+						}
+						if index == -1 || index >= type.count {
+							error(checker, field.ident, "can not swizzle vector of type '%s' with coordinate '%v'", type, char)
+							return
+						}
+						if seen[index] {
+							error(checker, field.ident, "duplicate coordinate in vector compound literal: '%c'", char)
+						}
+						seen[index] = true
+						coords[i]   = index
+					}
+
+					expected_type: ^types.Type
+					if n == 1 {
+						expected_type = type.elem
+					} else {
+						expected_type = types.vector_new(type.elem, n, context.temp_allocator)
+					}
+
+					value := check_expr(checker, field.value, type_hint = expected_type)
+					if !types.implicitly_castable(value.type, expected_type) {
+						error(checker, field.value, "expected value of type %v but got %v", expected_type, value.type)
+						return
+					}
+					if n == 1 {
+						field.value.type = expected_type
+					}
+				}
 				return
 			}
 
@@ -2602,22 +2747,8 @@ check_expr_internal :: proc(
 					t         = v.elem
 					n_values += v.count
 				} else if types.is_tuple(t) {
-					tuple := t.variant.(^types.Struct)
-					for sf in tuple.fields {
-						t := sf.type
-						if types.is_vector(sf.type) {
-							v        := sf.type.variant.(^types.Vector)
-							t         = v.elem
-							n_values += v.count
-						} else {
-							n_values += 1
-						}
-						if !types.implicitly_castable(t, type.elem) {
-							error(checker, field.value, "expected value of type %v but got %v", type.elem, f.type)
-							return
-						}
-					}
-					continue
+					error(checker, field.value, "multi valued expression found where single value was expected")
+					n_values += 1
 				} else {
 					n_values        += 1
 					field.value.type = type.elem
@@ -2629,7 +2760,7 @@ check_expr_internal :: proc(
 			}
 
 			if n_values != type.count {
-				error(checker, v, "expected %d values in compound literal but got %d", type.count, len(v.fields))
+				error(checker, v, "expected %d values in compound literal but got %d", type.count, n_values)
 				return
 			}
 		case .Matrix:
@@ -2740,7 +2871,7 @@ check_expr_internal :: proc(
 			error(checker, v, "expression of type %v can not be indexed", lhs.type)
 			return
 		}
-		
+
 	case ^ast.Expr_Cast:
 		value       := check_expr(checker, v.value)
 		operand.type = check_type(checker, v.type_expr)
@@ -2958,46 +3089,67 @@ check_expr_internal :: proc(
 
 		operand.type = type
 		operand.mode = .Type
-	case ^ast.Type_Import:
-		type, ok := checker.shared_types[v.ident.text]
-		if !ok {
-			error(checker, v.ident, "unknown shared type: %s", v.ident.text)
-			operand.mode = .Type
-			operand.type = types.t_invalid
-			return
-		}
-		operand.type = type
-		operand.mode = .Type
 	case ^ast.Type_Image:
 		dimensions := check_expr(checker, v.dimensions)
-		if dim, ok := dimensions.value.(i64); ok {
-			if dim < 1 || dim > 3 {
-				error(checker, dimensions, "sampler dimension has to be between 1 and 3, got %d", dim)
-				return
-			}
-			texel_type := types.default_type(check_type(checker, v.texel_type))
-			if !(types.is_numeric(texel_type) || types.is_vector(texel_type)) {
-				error(checker, v.texel_type, "texel type of sampler has to be either a numeric type or a vector, got: %v", texel_type)
-				return
-			}
-			if v.is_sampler {
-				operand.type = types.sampler_new(texel_type, int(dim), checker.allocator)
-			} else {
-				operand.type = types.image_new(texel_type, int(dim), checker.allocator)
-			}
-			operand.mode = .Type
-		} else {
+		dim, ok := dimensions.value.(i64)
+		if !ok {
 			error(checker, dimensions, "expected a constant integer as the dimension of a sampler")
+			return
 		}
+
+		if dim < 1 || dim > 3 {
+			error(checker, dimensions, "sampler dimension has to be between 1 and 3, got %d", dim)
+			return
+		}
+
+		image_format: spv.ImageFormat
+		if v.format.text != "" {
+			for name, format in image_format_names {
+				if v.format.text == name {
+					image_format = format
+					break
+				}
+			}
+			if image_format == nil {
+				error(checker, v.format, "unknown image format")
+			}
+		}
+
+		texel_type := types.default_type(check_type(checker, v.texel_type))
+		if !(types.is_numeric(texel_type) || types.is_vector(texel_type)) {
+			error(checker, v.texel_type, "texel type of sampler has to be either a numeric type or a vector, got: %v", texel_type)
+			return
+		}
+
+		if v.is_sampler {
+			operand.type = types.sampler_new(texel_type, int(dim), checker.allocator)
+		} else {
+			operand.type = types.image_new(texel_type, int(dim), v.format.text, checker.allocator)
+		}
+		operand.mode = .Type
 	case ^ast.Type_Bit_Set:
 		enum_type   := check_type(checker, v.enum_type)
 		backing     := check_type(checker, v.backing)
 		operand.type = types.bit_set_new(enum_type, backing, checker.allocator)
 		operand.mode = .Type
+
+	case ^ast.Expr_Directive:
+		error(checker, v, "invalid use of directive")
 	}
 
 	return
 }
+
+@(init)
+image_format_table_init :: proc "contextless" () {
+	context = runtime.default_context()
+
+	for &name, image_format in image_format_names {
+		name = strings.to_lower(reflect.enum_name_from_value(image_format) or_else panic(""))
+	}
+}
+
+image_format_names: [spv.ImageFormat]string
 
 @(require_results)
 check_expr_or_type :: proc(
@@ -3027,7 +3179,7 @@ check_expr_or_type :: proc(
 	case .Invalid:
 	}
 
-	
+
 	operand.mode = .Invalid
 	operand.type = types.t_invalid
 	return

@@ -50,8 +50,8 @@ Ast_Expr_Binary    :: ast.Expr_Binary
 Ast_Expr_Unary     :: ast.Expr_Unary
 Ast_Expr_Constant  :: ast.Expr_Constant
 Ast_Expr_Ident     :: ast.Expr_Ident
+Ast_Expr_Directive :: ast.Expr_Directive
 Ast_Expr_Interface :: ast.Expr_Interface
-Ast_Expr_Config    :: ast.Expr_Config
 Ast_Expr_Proc_Lit  :: ast.Expr_Proc_Lit
 Ast_Expr_Proc_Sig  :: ast.Expr_Proc_Sig
 Ast_Expr_Call      :: ast.Expr_Call
@@ -64,7 +64,6 @@ Ast_Expr_Cast      :: ast.Expr_Cast
 Ast_Type_Struct    :: ast.Type_Struct
 Ast_Type_Array     :: ast.Type_Array
 Ast_Type_Matrix    :: ast.Type_Matrix
-Ast_Type_Import    :: ast.Type_Import
 Ast_Type_Image     :: ast.Type_Image
 Ast_Type_Enum      :: ast.Type_Enum
 

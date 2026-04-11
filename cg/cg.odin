@@ -47,12 +47,13 @@ Type_Key :: struct {
 Type_Registry :: hashmap.Hash_Map(Type_Key, ^Type_Info)
 
 Image_Type :: struct {
-	dimensions:   int,
+	dimensions: int,
+	sampled:    bool,
+	format :    string,
 	texel_type: struct {
 		size: int,
 		kind: types.Kind,
 	},
-	sampled: bool,
 }
 
 Proc_Lit_Info :: struct {
@@ -1027,6 +1028,7 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 				kind = texel_type.kind,
 			},
 			sampled = false,
+			format  = type.format,
 		}
 
 		if cached, ok := ctx.image_types[image_type]; ok {
@@ -1034,7 +1036,30 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 			break
 		}
 
-		info.type = spv.OpTypeImage(&ctx.types, cg_type(ctx, texel_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 2, .Unknown)
+		image_format: spv.ImageFormat
+		if type.format != "" {
+			for name, format in image_format_names {
+				if type.format == name {
+					image_format = format
+					break
+				}
+			}
+		}
+
+		#partial switch image_format {
+		case .Rg32f,     .Rg16f,    .R11fG11fB10f, .R16f,
+		     .Rgba16,    .Rgb10A2,  .Rg16,         .Rg8,
+		     .R16,       .R8,       .Rgba16Snorm,  .Rg16Snorm,
+		     .Rg8Snorm,  .R16Snorm, .R8Snorm,      .Rg32i,
+		     .Rg16i,     .Rg8i,     .R16i,         .R8i,
+		     .Rgb10a2ui, .Rg32ui,   .Rg16ui,       .Rg8ui,
+		     .R16ui,     .R8ui:
+			ctx.capabilities[.StorageImageExtendedFormats] = {}
+		case .R64ui, .R64i:
+			ctx.capabilities[.Int64ImageEXT] = {}
+		}
+
+		info.type = spv.OpTypeImage(&ctx.types, cg_type(ctx, texel_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 2, image_format)
 		ctx.image_types[image_type] = { image = info.type, }
 	case .Buffer:
 		type := type.variant.(^types.Buffer)
@@ -1063,6 +1088,17 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 	}
 
 	return info
+}
+
+image_format_names: [spv.ImageFormat]string
+
+@(init)
+image_format_table_init :: proc "contextless" () {
+	context = runtime.default_context()
+
+	for &name, image_format in image_format_names {
+		name = strings.to_lower(reflect.enum_name_from_value(image_format) or_else panic(""))
+	}
 }
 
 cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_name: string) {
@@ -1561,15 +1597,15 @@ cg_expr :: proc(
 	assert(expr      != nil)
 	assert(expr.type != nil)
 
-	value = _cg_expr(ctx, builder, expr)
+	value = cg_expr_internal(ctx, builder, expr)
 	if value.type == nil {
 		value.type = expr.type
 	}
 
 	if !deref {
-		// assert(value.storage_class != nil)
 		return value
 	}
+
 	value.id            = cg_cast(ctx, builder, value, expr.type)
 	value.storage_class = nil
 	value.type          = expr.type
@@ -1689,7 +1725,7 @@ spv_version :: proc(major, minor: u32) -> u32 {
 	return (major << 16) | (minor << 8)
 }
 
-_cg_expr :: proc(
+cg_expr_internal :: proc(
 	ctx:     ^Context,
 	builder: ^spv.Builder,
 	expr:    ^ast.Expr,
@@ -1818,6 +1854,9 @@ _cg_expr :: proc(
 		}
 
 	case ^ast.Expr_Call:
+		if v.is_directive {
+			return
+		}
 		if v.builtin != nil {
 			ti := cg_type(ctx, v.type)
 			switch v.builtin {
@@ -2056,34 +2095,9 @@ _cg_expr :: proc(
 			return { id = cg_nil_value(ctx, cg_type(ctx, v.type)), }
 		}
 
-		if v.named {
-			type   := v.type.variant.(^types.Struct)
-			values := make([]spv.Id, len(type.fields), context.temp_allocator)
-			for field in v.fields {
-				find_struct_field_index :: proc(type: ^types.Struct, name: string) -> int {
-					for field, i in type.fields {
-						if field.name.text == name {
-							return i
-						}
-					}
-					return -1
-				}
-
-				index        := find_struct_field_index(type, field.ident.text)
-				value        := cg_expr(ctx, builder, field.value)
-				values[index] = cg_cast(ctx, builder, value, type.fields[index].type)
-			}
-
-			for field, i in type.fields {
-				if values[i] != 0 {
-					continue
-				}
-				values[i] = cg_nil_value(ctx, cg_type(ctx, field.type))
-			}
-			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values), }
-		} else {
+		if !v.named {
 			values := make([dynamic]spv.Id, len(v.fields), context.temp_allocator)
-			i := 0
+			i: int
 			for field in v.fields {
 				type: ^types.Type
 				#partial switch v.type.kind {
@@ -2095,23 +2109,6 @@ _cg_expr :: proc(
 					type = v.type.variant.(^types.Struct).fields[i].type
 				}
 				value := cg_expr(ctx, builder, field.value)
-				if types.is_tuple(value.type) {
-					t := value.type.variant.(^types.Struct)
-					for field_type in t.fields {
-						field_value := Value {
-							id   = value.id, // totally wrong!!! only works for tuples with one value
-							type = field_type.type,
-						}
-						if types.is_vector(field_type.type) && types.is_vector(v.type) {
-							values[i] = cg_deref(ctx, builder, field_value)
-						} else {
-							// TODO: wrong for struct fields, the checker does not let that through anyway, it should tho
-							values[i] = cg_cast(ctx, builder, field_value, type)
-						}
-						i += 1
-					}
-					continue
-				}
 				if types.is_vector(value.type) && types.is_vector(v.type) {
 					values[i] = cg_deref(ctx, builder, value)
 				} else {
@@ -2121,6 +2118,74 @@ _cg_expr :: proc(
 			}
 			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values[:]), }
 		}
+
+		if vector, ok := v.type.variant.(^types.Vector); ok {
+			elem_type_id := cg_type(ctx, vector.elem).type
+			values       := make([]spv.Id, vector.count, context.temp_allocator)
+			for field in v.fields {
+				coords: [4]int
+				n := len(field.ident.text)
+				for char, i in field.ident.text {
+					index: int = -1
+					switch char {
+					case 'r', 'x':
+						index = 0
+					case 'g', 'y':
+						index = 1
+					case 'b', 'z':
+						index = 2
+					case 'a', 'w':
+						index = 3
+					}
+					coords[i] = index
+				}
+
+				val := cg_expr(ctx, builder, field.value)
+				if n == 1 {
+					values[coords[0]] = cg_cast(ctx, builder, val, vector.elem)
+				} else {
+					vec := types.vector_new(vector.elem, n, context.temp_allocator)
+					val := cg_cast(ctx, builder, val, vec)
+
+					for dst_coord, src_coord in coords[:n] {
+						values[dst_coord] = spv.OpCompositeExtract(builder, elem_type_id, val, u32(src_coord))
+					}
+				}
+			}
+
+			nil_elem := cg_nil_value(ctx, cg_type(ctx, vector.elem))
+			for &value in values {
+				if value == 0 {
+					value = nil_elem
+				}
+			}
+			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values), }
+		}
+
+		fields := v.type.variant.(^types.Struct).fields
+		values := make([]spv.Id, len(fields), context.temp_allocator)
+		for field in v.fields {
+			find_struct_field_index :: proc(fields: []types.Field, name: string) -> int {
+				for field, i in fields {
+					if field.name.text == name {
+						return i
+					}
+				}
+				return -1
+			}
+
+			index        := find_struct_field_index(fields, field.ident.text)
+			value        := cg_expr(ctx, builder, field.value)
+			values[index] = cg_cast(ctx, builder, value, fields[index].type)
+		}
+
+		for field, i in fields {
+			if values[i] != 0 {
+				continue
+			}
+			values[i] = cg_nil_value(ctx, cg_type(ctx, field.type))
+		}
+			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values), }
 	case ^ast.Expr_Index:
 		lhs := cg_expr(ctx, builder, v.lhs, false)
 		rhs := cg_expr(ctx, builder, v.rhs)
@@ -2146,7 +2211,7 @@ _cg_expr :: proc(
 
 			image := cg_deref(ctx, builder, lhs)
 			texel := spv.OpImageSampleExplicitLod(builder, cg_type(ctx, texel_type).type, image, rhs.id, { .Lod, }, u32(cg_constant(ctx, f64(0), nil).id))
-			
+
 			switch count {
 			case 1:
 				return { id = spv.OpCompositeExtract(builder, cg_type(ctx, v.type).type, texel, 0), }
@@ -2257,10 +2322,10 @@ _cg_expr :: proc(
 		then_value := cg_expr(ctx, builder, v.then_expr).id
 		else_value := cg_expr(ctx, builder, v.else_expr).id
 		return { id = spv.OpSelect(builder, cg_type(ctx, v.type).type, cond, then_value, else_value), }
-	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Import, ^ast.Type_Image, ^ast.Type_Enum, ^ast.Type_Bit_Set:
+	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Image, ^ast.Type_Enum, ^ast.Type_Bit_Set:
 		panic("tried to cg type as expression")
-	case ^ast.Expr_Config:
-		panic("tried to cg config var as expression")
+	case ^ast.Expr_Directive:
+		panic("tried to cg directive as expression")
 	}
 
 	fmt.panicf("unimplemented: %v", reflect.union_variant_typeid(expr.derived_expr))

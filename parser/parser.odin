@@ -424,32 +424,51 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 
 	case .Directive:
 		token_advance(parser)
-		directive: tokenizer.Token
+		directive_token: tokenizer.Token
 		if token_peek(parser).kind == .Import {
-			directive = token_advance(parser)
+			directive_token = token_advance(parser)
 		} else {
-			directive = token_expect(parser, .Ident, "directive") or_return
+			directive_token = token_expect(parser, .Ident, "directive") or_return
 		}
-		switch directive.text {
-		case "import":
-			token_expect(parser, .Open_Paren ) or_return
-			ident := token_expect(parser, .Ident) or_return
-			token_expect(parser, .Close_Paren) or_return
-			i      := ast.new(ast.Type_Import, token.location, parser.end_location, parser.allocator)
-			i.ident = ident
-			return i, true
-		case "config":
-			token_expect(parser, .Open_Paren ) or_return
-			ident   := token_expect(parser, .Ident) or_return
-			token_expect(parser, .Comma) or_return
-			default := parse_expr(parser) or_return
-			token_expect(parser, .Close_Paren) or_return
-			c        := ast.new(ast.Expr_Config, token.location, parser.end_location, parser.allocator)
-			c.ident   = ident
-			c.default = default
+
+		directive: ast.Directive
+		for name, d in ast.directive_names {
+			if name == directive_token.text {
+				directive = d
+				break
+			}
+		}
+
+		if directive != nil {
+			token_expect(parser, .Open_Paren, "directive") or_return
+			args       := parse_arg_list(parser, .Close_Paren) or_return
+			d          := ast.new(ast.Expr_Directive, token.location, parser.end_location, parser.allocator)
+			d.token     = directive_token
+			d.directive = directive
+
+			c     := ast.new(ast.Expr_Call, token.location, parser.end_location, parser.allocator)
+			c.lhs  = d
+			c.args = args
+
 			return c, true
+		}
+
+		switch directive_token.text {
+		case "format":
+			token_expect(parser, .Open_Paren, "#format") or_return
+			format := token_expect(parser, .Ident, "#format") or_return
+			token_expect(parser, .Close_Paren, "#format") or_return
+
+			image := parse_expr(parser) or_return
+			if image, ok := image.derived_expr.(^ast.Type_Image); ok {
+				image.format = format
+			} else {
+				error(parser, directive_token, "'#format' directive can only be applied to image types")
+			}
+
+			return image, true
 		case:
-			error(parser, directive, "unknown directive: '%s'", directive.text)
+			error(parser, directive_token, "unknown directive: '%s'", directive_token.text)
 		}
 	case .Period:
 		token_advance(parser)
@@ -590,7 +609,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 		se   := ast.new(ast.Stmt_Expr, token.location, parser.end_location, parser.allocator)
 		se.expr = expr
 		return se, true
-	case .Ident, .Cast, .Open_Paren, .Dollar:
+	case .Ident, .Cast, .Open_Paren, .Dollar, .Directive:
 		lhs := parse_expr_list(parser, false) or_return
 		#partial switch t := token_peek(parser); t.kind {
 		case .Assign:
@@ -740,7 +759,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 			error(parser, token, "only one set of attributes can be applied to a statement")
 		}
 		return parse_stmt(parser, label, parse_attributes(parser) or_return)
-	case .Return, .Continue, .Break, .Literal, .Open_Paren, .Cast, .Dollar:
+	case .Return, .Continue, .Break, .Literal, .Open_Paren, .Cast, .Dollar, .Directive:
 		return parse_simple_stmt(parser, attributes)
 	case .Import:
 		token_advance(parser)
@@ -954,7 +973,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 		s.cases = cases[:]
 
 		return s, true
-		
+
 	case .Open_Brace:
 		token_advance(parser)
 		stmts := parse_stmt_list(parser) or_return

@@ -86,7 +86,7 @@ main :: proc() {
 	}
 
 	defines: map[string]hep.Const_Value
-	defines["SOME_CONFIG_VAR"] = true
+	defines["SHADOW_PASS"] = false
 	defer delete(defines)
 
 	LIB_PATH :: "math.hep"

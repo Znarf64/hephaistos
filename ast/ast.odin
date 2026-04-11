@@ -67,10 +67,27 @@ Expr_Interface :: struct {
 	ident:      tokenizer.Token,
 }
 
-Expr_Config :: struct {
+Directive :: enum {
+	Invalid = 0,
+	Assert,
+	Panic,
+	Import,
+	Config,
+}
+
+@(rodata)
+directive_names: [Directive]string = {
+	.Invalid = "<invalid>",
+	.Assert  = "assert",
+	.Panic   = "panic",
+	.Import  = "import",
+	.Config  = "config",
+}
+
+Expr_Directive :: struct {
 	using node: Expr,
-	ident:      tokenizer.Token,
-	default:    ^Expr,
+	directive:  Directive,
+	token:      tokenizer.Token,
 }
 
 Shader_Stage :: enum {
@@ -154,7 +171,7 @@ Builtin_Id :: enum {
 
 	Ddx,
 	Ddy,
-	
+
 	Size_Of,
 	Align_Of,
 	Type_Of,
@@ -165,8 +182,9 @@ Expr_Call :: struct {
 	lhs:         ^Expr,
 	args:       []Field,
 	group_member: Maybe(int),
-	is_cast:      bool,
 	builtin:      Builtin_Id,
+	is_cast:      bool,
+	is_directive: bool,
 }
 
 Expr_Paren :: struct {
@@ -219,16 +237,12 @@ Type_Matrix :: struct {
 	elem:      ^Expr,
 }
 
-Type_Import :: struct {
-	using node: Expr,
-	ident:      tokenizer.Token,
-}
-
 Type_Image :: struct {
 	using node: Expr,
 	dimensions: ^Expr,
 	texel_type: ^Expr,
 	is_sampler: bool,
+	format:     tokenizer.Token,
 }
 
 Type_Enum :: struct {
@@ -376,10 +390,9 @@ Any_Node :: union {
 	^Expr_Cast,
 	^Expr_Unary,
 	^Expr_Interface,
-	^Expr_Config,
+	^Expr_Directive,
 	^Expr_Ternary,
 
-	^Type_Import,
 	^Type_Struct,
 	^Type_Array,
 	^Type_Matrix,
@@ -418,10 +431,9 @@ Any_Expr :: union {
 	^Expr_Cast,
 	^Expr_Unary,
 	^Expr_Interface,
-	^Expr_Config,
+	^Expr_Directive,
 	^Expr_Ternary,
-	
-	^Type_Import,
+
 	^Type_Struct,
 	^Type_Array,
 	^Type_Matrix,
