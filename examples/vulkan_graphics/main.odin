@@ -148,7 +148,7 @@ instance_create :: proc() -> (instance: vk.Instance) {
 			fmt.eprintfln("ERROR: validation layer %s not available", name)
 			os.exit(1)
 		}
-	
+
 		create_info.ppEnabledLayerNames = &VALIDATION_LAYERS[0]
 		create_info.enabledLayerCount   = len(VALIDATION_LAYERS)
 		fmt.println("Validation layers loaded")
@@ -540,7 +540,7 @@ pipeline_create :: proc(
 		dstAlphaBlendFactor = .ZERO,
 		alphaBlendOp        = .ADD,
 	}
-	
+
 	blend_state_create_info := vk.PipelineColorBlendStateCreateInfo {
 		sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
 		logicOpEnable   = false,
@@ -834,7 +834,7 @@ swapchain_create :: proc(
 
 	swapchain.color_view = image_view_create(ctx, swapchain.color_image.image, surface_format.format, .COLOR)
 	swapchain.depth_view = image_view_create(ctx, swapchain.depth_image.image, depth_format, .DEPTH)
-	
+
 	swaphain_create_info := vk.SwapchainCreateInfoKHR {
 		sType            = .SWAPCHAIN_CREATE_INFO_KHR,
 		surface          = surface,
@@ -1121,7 +1121,7 @@ main :: proc() {
 		debug_messenger := debug_messenger_create(ctx.instance)
 		defer debug_messenger_destroy(ctx.instance, debug_messenger)
 	}
-	
+
 	surface := surface_create(ctx.instance, window.handle)
 	defer vk.DestroySurfaceKHR(ctx.instance, surface, nil)
 
@@ -1159,7 +1159,7 @@ main :: proc() {
 	shader_source := #load(SHADER_PATH, string)
 	shader_module := shader_create(ctx, SHADER_PATH, shader_source, { Push_Constants, }) or_else panic("failed to compile shader")
 	defer shader_destroy(ctx, shader_module)
-	
+
 	pipeline := pipeline_create(
 		ctx,
 		surface_format.format,

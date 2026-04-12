@@ -320,7 +320,7 @@ tokenize :: proc(
 			} else {
 				token.kind = Token_Kind(char)
 			}
-			
+
 		case ':', ';', '(', ')', '{', '}', '[', ']', ',', '?', '#', '@', '$':
 			token.kind = Token_Kind(char)
 
@@ -476,7 +476,7 @@ tokenize :: proc(
 		},
 		kind = .EOF,
 	})
-	
+
 	return tokens[:], errors[:]
 }
 

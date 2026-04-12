@@ -180,7 +180,7 @@ main :: proc() {
 	gl.BindBufferRange(gl.SHADER_STORAGE_BUFFER, u32(Binding_Point.Storage_Buffer), ssbo, 0, size_of([4]f32))
 
 	gl.Uniform4f(i32(Uniform_Location.Tint), 1, 0.5, 0.5, 1)
-	
+
 	gl.BindImageTexture(u32(Binding_Point.Input_Image),  input_texture,  0, false, 0, gl.READ_ONLY,  gl.RGBA8)
 	gl.BindImageTexture(u32(Binding_Point.Output_Image), output_texture, 0, false, 0, gl.WRITE_ONLY, gl.RGBA8)
 	gl.DispatchCompute(u32(w), u32(h), 1)

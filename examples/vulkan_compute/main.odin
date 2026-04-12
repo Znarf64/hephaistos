@@ -146,7 +146,7 @@ instance_create :: proc() -> (instance: vk.Instance) {
 			fmt.eprintfln("ERROR: validation layer %s not available", name)
 			os.exit(1)
 		}
-	
+
 		create_info.ppEnabledLayerNames = &VALIDATION_LAYERS[0]
 		create_info.enabledLayerCount   = len(VALIDATION_LAYERS)
 		fmt.println("Validation layers loaded")
@@ -727,7 +727,7 @@ main :: proc() {
 	vk.load_proc_addresses(rawptr(GetInstanceProcAddr))
 
 	ctx: Vulkan_Context
-	
+
 	ctx.instance = instance_create()
 	defer vk.DestroyInstance(ctx.instance, nil)
 	vk.load_proc_addresses(ctx.instance)
@@ -736,7 +736,7 @@ main :: proc() {
 	// 	debug_messenger := debug_messenger_create(ctx.instance)
 	// 	defer debug_messenger_destroy(ctx.instance, debug_messenger)
 	// }
-	
+
 	queue_index: u32
 	physical_device_found: bool
 	ctx.physical_device, ctx.device_properties, queue_index, physical_device_found = pick_physical_device(ctx.instance)
@@ -766,7 +766,7 @@ main :: proc() {
 
 	ctx.descriptor_pool = descriptor_pool_create(ctx)
 	defer vk.DestroyDescriptorPool(ctx.device, ctx.descriptor_pool, nil)
-	
+
 	COMPUTE_PATH   :: "compute.hep"
 	compute_source := #load(COMPUTE_PATH, string)
 	compute_shader := shader_create_hephaistos(ctx, COMPUTE_PATH, compute_source, { Compute_Constants, }) or_else panic("failed to create compute shader")
@@ -834,7 +834,7 @@ main :: proc() {
 	    {},
 	    { .SHADER_WRITE, },
 	)
-	
+
 	output_view := image_view_create(ctx, output_image, .R8G8B8A8_UNORM, .COLOR)
 	defer image_view_destroy(ctx, output_view)
 
