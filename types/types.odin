@@ -631,6 +631,15 @@ is_float :: proc(type: ^Type) -> bool {
 }
 
 @(require_results)
+is_boolean :: proc(type: ^Type) -> bool {
+	#partial switch type.kind {
+	case .Bool:
+		return true
+	}
+	return false
+}
+
+@(require_results)
 vector_len :: proc(type: ^Type) -> int {
 	return type.variant.(^Vector).count
 }

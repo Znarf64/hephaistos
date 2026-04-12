@@ -1,6 +1,8 @@
 import   "math"
 import m "math"
 
+import "intrinsics"
+
 Binding_Location :: #import(Binding_Location)
 
 SHADOW_PASS :: #config(SHADOW_PASS, false)
@@ -238,6 +240,11 @@ foo_shader :: proc() -> (
 
 	return bar()
 }
+
+#assert(intrinsics.type_is_float(f32))
+
+t :: bool
+#assert(intrinsics.type_is_boolean(t))
 
 @(uniform, binding = Binding_Location.Image)
 img2: #format(rg8i)image[2][4]f32

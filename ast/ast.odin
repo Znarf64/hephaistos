@@ -157,8 +157,6 @@ Builtin_Id :: enum {
 	Distance,
 	Inverse_Sqrt,
 	Abs,
-	Bit_Count,
-	Bit_Reverse,
 	Real,
 	Imag,
 	Jmag,
@@ -175,6 +173,24 @@ Builtin_Id :: enum {
 	Size_Of,
 	Align_Of,
 	Type_Of,
+
+	// intrinsics
+	Type_Is_Vector,
+	Type_Is_Float,
+	Type_Is_Boolean,
+	Type_Is_Integer,
+	Type_Is_Numeric,
+	Type_Is_Complex,
+	Type_Is_Quaternion,
+	Type_Is_Matrix,
+
+	Count_Ones,
+	Count_Zeros,
+
+	Reverse_Bits,
+
+	Read_Subgroup_Clock,
+	Read_Device_Clock,
 }
 
 Expr_Call :: struct {

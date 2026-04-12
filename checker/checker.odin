@@ -102,54 +102,69 @@ addressing_mode_string := [Addressing_Mode]string {
 
 @(rodata)
 builtin_names: [ast.Builtin_Id]string = {
-	.Invalid      = "invalid",
-	.Dot          = "dot",
-	.Cross        = "cross",
-	.Min          = "min",
-	.Max          = "max",
-	.Clamp        = "clamp",
-	.Inverse      = "inverse",
-	.Transpose    = "transpose",
-	.Determinant  = "determinant",
-	.Pow          = "pow",
-	.Sqrt         = "sqrt",
-	.Sin          = "sin",
-	.Cos          = "cos",
-	.Tan          = "tan",
-	.Normalize    = "normalize",
-	.Length       = "length",
-	.Exp          = "exp",
-	.Log          = "log",
-	.Exp2         = "exp2",
-	.Log2         = "log2",
-	.Fract        = "fract",
-	.Floor        = "floor",
-	.Ceil         = "ceil",
-	.Lerp         = "lerp",
-	.Round        = "round",
-	.Trunc        = "trunc",
-	.Smooth_Step  = "smooth_step",
-	.Distance     = "distance",
-	.Inverse_Sqrt = "inverse_sqrt",
-	.Abs          = "abs",
-	.Bit_Count    = "bit_count",
-	.Bit_Reverse  = "bit_reverse",
-	.Real         = "real",
-	.Imag         = "imag",
-	.Jmag         = "jmag",
-	.Kmag         = "kmag",
+	.Invalid             = "invalid",
+	.Dot                 = "dot",
+	.Cross               = "cross",
+	.Min                 = "min",
+	.Max                 = "max",
+	.Clamp               = "clamp",
+	.Inverse             = "inverse",
+	.Transpose           = "transpose",
+	.Determinant         = "determinant",
+	.Pow                 = "pow",
+	.Sqrt                = "sqrt",
+	.Sin                 = "sin",
+	.Cos                 = "cos",
+	.Tan                 = "tan",
+	.Normalize           = "normalize",
+	.Length              = "length",
+	.Exp                 = "exp",
+	.Log                 = "log",
+	.Exp2                = "exp2",
+	.Log2                = "log2",
+	.Fract               = "fract",
+	.Floor               = "floor",
+	.Ceil                = "ceil",
+	.Lerp                = "lerp",
+	.Round               = "round",
+	.Trunc               = "trunc",
+	.Smooth_Step         = "smooth_step",
+	.Distance            = "distance",
+	.Inverse_Sqrt        = "inverse_sqrt",
+	.Abs                 = "abs",
+	.Real                = "real",
+	.Imag                = "imag",
+	.Jmag                = "jmag",
+	.Kmag                = "kmag",
 
-	.Texture_Size = "texture_size",
-	.Image_Size   = "image_size",
+	.Texture_Size        = "texture_size",
+	.Image_Size          = "image_size",
 
-	.Discard      = "discard",
+	.Discard             = "discard",
 
-	.Ddx          = "ddx",
-	.Ddy          = "ddy",
+	.Ddx                 = "ddx",
+	.Ddy                 = "ddy",
 
-	.Size_Of      = "size_of",
-	.Align_Of     = "align_of",
-	.Type_Of      = "type_of",
+	.Size_Of             = "size_of",
+	.Align_Of            = "align_of",
+	.Type_Of             = "type_of",
+
+	.Type_Is_Vector      = "intrinsics.type_is_vector",
+	.Type_Is_Float       = "intrinsics.type_is_float",
+	.Type_Is_Boolean     = "intrinsics.type_is_boolean",
+	.Type_Is_Integer     = "intrinsics.type_is_integer",
+	.Type_Is_Numeric     = "intrinsics.type_is_numeric",
+	.Type_Is_Complex     = "intrinsics.type_is_complex",
+	.Type_Is_Quaternion  = "intrinsics.type_is_quaternion",
+	.Type_Is_Matrix      = "intrinsics.type_is_matrix",
+
+	.Count_Ones          = "intrinsics.count_ones",
+	.Count_Zeros         = "intrinsics.count_zeros",
+
+	.Reverse_Bits        = "intrinsics.reverse_bits",
+
+	.Read_Subgroup_Clock = "intrinsics.read_subgroup_clock",
+	.Read_Device_Clock   = "intrinsics.read_device_clock",
 }
 
 Operand :: struct {
@@ -1138,6 +1153,10 @@ checker_init :: proc(
 	checker.flags                             = flags
 	checker.libraries                         = libraries
 
+	if checker.libraries.allocator == {} {
+		checker.libraries.allocator = allocator
+	}
+
 	scope_push(checker, .Global)
 
 	scope_insert_entity(checker, entity_new(.Type, { text = "bool", }, types.t_bool, allocator = allocator))
@@ -1163,14 +1182,30 @@ checker_init :: proc(
 	scope_insert_entity(checker, entity_new(.Type, { text = "quaternion256", }, types.t_quaternion256, allocator = allocator))
 
 	for name, builtin in builtin_names {
-		if name != "" {
-			scope_insert_entity(checker, entity_new(.Builtin, { text = name, }, nil, builtin_id = builtin, allocator = allocator))
+		find_or_create_lib :: proc(checker: ^Checker, name: string) -> (library: ^Library) {
+			library = &checker.libraries[name]
+			if library == nil {
+				checker.libraries[name] = { entities = make(map[string]^Entity, checker.allocator), }
+				library                 = &checker.libraries[name]
+			}
+			return
+		}
+		name     := name
+		dot      := strings.index(name, ".")
+		if dot >= 0 {
+			lib               := find_or_create_lib(checker, name[:dot])
+			name               = name[dot + 1:]
+			lib.entities[name] = entity_new(.Builtin, { text = name, }, nil, builtin_id = builtin, allocator = allocator)
+		} else {
+			lib                         := find_or_create_lib(checker, "builtin")
+			e                           := entity_new(.Builtin, { text = name, }, nil, builtin_id = builtin, allocator = allocator)
+			lib.entities[name]           = e
+			checker.scope.entities[name] = e
 		}
 	}
 
 	checker.shared_types.allocator = allocator
 	for s in shared_types {
-		// scope_insert_entity(checker, entity_new(.Type, { text = s.name, }, s.type, allocator = allocator))
 		checker.shared_types[s.name] = s.type
 	}
 
@@ -2001,7 +2036,7 @@ check_expr_internal :: proc(
 					ok: bool
 					cond, ok = e.value.(bool)
 					if !ok {
-						error(checker, v.args[1].value, "expected a constant boolean in #assert")
+						error(checker, v.args[0].value, "expected a constant boolean in #assert")
 						cond = true
 					}
 				}
@@ -2096,7 +2131,18 @@ check_expr_internal :: proc(
 
 			allow_types := false
 			#partial switch v.builtin {
-			case .Size_Of, .Align_Of, .Min, .Max:
+			case .Size_Of,
+			     .Align_Of,
+			     .Min,
+			     .Max,
+			     .Type_Is_Vector,
+			     .Type_Is_Float,
+			     .Type_Is_Boolean,
+			     .Type_Is_Integer,
+			     .Type_Is_Numeric,
+			     .Type_Is_Complex,
+			     .Type_Is_Quaternion,
+			     .Type_Is_Matrix:
 				allow_types = true
 			}
 
@@ -2412,7 +2458,7 @@ check_expr_internal :: proc(
 				sampler     := args[0].type.variant.(^types.Image)
 				operand.type = types.vector_new(types.t_i32, sampler.dimensions, checker.allocator)
 				operand.mode = .RValue
-			case .Bit_Count, .Bit_Reverse:
+			case .Count_Ones, .Count_Zeros, .Reverse_Bits:
 				if len(v.args) != 1 {
 					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
 					return
@@ -2452,6 +2498,47 @@ check_expr_internal :: proc(
 				}
 				operand.type = types.complex_elem(type)
 				operand.mode = .RValue
+			case .Read_Device_Clock, .Read_Subgroup_Clock:
+				if len(v.args) != 0 {
+					error(checker, v, "builtin '%s' expects no arguments, got %d", builtin_names[v.builtin], len(v.args))
+				}
+				operand.type = types.t_u64
+				operand.mode = .RValue
+			case .Type_Is_Vector,
+			     .Type_Is_Float,
+			     .Type_Is_Boolean,
+			     .Type_Is_Integer,
+			     .Type_Is_Numeric,
+			     .Type_Is_Complex,
+			     .Type_Is_Quaternion,
+			     .Type_Is_Matrix:
+				if len(v.args) != 1 {
+					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
+					return
+				}
+				if args[0].mode != .Type {
+					error(checker, args[0], "builtin '%s' expects a type, got %v", builtin_names[v.builtin], addressing_mode_string[args[0].mode])
+				}
+
+				operand.mode = .Const
+				operand.type = types.t_bool
+
+				#partial switch v.builtin {
+				case .Type_Is_Vector:
+					operand.value = types.is_vector(args[0].type)
+				case .Type_Is_Float:
+					operand.value = types.is_float(args[0].type)
+				case .Type_Is_Boolean:
+					operand.value = types.is_boolean(args[0].type)
+				case .Type_Is_Integer:
+					operand.value = types.is_integer(args[0].type)
+				case .Type_Is_Numeric:
+					operand.value = types.is_numeric(args[0].type)
+				case .Type_Is_Complex:
+					operand.value = types.is_complex(args[0].type)
+				case .Type_Is_Quaternion:
+					operand.value = types.is_quaternion(args[0].type)
+				}
 			}
 
 		case .Type:

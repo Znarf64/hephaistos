@@ -1860,7 +1860,18 @@ cg_expr_internal :: proc(
 		if v.builtin != nil {
 			ti := cg_type(ctx, v.type)
 			switch v.builtin {
-			case .Invalid, .Size_Of, .Align_Of, .Type_Of:
+			case .Invalid,
+			     .Size_Of,
+			     .Align_Of,
+			     .Type_Of,
+			     .Type_Is_Vector,
+			     .Type_Is_Float,
+			     .Type_Is_Boolean,
+			     .Type_Is_Integer,
+			     .Type_Is_Numeric,
+			     .Type_Is_Complex,
+			     .Type_Is_Quaternion,
+			     .Type_Is_Matrix:
 				fmt.panicf("invalid builtin: %v", v.builtin)
 			case .Dot:
 				t := types.op_result_type(v.args[0].value.type, v.args[1].value.type)
@@ -2049,13 +2060,28 @@ cg_expr_internal :: proc(
 					lod := cg_expr(ctx, builder, v.args[1].value).id
 					return { id = spv.OpImageQuerySizeLod(builder, cg_type(ctx, v.type).type, image, lod), }
 				}
-			case .Bit_Count:
+			case .Count_Ones:
 				return { id = spv.OpBitCount(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
-			case .Bit_Reverse:
+			case .Count_Zeros:
+				ones := spv.OpBitCount(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id)
+				bits := cg_constant(ctx, i64(v.type.size * 8), nil).id
+				return { id = spv.OpISub(builder, ti.type, bits, ones), }
+			case .Reverse_Bits:
 				return { id = spv.OpBitReverse(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Real, .Imag, .Jmag, .Kmag:
 				coord := u32(v.builtin - .Real)
 				return { id = spv.OpCompositeExtract(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id, coord), }
+			case .Read_Device_Clock, .Read_Subgroup_Clock:
+				ctx.extensions["SPV_KHR_shader_clock"] = {}
+				ctx.capabilities[.ShaderClockKHR]      = {}
+				scope: spv.Scope
+				#partial switch v.builtin {
+				case .Read_Device_Clock:
+					scope = .Device
+				case .Read_Subgroup_Clock:
+					scope = .Subgroup
+				}
+				return { id = spv.OpReadClockKHR(builder, ti.type, cg_constant(ctx, i64(scope), nil).id), }
 			}
 
 			unreachable()
