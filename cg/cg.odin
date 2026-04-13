@@ -24,6 +24,7 @@ Storage_Class :: enum {
 	Input,
 	Output,
 	Push_Constant,
+	Workgroup,
 	Uniform_Constant,
 	Storage_Buffer,
 	Physical_Storage_Buffer,
@@ -286,7 +287,9 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 		return
 	}
 
-	if v.interface == .Uniform || v.interface == .Uniform_Buffer {
+	switch v.interface {
+	case .None:
+	case .Uniform, .Uniform_Buffer:
 		value_builder     = nil
 		decl_builder      = &ctx.globals
 		storage_class     = .Uniform
@@ -294,18 +297,14 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 		flags             = { .Block, .Explicit_Layout, }
 		has_nil_value     = false
 		annotate          = true
-	}
-
-	if v.interface == .Push_Constant {
+	case .Push_Constant:
 		value_builder     = nil
 		decl_builder      = &ctx.globals
 		storage_class     = .Push_Constant
 		spv_storage_class = .PushConstant
 		flags             = { .Block, .Explicit_Layout, }
 		has_nil_value     = false
-	}
-
-	if v.interface == .Storage_Buffer {
+	case .Storage_Buffer:
 		ctx.extensions["SPV_KHR_storage_buffer_storage_class"] = {}
 
 		value_builder     = nil
@@ -315,6 +314,12 @@ cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: b
 		flags             = { .Block, .Explicit_Layout, }
 		has_nil_value     = false
 		annotate          = true
+	case .Shared:
+		value_builder     = nil
+		decl_builder      = &ctx.globals
+		has_nil_value     = false
+		storage_class     = .Workgroup
+		spv_storage_class = .Workgroup
 	}
 
 	prev_link_name := ctx.link_name
@@ -884,6 +889,8 @@ cg_type_ptr_from_type :: proc(ctx: ^Context, type_info: ^Type_Info, storage_clas
 			spv_storage_class = .Output
 		case .Push_Constant:
 			spv_storage_class = .PushConstant
+		case .Workgroup:
+			spv_storage_class = .Workgroup
 		case .Uniform_Constant:
 			spv_storage_class = .UniformConstant
 		case .Storage_Buffer:

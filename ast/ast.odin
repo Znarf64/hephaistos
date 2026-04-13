@@ -280,6 +280,7 @@ Interface_Kind :: enum {
 	Uniform_Buffer,
 	Push_Constant,
 	Storage_Buffer,
+	Shared,
 }
 
 Decl_Value :: struct {

@@ -635,6 +635,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 		.Uniform_Buffer = "uniform buffer",
 		.Push_Constant  = "push constant",
 		.Storage_Buffer = "storage buffer",
+		.Shared         = "shared",
 	}
 
 	if decl.interface == .None || type == nil || type.kind == .Invalid {
@@ -657,6 +658,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 	case .Storage_Buffer:
 		binding_required = true
 	case .Push_Constant:
+	case .Shared:
 	case .None:
 		unreachable()
 	}
@@ -694,7 +696,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 			error(checker, decl.type_expr, "type of uniform variable can not be a composite type")
 		}
 	} else {
-		if !(types.is_buffer(type) || types.is_struct(type)) {
+		if !(types.is_buffer(type) || types.is_struct(type)) && decl.interface != .Shared {
 			error(checker, decl.type_expr, "type of %s variable has to be a composite type", interface_kind_names[decl.interface])
 		}
 	}
@@ -726,6 +728,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 		.Uniform_Buffer = "uniform_buffer",
 		.Push_Constant  = "push_constant",
 		.Storage_Buffer = "storage_buffer",
+		.Shared         = "shared",
 	}
 
 	for a in decl.attributes {
@@ -767,6 +770,15 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 				error(checker, a.ident, "the '%s' and '%s' attributes are mutually exclusive", interface_kind_names[decl.interface], a.ident.text)
 			} else {
 				decl.interface = .Push_Constant
+			}
+			if a.value != nil {
+				error(checker, a.value, "'%s' attribute does not accept a value", a.ident.text)
+			}
+		case "shared":
+			if decl.interface != nil {
+				error(checker, a.ident, "the '%s' and '%s' attributes are mutually exclusive", interface_kind_names[decl.interface], a.ident.text)
+			} else {
+				decl.interface = .Shared
 			}
 			if a.value != nil {
 				error(checker, a.value, "'%s' attribute does not accept a value", a.ident.text)

@@ -104,6 +104,7 @@ main :: proc() {
 | `uniform_buffer` | Uniform buffer of type struct or array, requires `binding` attribute |
 | `storage_buffer` | Storage buffer of type struct or array, requires `binding` attribute |
 | `push_constant` | Vulkan push constant of type struct or array, requires `binding` attribute |
+| `shared` | Variable that is visible across all invocations within a workgroup |
 | `binding` | Binding point of interface variable |
 | `location` | Uniform location for interface variables with `uniform` attribute |
 | `descriptor_set` | Descriptor set of interface variable, defaults to 0 |
