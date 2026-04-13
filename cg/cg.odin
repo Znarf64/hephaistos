@@ -792,16 +792,40 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 	id: spv.Id
 	switch v in value {
 	case i64:
-		if types.is_float(type) {
-			id = spv.OpConstant(&ctx.types, ti.type, transmute(u32)f32(v))
+		if type.size == 8 {
+			value_bits: u64
+			if types.is_float(type) {
+				value_bits = transmute(u64)f64(v)
+			} else {
+				value_bits = u64(v)
+			}
+			id = spv.OpConstant(&ctx.types, ti.type, u32(value_bits), u32(value_bits >> 32))
 		} else {
-			id = spv.OpConstant(&ctx.types, ti.type, u32(v))
+			value_bits: u32
+			if types.is_float(type) {
+				value_bits = transmute(u32)f32(v)
+			} else {
+				value_bits = u32(v)
+			}
+			id = spv.OpConstant(&ctx.types, ti.type, value_bits)
 		}
 	case f64:
-		if types.is_float(type) {
-			id = spv.OpConstant(&ctx.types, ti.type, transmute(u32)f32(v))
+		if type.size == 8 {
+			value_bits: u64
+			if types.is_float(type) {
+				value_bits = transmute(u64)f64(v)
+			} else {
+				value_bits = u64(v)
+			}
+			id = spv.OpConstant(&ctx.types, ti.type, u32(value_bits), u32(value_bits >> 32))
 		} else {
-			id = spv.OpConstant(&ctx.types, ti.type, u32(v))
+			value_bits: u32
+			if types.is_float(type) {
+				value_bits = transmute(u32)f32(v)
+			} else {
+				value_bits = u32(v)
+			}
+			id = spv.OpConstant(&ctx.types, ti.type, value_bits)
 		}
 	case bool:
 		if v {
