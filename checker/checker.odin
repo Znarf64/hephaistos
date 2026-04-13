@@ -103,21 +103,26 @@ addressing_mode_string := [Addressing_Mode]string {
 @(rodata)
 builtin_names: [ast.Builtin_Id]string = {
 	.Invalid             = "invalid",
-	.Dot                 = "dot",
-	.Cross               = "cross",
+
 	.Min                 = "min",
 	.Max                 = "max",
 	.Clamp               = "clamp",
+
 	.Inverse             = "inverse",
 	.Transpose           = "transpose",
 	.Determinant         = "determinant",
+
+	.Dot                 = "dot",
+	.Cross               = "cross",
+	.Distance            = "distance",
+	.Normalize           = "normalize",
+	.Length              = "length",
+
 	.Pow                 = "pow",
 	.Sqrt                = "sqrt",
 	.Sin                 = "sin",
 	.Cos                 = "cos",
 	.Tan                 = "tan",
-	.Normalize           = "normalize",
-	.Length              = "length",
 	.Exp                 = "exp",
 	.Log                 = "log",
 	.Exp2                = "exp2",
@@ -125,13 +130,14 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Fract               = "fract",
 	.Floor               = "floor",
 	.Ceil                = "ceil",
-	.Lerp                = "lerp",
 	.Round               = "round",
 	.Trunc               = "trunc",
-	.Smooth_Step         = "smooth_step",
-	.Distance            = "distance",
 	.Inverse_Sqrt        = "inverse_sqrt",
 	.Abs                 = "abs",
+
+	.Smooth_Step         = "smooth_step",
+	.Lerp                = "lerp",
+
 	.Real                = "real",
 	.Imag                = "imag",
 	.Jmag                = "jmag",

@@ -128,35 +128,41 @@ Expr_Proc_Group :: struct {
 
 Builtin_Id :: enum {
 	Invalid = 0,
-	Dot,
-	Cross,
+
 	Min,
 	Max,
 	Clamp,
+
 	Inverse,
 	Transpose,
 	Determinant,
+
+	Dot,
+	Cross,
+	Distance,
+	Normalize,
+	Length,
+
 	Pow,
 	Sqrt,
 	Sin,
 	Cos,
 	Tan,
-	Normalize,
-	Length,
 	Exp,
 	Log,
 	Exp2,
 	Log2,
+	Fract,
 	Floor,
 	Ceil,
-	Fract,
-	Lerp,
 	Round,
 	Trunc,
-	Smooth_Step,
-	Distance,
 	Inverse_Sqrt,
 	Abs,
+
+	Smooth_Step,
+	Lerp,
+
 	Real,
 	Imag,
 	Jmag,
@@ -174,7 +180,8 @@ Builtin_Id :: enum {
 	Align_Of,
 	Type_Of,
 
-	// intrinsics
+	/* intrinsics */
+
 	Type_Is_Vector,
 	Type_Is_Float,
 	Type_Is_Boolean,
@@ -186,7 +193,6 @@ Builtin_Id :: enum {
 
 	Count_Ones,
 	Count_Zeros,
-
 	Reverse_Bits,
 
 	Read_Subgroup_Clock,

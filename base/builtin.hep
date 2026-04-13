@@ -1,9 +1,6 @@
 // This is purely for documentation
 import "intrinsics"
 
-dot   :: proc(a, b: [$N]$E) -> E
-cross :: proc(a, b [$N]$E) -> [N]E
-
 min   :: proc(values: ..$T) -> T
 max   :: proc(values: ..$T) -> T
 clamp :: proc(value, minimum, maximum: T) -> T
@@ -12,9 +9,11 @@ inverse     :: proc(m: matrix[$N, N]$E) -> matrix[N, N]E
 transpose   :: proc(m: matrix[$N, $M]$E) -> matrix[$M, $N]$E
 determinant :: proc(m: matrix[$N, N]$E) -> E
 
+dot       :: proc(a, b: [$N]$E) -> E
+cross     :: proc(a, b [$N]$E) -> [N]E
+distance  :: proc(a, b: [$N]$E) -> E
 normalize :: proc(v: [$N]$E) -> [N]E
 length    :: proc(v: [$N]$E) -> E
-distance  :: proc(a, b: [$N]$E) -> E
 
 pow          :: proc(x: $T) -> T
 sqrt         :: proc(x: $T) -> T
