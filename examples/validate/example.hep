@@ -250,5 +250,5 @@ t :: bool
 img2: #format(rg8i)image[2][4]f32
 
 test_u64 :: proc(a, b: u64) -> u64 {
-	return a + b * 10 + u
+	return a + b * 10
 }
