@@ -1396,19 +1396,6 @@ shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.alloca
 }
 
 @(require_results)
-check_library :: proc(
-	stmts:     []^ast.Stmt,
-	defines:   map[string]types.Const_Value,
-	types:     []typeid,
-	libraries: map[string]Library,
-	flags           := Flags{},
-	allocator       := context.allocator,
-	error_allocator := context.allocator,
-) -> (checker: Checker, errors: []tokenizer.Error) {
-	return
-}
-
-@(require_results)
 check :: proc(
 	stmts:     []^ast.Stmt,
 	defines:   map[string]types.Const_Value = {},

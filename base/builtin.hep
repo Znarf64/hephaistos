@@ -1,0 +1,54 @@
+// This is purely for documentation
+import "intrinsics"
+
+dot   :: proc(a, b: [$N]$E) -> E
+cross :: proc(a, b [$N]$E) -> [N]E
+
+min   :: proc(values: ..$T) -> T
+max   :: proc(values: ..$T) -> T
+clamp :: proc(value, minimum, maximum: T) -> T
+
+inverse     :: proc(m: matrix[$N, N]$E) -> matrix[N, N]E
+transpose   :: proc(m: matrix[$N, $M]$E) -> matrix[$M, $N]$E
+determinant :: proc(m: matrix[$N, N]$E) -> E
+
+normalize :: proc(v: [$N]$E) -> [N]E
+length    :: proc(v: [$N]$E) -> E
+distance  :: proc(a, b: [$N]$E) -> E
+
+pow          :: proc(x: $T) -> T
+sqrt         :: proc(x: $T) -> T
+sin          :: proc(x: $T) -> T
+cos          :: proc(x: $T) -> T
+tan          :: proc(x: $T) -> T
+exp          :: proc(x: $T) -> T
+log          :: proc(x: $T) -> T
+exp2         :: proc(x: $T) -> T
+log2         :: proc(x: $T) -> T
+fract        :: proc(x: $T) -> T
+floor        :: proc(x: $T) -> T
+ceil         :: proc(x: $T) -> T
+round        :: proc(x: $T) -> T
+trunc        :: proc(x: $T) -> T
+inverse_sqrt :: proc(x: $T) -> T
+abs          :: proc(x: $T) -> T
+
+smooth_step :: proc(start, end, x: $T) -> T
+lerp        :: proc(start, end, x: $T) -> T
+
+real :: proc(x: $T) -> T where intrinsics.type_is_quaternion(T) || intrinsics.type_is_quaternion(T)
+imag :: proc(x: $T) -> T where intrinsics.type_is_quaternion(T) || intrinsics.type_is_quaternion(T)
+jmag :: proc(x: $T) -> T where intrinsics.type_is_quaternion(T)
+kmag :: proc(x: $T) -> T where intrinsics.type_is_quaternion(T)
+
+texture_size :: proc(t: $T/sampler[$N]$E) -> [N]i32
+image_size   :: proc(i: $I/image[$N]$E)   -> [N]i32
+
+discard :: proc() -> !
+
+ddx :: proc($T) -> T
+ddy :: proc($T) -> T
+
+size_of  :: proc(T: $typeid) -> int
+align_of :: proc(T: $typeid) -> int
+type_of  :: proc(x: expr) -> type
