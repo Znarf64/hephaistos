@@ -14,7 +14,7 @@ import vk   "vendor:vulkan"
 
 import hep "../.."
 
-foreign import libvulkan "system:libvulkan.so"
+foreign import "system:libvulkan.so"
 
 @(link_prefix = "vk")
 foreign libvulkan {

@@ -155,25 +155,25 @@ new :: proc(kind: Kind, $T: typeid, allocator: mem.Allocator) -> ^T {
 	return t
 }
 
-t_invalid := &Type{kind = .Invalid, size = 0, align = 1}
-t_bool    := &Type{kind = .Bool,    size = 1, align = 1}
-t_int     := &Type{kind = .Int,     size = 0, align = 0}
-t_uint    := &Type{kind = .Uint,    size = 0, align = 0}
-t_float   := &Type{kind = .Float,   size = 0, align = 0}
+t_invalid := &Type{ kind = .Invalid, size = 0, align = 1, }
+t_bool    := &Type{ kind = .Bool,    size = 1, align = 1, }
+t_int     := &Type{ kind = .Int,     size = 0, align = 0, }
+t_uint    := &Type{ kind = .Uint,    size = 0, align = 0, }
+t_float   := &Type{ kind = .Float,   size = 0, align = 0, }
 
-t_i8      := &Type{kind = .Int,     size = 1, align = 1}
-t_i16     := &Type{kind = .Int,     size = 2, align = 2}
-t_i32     := &Type{kind = .Int,     size = 4, align = 4}
-t_i64     := &Type{kind = .Int,     size = 8, align = 8}
+t_i8      := &Type{ kind = .Int,     size = 1, align = 1, }
+t_i16     := &Type{ kind = .Int,     size = 2, align = 2, }
+t_i32     := &Type{ kind = .Int,     size = 4, align = 4, }
+t_i64     := &Type{ kind = .Int,     size = 8, align = 8, }
 
-t_u8      := &Type{kind = .Uint,    size = 1, align = 1}
-t_u16     := &Type{kind = .Uint,    size = 2, align = 2}
-t_u32     := &Type{kind = .Uint,    size = 4, align = 4}
-t_u64     := &Type{kind = .Uint,    size = 8, align = 8}
+t_u8      := &Type{ kind = .Uint,    size = 1, align = 1, }
+t_u16     := &Type{ kind = .Uint,    size = 2, align = 2, }
+t_u32     := &Type{ kind = .Uint,    size = 4, align = 4, }
+t_u64     := &Type{ kind = .Uint,    size = 8, align = 8, }
 
-t_f16     := &Type{kind = .Float,   size = 2, align = 2}
-t_f32     := &Type{kind = .Float,   size = 4, align = 4}
-t_f64     := &Type{kind = .Float,   size = 8, align = 8}
+t_f16     := &Type{ kind = .Float,   size = 2, align = 2, }
+t_f32     := &Type{ kind = .Float,   size = 4, align = 4, }
+t_f64     := &Type{ kind = .Float,   size = 8, align = 8, }
 
 t_vec2,  t_vec3,  t_vec4:  ^Type
 t_ivec2, t_ivec3, t_ivec4: ^Type
@@ -352,7 +352,7 @@ equal :: proc(a, b: ^Type) -> bool {
 	}
 
 	#partial switch a.kind {
-	case .Int, .Bool, .Float:
+	case .Int, .Bool, .Float, .Uint:
 		return a.size == b.size && a.align == b.align
 
 	case .Struct:

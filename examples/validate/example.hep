@@ -249,6 +249,10 @@ t :: bool
 @(uniform, binding = Binding_Location.Image)
 img2: #format(rg8i)image[2][4]f32
 
-test_u64 :: proc(a, b: u64) -> u64 {
-	return a + b * 10
+test_uint :: proc(a, b: u64, c: u32, d: u16, e: u8) -> u64 {
+	return a + b * 10 + u64(c % 10) + u64(d) * u64(e)
+}
+
+test_int :: proc(a, b: i64, c: i32, d: i16, e: i8) -> i64 {
+	return a + b * 10 + i64(c % 10) + i64(d) * i64(e)
 }

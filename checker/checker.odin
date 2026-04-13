@@ -1161,12 +1161,12 @@ checker_init :: proc(
 
 	scope_insert_entity(checker, entity_new(.Type, { text = "bool", }, types.t_bool, allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "i8",   }, types.t_i8 ,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "i8",   }, types.t_i8,   allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "i16",  }, types.t_i16,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "i32",  }, types.t_i32,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "i64",  }, types.t_i64,  allocator = allocator))
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "u8",   }, types.t_u8 ,  allocator = allocator))
+	scope_insert_entity(checker, entity_new(.Type, { text = "u8",   }, types.t_u8,   allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "u16",  }, types.t_u16,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "u32",  }, types.t_u32,  allocator = allocator))
 	scope_insert_entity(checker, entity_new(.Type, { text = "u64",  }, types.t_u64,  allocator = allocator))
