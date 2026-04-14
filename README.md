@@ -20,11 +20,11 @@ vertex_main :: proc(
     v_normal:     [3]f32 @ 1,
     v_tex_coords: [2]f32 @ 2,
 ) {
-    v_position   = (vs_constants.model * [4]f32{a_position, 1}).xyz
+    v_position   = (vs_constants.model * [4]f32{..a_position, 1}).xyz
     v_normal     = vs_constants.normal_matrix * a_normal
     v_tex_coords = a_tex_coords
 
-    $Position = vs_constants.proj * vs_constants.view * [4]f32{v_position, 1}
+    $Position = vs_constants.proj * vs_constants.view * [4]f32{..v_position, 1}
     return
 }
 
