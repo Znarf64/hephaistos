@@ -43,8 +43,42 @@ Type_Key :: struct {
 	types, annotations: string, // really []u32, but strings can be hashed and compared
 }
 
+get_type_cache_key :: proc(type: ^types.Type, flags: Type_Flags) -> (key: Type_Cache_Key) {
+	#partial switch type.kind {
+	case .Invalid:
+		unreachable()
+	case .Uint, .Int, .Bool, .Float:
+		return { variant = Type_Cache_Key_Basic{ size = type.size, kind = type.kind, }, }
+	case .Array:
+		elem := types.array_elem(type)
+		#partial switch elem.kind {
+		case .Uint, .Int, .Bool, .Float:
+			return { variant = Type_Cache_Key_Array{ size = type.size, elem_kind = elem.kind, }, }
+		}
+	}
+
+	return {
+		variant = type,
+		flags   = flags,
+	}
+}
+
+Type_Cache_Key_Basic :: struct {
+	size: int,
+	kind: types.Kind,
+}
+
+Type_Cache_Key_Array :: struct {
+	size:      int, // elem_size * count
+	elem_kind: types.Kind,
+}
+
 Type_Cache_Key :: struct {
-	type: ^types.Type,
+	variant: union {
+		Type_Cache_Key_Basic,
+		Type_Cache_Key_Array,
+		^types.Type,
+	},
 	flags: Type_Flags,
 }
 
@@ -879,8 +913,15 @@ Type_Flags :: bit_set[Type_Flag]
 // NOTE(Franz): This just generates the spirv for the type and hashes the resulting spirv code to deduplicate the types
 @(require_results)
 cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> (info: ^Type_Info) {
+	assert(type != nil)
+	assert(.Block not_in flags || .Explicit_Layout in flags)
+
+	type := types.base_type(type)
+
+	cache_key := get_type_cache_key(type, flags)
+
 	ok: bool
-	info, ok = ctx.type_registry.cache[{ type, flags, }]
+	info, ok = ctx.type_registry.cache[cache_key]
 	if ok {
 		return
 	}
@@ -902,8 +943,8 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> (in
 	info  = new(Type_Info)
 	info^ = cg_type_internal(ctx, &ctx.types, &ctx.annotations, type, flags)
 
-	ctx.type_registry.cache[{ type, flags, }] = info
-	ctx.type_registry.registry[key]           = info
+	ctx.type_registry.cache[cache_key] = info
+	ctx.type_registry.registry[key]    = info
 
 	return info
 }

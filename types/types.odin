@@ -3,7 +3,6 @@ package hephaistos_types
 import "base:runtime"
 
 import "core:fmt"
-import "core:hash"
 import "core:io"
 import "core:mem"
 import "core:strings"
@@ -662,51 +661,6 @@ buffer_elem :: proc(type: ^Type) -> ^Type {
 @(private="file")
 to_bytes :: proc(v: $P/^$T) -> []byte {
 	return ([^]byte)(v)[:size_of(T)]
-}
-
-@(require_results)
-type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
-	h := hash.fnv64a(to_bytes(type)[:offset_of(Type, variant)], seed)
-
-	switch v in type.variant {
-	case ^Struct:
-		for field in v.fields {
-			h = type_hash(field.type, h)
-		}
-	case ^Matrix:
-		h = type_hash(v.col_type, h)
-		h = hash.fnv64a(to_bytes(&v.cols), h)
-	case ^Array:
-		h = type_hash(v.elem, h)
-		h = hash.fnv64a(to_bytes(&v.count), h)
-	case ^Complex:
-		h = type_hash(v.array, h)
-	case ^Proc:
-		for field in v.args {
-			h = type_hash(field.type, h)
-		}
-		for field in v.returns {
-			h = type_hash(field.type, h)
-		}
-	case ^Proc_Group:
-		unimplemented()
-	case ^Image:
-		h = type_hash(v.texel_type, h)
-		h = hash.fnv64a(to_bytes(&v.dimensions), h)
-		h = hash.fnv64a(transmute([]byte)v.format, h)
-	case ^Enum:
-		for &val in v.values {
-			h = hash.fnv64a(to_bytes(&val.value), h)
-		}
-	case ^Buffer:
-		h = hash.fnv64a(to_bytes(&v.physical), h)
-		h = type_hash(v.elem, h)
-	case ^Bit_Set:
-		h = type_hash(v.enum_type, h)
-		h = type_hash(v.backing,   h)
-	}
-
-	return h
 }
 
 @(require_results)
