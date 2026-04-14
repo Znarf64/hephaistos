@@ -1035,7 +1035,7 @@ cg_type_internal :: proc(
 		}
 	case .Array:
 		type := type.variant.(^types.Array)
-		if type.count >= 2 && type.count <= 4 {
+		if type.count >= 2 && type.count <= 4 && types.is_numeric(type.elem) {
 			info.type = spv.OpTypeVector(type_builder, cg_type(ctx, type.elem).type, u32(type.count))
 		} else {
 			info.type = spv.OpTypeArray(type_builder, cg_type(ctx, type.elem).type, cg_constant(ctx, i64(type.count), nil).id)
