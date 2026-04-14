@@ -1,0 +1,125 @@
+// The SDFs in this function are ported from: https://iquilezles.org/articles/distfunctions2d/
+// 
+// The MIT License
+// Copyright © 2013-2025 Inigo Quilez
+// Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+// https://www.youtube.com/c/InigoQuilez
+// https://iquilezles.org
+
+dot2 :: proc(v: [2]f32) -> f32 {
+	return dot(v, v)
+}
+
+// https://www.shadertoy.com/view/3ltSW2
+circle :: proc(p: [2]f32, r: f32) -> f32 {
+	return length(p) - r
+}
+
+// https://www.shadertoy.com/view/4llXD7
+// https://www.youtube.com/watch?v=s5NGeUV2EyU
+rounded_box :: proc(p, b: [2]f32, r: [4]f32) -> f32 {
+	r := r
+
+	r.xy = (p.x > 0.0) ? r.xy : r.zw
+	r.x  = (p.y > 0.0) ? r.x  : r.y
+	q   := abs(p) - b + r.x
+	return min(max(q.x, q.y), 0) + length(max(q, 0)) - r.x
+}
+
+// https://www.shadertoy.com/view/3fc3zs
+chamfer_box :: proc(p, b: [2]f32, chamfer: f32) -> f32 {
+	p := abs(p) - b
+
+	p    = (p.y > p.x) ? p.yx : p.xy
+	p.y += chamfer
+
+	k := 1 - sqrt(2)
+
+	if p.y < 0 && p.y + p.x * k < 0 {
+		return p.x
+	}
+
+	if p.x < p.y {
+		return (p.x + p.y) * sqrt(0.5)
+	}
+
+	return length(p)
+}
+
+// https://www.youtube.com/watch?v=62-pRVZuS5c
+box :: proc(p, b: [2]f32) -> f32 {
+	d := abs(p) - b
+	return length(max(d, 0)) + min(max(d.x, d.y), 0)
+}
+
+// https://www.shadertoy.com/view/stcfzn
+oriented_box :: proc(p, a, b: [2]f32, th: f32) -> f32 {
+	l := length(b - a)
+	d := (b - a) / l
+	q := (p - (a + b) * 0.5)
+	q  = matrix[2, 2]f32{d.x, -d.y, d.y, d.x} * q
+	q  = abs(q) - {l, th} * 0.5
+	return length(max(q, 0)) + min(max(q.x, q.y), 0)
+}
+
+// https://www.shadertoy.com/view/3tdSDj
+// https://www.youtube.com/watch?v=PMltMdi1Wzg
+segment :: proc(p, a, b: [2]f32) -> f32 {
+	pa := p - a
+	ba := b - a
+	h  := clamp(dot(pa, ba) / dot(ba, ba), 0, 1)
+	return length(pa - ba * h)
+}
+
+// https://www.shadertoy.com/view/XdXcRB
+rhombus :: proc(p, b: [2]f32) -> f32 {
+	b := b
+
+	b.y = -b.y
+	p  := abs(p)
+	h  := clamp((dot(b, p) + b.y * b.y) / dot(b, b), 0, 1)
+	p  -= b * {h, h - 1}
+	return length(p) * sign(p.x)
+}
+
+// https://www.shadertoy.com/view/MlycD3
+trapezoid :: proc(p: [2]f32, r1, r2, he: f32) -> f32 {
+	p := p
+
+	k1 := [2]f32{r2, he}
+	k2 := [2]f32{r2 - r1, 2 * he}
+	p.x = abs(p.x)
+	ca := [2]f32{p.x - min(p.x, (p.y < 0) ? r1 : r2), abs(p.y) - he}
+	cb := p - k1 + k2 * clamp(dot(k1 - p, k2) / dot2(k2), 0, 1)
+	s  := (cb.x < 0 && ca.y < 0) ? -1.0 : 1.0
+	return s * sqrt(min(dot2(ca), dot2(cb)))
+}
+
+// https://www.shadertoy.com/view/7dlGRf
+parallelogram :: proc(p: [2]f32, wi, he, sk: f32) -> f32 {
+	e   := [2]f32{sk,he}
+	p   := (p.y < 0.0) ? -p : p
+	w   := p - e
+	w.x -= clamp(w.x, -wi, wi)
+	d   := [2]f32{dot(w, w), -w.y}
+	s   := p.x * e.y - p.y * e.x
+	p    = (s < 0) ? -p : p
+	v   := p - {wi, 0}
+	v   -= e * clamp(dot(v,e) / dot(e, e), -1, 1)
+	d    = min(d, [2]f32{dot(v, v), wi * he - abs(s)})
+	return sqrt(d.x) * sign(-d.y)
+}
+
+//https://www.shadertoy.com/view/Xl2yDW
+equilateral_triangle :: proc(p: [2]f32, r: f32) -> f32 {
+	p := p
+
+	k  := sqrt(3.0)
+	p.x = abs(p.x) - r
+	p.y = p.y + r / k
+	if p.x + k * p.y > 0 {
+	    p = {p.x - k * p.y, -k * p.x - p.y} / 2
+	}
+	p.x -= clamp(p.x, -2 * r, 0)
+	return -(length(p)) * sign(p.y)
+}

@@ -332,7 +332,7 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 			cols = parse_expr(parser) or_return
 		}
 		token_expect(parser, .Close_Bracket) or_return
-		elem := parse_expr(parser) or_return
+		elem := parse_expr(parser, allow_compound_literals = false) or_return
 
 		m := ast.new(ast.Type_Matrix, token.location, parser.end_location, parser.allocator)
 		m.rows = rows
@@ -901,13 +901,20 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 
 		token_expect(parser, .Open_Brace) or_return
 		then_block := parse_stmt_list(parser) or_return
-		token_advance(parser)
+		token_expect(parser, .Close_Brace) or_return
 		else_block: []^ast.Stmt
 		if token_peek(parser).kind == .Else {
 			token_advance(parser)
-			token_expect(parser, .Open_Brace) or_return
-			else_block = parse_stmt_list(parser) or_return
-			token_expect(parser, .Close_Brace)
+
+			if token_peek(parser).kind == .If {
+				else_if      := parse_stmt(parser) or_return
+				else_block    = make([]^ast.Stmt, 1, parser.allocator)
+				else_block[0] = else_if
+			} else {
+				token_expect(parser, .Open_Brace) or_return
+				else_block = parse_stmt_list(parser) or_return
+				token_expect(parser, .Close_Brace)
+			}
 		}
 
 		if_stmt := ast.new(ast.Stmt_If, token.location, parser.end_location, parser.allocator)

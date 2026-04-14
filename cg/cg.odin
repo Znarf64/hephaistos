@@ -123,45 +123,46 @@ Runtime_Proc :: enum {
 }
 
 Context :: struct {
-	constant_cache:     Constant_Cache,
-	string_cache:       map[string]spv.Id,
-	type_registry:      Type_Registry,
-	type_void:          spv.Id,
-	type_void_proc:     spv.Id,
+	constant_cache:      Constant_Cache,
+	string_cache:        map[string]spv.Id,
+	type_registry:       Type_Registry,
+	type_void:           spv.Id,
+	type_void_proc:      spv.Id,
 
-	runtime_procs:      [Runtime_Proc]spv.Id,
+	runtime_procs:       [Runtime_Proc]spv.Id,
 
-	meta:               spv.Builder,
-	ext_inst:           spv.Builder,
-	memory_model:       spv.Builder,
-	entry_points:       spv.Builder,
-	execution_modes:    spv.Builder,
-	debug_a:            spv.Builder,
-	debug_b:            spv.Builder,
-	annotations:        spv.Builder,
-	types:              spv.Builder,
-	globals:            spv.Builder,
-	functions:          spv.Builder,
+	meta:                spv.Builder,
+	ext_inst:            spv.Builder,
+	memory_model:        spv.Builder,
+	entry_points:        spv.Builder,
+	execution_modes:     spv.Builder,
+	debug_a:             spv.Builder,
+	debug_b:             spv.Builder,
+	annotations:         spv.Builder,
+	types:               spv.Builder,
+	globals:             spv.Builder,
+	functions:           spv.Builder,
 
-	current_id:         spv.Id,
-	checker:            ^checker.Checker,
-	scopes:             [dynamic]Scope,
-	libraries:          map[string]Library,
-	name_prefix:        string,
+	current_id:          spv.Id,
+	checker:             ^checker.Checker,
+	scopes:              [dynamic]Scope,
+	libraries:           map[string]Library,
+	name_prefix:         string,
 
-	extensions:         map[string]struct{},
-	capabilities:       map[spv.Capability]struct{},
-	referenced_globals: map[spv.Id]struct{},
+	extensions:          map[string]struct{},
+	capabilities:        map[spv.Capability]struct{},
+	referenced_globals:  map[spv.Id]struct{},
+	interface_variables: map[spv.BuiltIn]Value,
 
-	procs:              [dynamic]Proc_Lit_Info,
+	procs:               [dynamic]Proc_Lit_Info,
 
-	link_name:          string,
-	shader_stage:       ast.Shader_Stage,
-	debug_file:         spv.Id,
+	link_name:           string,
+	shader_stage:        ast.Shader_Stage,
+	debug_file:          spv.Id,
 
-	local_size:         [3]i32,
+	local_size:          [3]i32,
 
-	spirv_version:      u32,
+	spirv_version:       u32,
 }
 
 Value :: struct {
@@ -1270,6 +1271,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 			append(&interface, g)
 		}
 		clear(&ctx.referenced_globals)
+		clear(&ctx.interface_variables)
 		spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, link_name, ..interface[:])
 		#partial switch p.shader_stage {
 		case .Fragment:
@@ -1649,6 +1651,10 @@ cg_interface :: proc(
 	builtin, ok := reflect.enum_from_name(spv.BuiltIn, builtin)
 	assert(ok)
 
+	if cached, ok := ctx.interface_variables[builtin]; ok {
+		return cached
+	}
+
 	info := checker.interface_infos[builtin]
 	storage_class:     Storage_Class
 	spv_storage_class: spv.StorageClass
@@ -1668,6 +1674,8 @@ cg_interface :: proc(
 	type_info          := cg_type(ctx, value.type)
 	value.id            = spv.OpVariable(&ctx.globals, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class)
 	spv.OpDecorate(&ctx.annotations, value.id, .BuiltIn, u32(builtin))
+
+	ctx.interface_variables[builtin] = value
 
 	return
 }
@@ -1945,7 +1953,10 @@ cg_expr_internal :: proc(
 			return
 		}
 		if v.builtin != nil {
-			ti := cg_type(ctx, v.type)
+			ti: ^Type_Info
+			if v.type.kind != .Invalid {
+				ti = cg_type(ctx, v.type)
+			}
 			switch v.builtin {
 			case .Invalid,
 			     .Size_Of,
@@ -2171,6 +2182,11 @@ cg_expr_internal :: proc(
 					scope = .Subgroup
 				}
 				return { id = spv.OpReadClockKHR(builder, ti.type, cg_constant(ctx, i64(scope), nil).id), }
+			case .Barrier:
+				scope     := cg_constant(ctx, i64(spv.Scope.Workgroup), nil).id
+				semantics := cg_constant(ctx, i64(spv.MemorySemantics{ .AcquireRelease, .WorkgroupMemory, }), nil).id
+				spv.OpControlBarrier(builder, scope, scope, semantics)
+				return
 			}
 
 			unreachable()
@@ -2923,7 +2939,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 			}
 		}
 	case ^ast.Stmt_Expr:
-		e := cg_expr(ctx, builder, v.expr)
+		e := cg_expr(ctx, builder, v.expr, false)
 		if e.discard {
 			return true
 		}

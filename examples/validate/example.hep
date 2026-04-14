@@ -1,7 +1,8 @@
-import   "math"
-import m "math"
+import "base:intrinsics"
 
-import "intrinsics"
+import "core:math"
+import "core:ease"
+import "core:sdf"
 
 Binding_Location :: #import(Binding_Location)
 
@@ -95,10 +96,10 @@ when SHADOW_PASS {
 		d11 := tex[uv11] * 0.5 + 0.5
 
 		shadow := 0.0
-		shadow += ((current_depth - bias) > d00 ? 1 : 0) * w00
-		shadow += ((current_depth - bias) > d10 ? 1 : 0) * w10
-		shadow += ((current_depth - bias) > d01 ? 1 : 0) * w01
-		shadow += ((current_depth - bias) > d11 ? 1 : 0) * w11
+		shadow += ((current_depth - bias) > d00 ? 1.0 : 0.0) * w00
+		shadow += ((current_depth - bias) > d10 ? 1.0 : 0.0) * w10
+		shadow += ((current_depth - bias) > d01 ? 1.0 : 0.0) * w01
+		shadow += ((current_depth - bias) > d11 ? 1.0 : 0.0) * w11
 
 		return shadow
 	}
@@ -133,12 +134,9 @@ when SHADOW_PASS {
 		}
 
 		pi := math.PI
-		e  := math.e
+		e  := math.E
 
-		pi2 := m.PI
-		e2 := m.e
-
-		foo := math.mathsy_proc(420)
+		eased := ease.ease(.Quintic_In_Out, 0.9)
 
 		Some_Enum :: enum {
 
@@ -273,4 +271,11 @@ arr: [10][2][2]f32 = {
 	{ { 7, 7, }, { 7, 7, }, },
 	{ { 8, 8, }, { 8, 8, }, },
 	{ { 9, 9, }, { 9, 9, }, },
+}
+
+@(compute_shader)
+compute_shader :: proc() {
+	id  := $GlobalInvocationId
+	id2 := $GlobalInvocationId
+	intrinsics.barrier()
 }

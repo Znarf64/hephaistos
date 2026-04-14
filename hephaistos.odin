@@ -4,7 +4,9 @@ import "base:runtime"
 
 import "core:fmt"
 import "core:io"
+import "core:os"
 import "core:reflect"
+import "core:strings"
 import "core:terminal/ansi"
 
 import "ast"
@@ -225,5 +227,32 @@ print_error :: proc(w: io.Writer, file_name: string, lines: []string, error: Err
 		n += fmt.wprint(w, "^")
 	}
 	n += fmt.wprintln(w, ansi.CSI + ansi.RESET + ansi.SGR)
+	return
+}
+
+core_library_source_files := #load_directory("core")
+
+check_core_libraries :: proc(
+	allocator := context.allocator,
+	error_writer: io.Writer = {},
+) -> (libraries: map[string]Library, ok: bool) {
+	error_writer := error_writer if error_writer.procedure != nil else os.to_stream(os.stderr)
+
+	libraries = make(map[string]Library, allocator)
+	for file in core_library_source_files {
+		source      := string(file.data)
+		lib, errors := check_library(source, file.name, allocator = allocator, error_allocator = context.temp_allocator)
+		if len(errors) != 0 {
+			lines := strings.split_lines(source)
+			for error in errors {
+				print_error(error_writer, file.name, lines, error)
+			}
+		}
+		name, _ := strings.concatenate({ "core:", file.name, }, allocator)
+		name     = strings.trim_suffix(name, ".hep")
+		libraries[name] = lib
+	}
+
+	ok = true
 	return
 }

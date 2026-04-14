@@ -174,6 +174,8 @@ builtin_names: [ast.Builtin_Id]string = {
 
 	.Read_Subgroup_Clock = "intrinsics.read_subgroup_clock",
 	.Read_Device_Clock   = "intrinsics.read_device_clock",
+
+	.Barrier             = "intrinsics.barrier",
 }
 
 Operand :: struct {
@@ -436,8 +438,14 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			error(checker, cond, "expected a boolean expression in if statement condition but got expression of type %v", cond.type)
 		}
 
+		scope_push(checker, .Block, v.label)
 		then_diverging := check_stmt_list(checker, v.then_block)
+		scope_pop(checker)
+
+		scope_push(checker, .Block, v.label)
 		else_diverging := check_stmt_list(checker, v.else_block)
+		scope_pop(checker)
+
 		return then_diverging && else_diverging
 	case ^ast.Stmt_When:
 		cond := check_expr(checker, v.cond)
@@ -1214,8 +1222,10 @@ checker_init :: proc(
 
 	for name, builtin in builtin_names {
 		find_or_create_lib :: proc(checker: ^Checker, name: string) -> (library: ^Library) {
+			name   := strings.concatenate({ "base:", name, }, context.temp_allocator)
 			library = &checker.libraries[name]
 			if library == nil {
+				name                    = strings.clone(name, checker.allocator)
 				checker.libraries[name] = { entities = make(map[string]^Entity, checker.allocator), }
 				library                 = &checker.libraries[name]
 			}
@@ -1741,8 +1751,8 @@ check_expr_internal :: proc(
 		return
 
 	case ^ast.Expr_Binary:
-		lhs := check_expr(checker, v.lhs)
-		rhs := check_expr(checker, v.rhs, type_hint = lhs.type if v.op != .Multiply else nil)
+		lhs := check_expr(checker, v.lhs, type_hint = type_hint)
+		rhs := check_expr(checker, v.rhs, type_hint = lhs.type)
 
 		operand.type = types.op_result_type(lhs.type, rhs.type, v.op == .Multiply, checker.allocator)
 		if operand.type.kind == .Invalid {
@@ -2459,7 +2469,7 @@ check_expr_internal :: proc(
 				v.args[1].value.type = type
 				operand.mode         = .RValue
 				operand.type         = types.array_elem(type)
-			case .Discard:
+			case .Discard, .Barrier:
 				if len(v.args) != 0 {
 					error(checker, v, "builtin 'discard' expects no arguments, got %d", len(v.args))
 					return

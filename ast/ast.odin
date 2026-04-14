@@ -198,6 +198,8 @@ Builtin_Id :: enum {
 
 	Read_Subgroup_Clock,
 	Read_Device_Clock,
+
+	Barrier,
 }
 
 Expr_Call :: struct {
