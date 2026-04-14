@@ -1076,9 +1076,11 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		}
 	case:
 		if d.mutable {
-			if !v.constant_compound {
-				error(checker, v, "Expected a constant expression in global variable declaration")
+			if v.constant_compound {
+				e.kind = .Var
+				break
 			}
+			error(checker, v, "Expected a constant expression in global variable declaration")
 		} else {
 			error(checker, v, "Expected a constant expression or type in constant declaration")
 		}

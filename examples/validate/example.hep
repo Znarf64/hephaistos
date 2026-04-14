@@ -259,7 +259,7 @@ test_int :: proc(a, b: i64, c: i32, d: i16, e: i8) -> i64 {
 
 test_arrays :: proc(a, b: [32]f32) -> [32]f32 {
 	f: f32
-	return a - b + 10 + b - 69 + f
+	return a - b + 10 + b - 69 + f + arr[9].x
 }
 
 arr: [10][2]f32 = {
