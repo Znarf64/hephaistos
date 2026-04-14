@@ -136,6 +136,7 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Trunc               = "trunc",
 	.Inverse_Sqrt        = "inverse_sqrt",
 	.Abs                 = "abs",
+	.Sign                = "sign",
 
 	.Smooth_Step         = "smooth_step",
 	.Lerp                = "lerp",
@@ -312,8 +313,13 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 		return_index := 0
 		for e in v.values {
-			value := check_expr(checker, e, type_hint = proc_type.returns[return_index].type)
+			type_hint: ^types.Type
+			if return_index < len(proc_type.returns) {
+				type_hint = proc_type.returns[return_index].type
+			}
+			value := check_expr(checker, e, type_hint = type_hint)
 			if return_index >= len(proc_type.returns) {
+				return_index += 1
 				continue
 			}
 
@@ -332,7 +338,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 
 		if return_index != 0 && return_index != len(proc_type.returns) {
-			error(checker, v, "expected %d values for return statements but got %d", len(proc_type.returns), return_index)
+			error(checker, v, "expected %d values in return statement but got %d", len(proc_type.returns), return_index)
 		}
 
 		return true
@@ -2365,7 +2371,7 @@ check_expr_internal :: proc(
 					break
 				}
 				fallthrough
-			case .Sqrt, .Sin, .Cos, .Tan, .Exp, .Exp2, .Log, .Log2, .Floor, .Fract, .Ceil, .Round, .Trunc, .Inverse_Sqrt:
+			case .Sqrt, .Sin, .Cos, .Tan, .Exp, .Exp2, .Log, .Log2, .Floor, .Fract, .Ceil, .Round, .Trunc, .Inverse_Sqrt, .Sign:
 				if len(v.args) != 1 {
 					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(args))
 					break
@@ -2391,6 +2397,7 @@ check_expr_internal :: proc(
 				}
 				#partial switch t.kind {
 				case .Float, .Int:
+				case:
 					error(checker, v, "builtin '%s' expects a signed scalar or a vector, got %v", builtin_names[v.builtin], type)
 					return
 				}
@@ -3049,8 +3056,8 @@ check_expr_internal :: proc(
 		}
 	case ^ast.Expr_Ternary:
 		cond       := check_expr(checker, v.cond)
-		then_value := check_expr(checker, v.then_expr)
-		else_value := check_expr(checker, v.else_expr)
+		then_value := check_expr(checker, v.then_expr, type_hint = type_hint)
+		else_value := check_expr(checker, v.else_expr, type_hint = type_hint)
 
 		if cond.type.kind != .Bool {
 			error(checker, cond, "expected a boolean as the condition in ternary, got %v", cond.type)
@@ -3058,6 +3065,7 @@ check_expr_internal :: proc(
 		}
 
 		operand.type = types.default_type(types.op_result_type(then_value.type, else_value.type))
+		operand.mode = .RValue
 		if operand.type.kind == .Invalid {
 			error(checker, cond, "mismatched types in ternary expr: %v vs %v", then_value.type, else_value.type)
 			return
@@ -3082,11 +3090,19 @@ check_expr_internal :: proc(
 			}
 		}
 
-		col_type    := types.array_new(types.default_type(check_type(checker, v.elem)), int(rows.value.(i64) or_else 0), checker.allocator)
+		elem := check_type(checker, v.elem)
+		if elem.kind == .Invalid {
+			return
+		}
+
+		col_type    := types.array_new(types.default_type(elem), int(rows.value.(i64) or_else 0), checker.allocator)
 		operand.type = types.matrix_new(col_type, cols, checker.allocator)
 		operand.mode = .Type
 	case ^ast.Type_Array:
 		elem := types.default_type(check_type(checker, v.elem))
+		if elem.kind == .Invalid {
+			return
+		}
 		if v.count == nil {
 			if elem.size == 0 {
 				error(checker, v.elem, "buffer element type must have a non-zero size, got %v", elem)

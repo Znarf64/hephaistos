@@ -2054,6 +2054,8 @@ cg_expr_internal :: proc(
 				return { id = spv_glsl.OpTrunc(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Inverse_Sqrt:
 				return { id = spv_glsl.OpInverseSqrt(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Sign:
+				return { id = spv_glsl.OpFSign(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Abs:
 				t := v.args[0].value.type
 				if types.is_array(t) {
@@ -2208,8 +2210,35 @@ cg_expr_internal :: proc(
 			return { id = cg_nil_value(ctx, cg_type(ctx, v.type)), }
 		}
 
+		if v.type.kind == .Matrix {
+			assert(!v.named)
+
+			type := v.type.variant.(^types.Matrix)
+			elem := type.col_type.elem
+
+			row_type_id := cg_type(ctx, type.col_type).type
+
+			columns    := make([]spv.Id, type.cols,           context.temp_allocator)
+			row_values := make([]spv.Id, type.col_type.count, context.temp_allocator)
+
+			row_i, col_i: int
+			for field in v.fields {
+				value            := cg_expr(ctx, builder, field.value)
+				row_values[row_i] = cg_cast(ctx, builder, value, elem)
+				row_i            += 1
+				if row_i == type.cols {
+					columns[col_i] = spv.OpCompositeConstruct(builder, row_type_id, ..row_values[:])
+
+					row_i  = 0
+					col_i += 1
+				}
+			}
+
+			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..columns[:]), }
+		}
+
 		if !v.named {
-			values := make([dynamic]spv.Id, len(v.fields), context.temp_allocator)
+			values := make([]spv.Id, len(v.fields), context.temp_allocator)
 			i: int
 			for field in v.fields {
 				type: ^types.Type

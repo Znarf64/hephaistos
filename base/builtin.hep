@@ -31,6 +31,7 @@ round        :: proc(x: $T) -> T
 trunc        :: proc(x: $T) -> T
 inverse_sqrt :: proc(x: $T) -> T
 abs          :: proc(x: $T) -> T
+sign         :: proc(x: $T) -> T
 
 smooth_step :: proc(start, end, x: $T) -> T
 lerp        :: proc(start, end, x: $T) -> T

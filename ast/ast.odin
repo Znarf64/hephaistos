@@ -159,6 +159,7 @@ Builtin_Id :: enum {
 	Trunc,
 	Inverse_Sqrt,
 	Abs,
+	Sign,
 
 	Smooth_Step,
 	Lerp,
