@@ -30,16 +30,16 @@ vertex_main :: proc(
 	v_tex_coords:      [2]f32 @ 2,
 	v_shadow_position: [3]f32 @ 3,
 ) {
-	v_position   = (vs_constants.model * [4]f32{a_position, 1}).xyz
+	v_position   = (vs_constants.model * [4]f32{..a_position, 1}).xyz
 	v_normal     = vs_constants.normal_matrix * a_normal
 	v_tex_coords = a_tex_coords
 
 	when !SHADOW_PASS {
-		shadow_position  := shadow_uniforms.shadow_matrix * [4]f32{v_position, 1}
+		shadow_position  := shadow_uniforms.shadow_matrix * [4]f32{..v_position, 1}
 		v_shadow_position = (shadow_position.xyz / shadow_position.w) * 0.5 + 0.5
 	}
 
-	$Position = vs_constants.proj * vs_constants.view * [4]f32{v_position, 1}
+	$Position = vs_constants.proj * vs_constants.view * [4]f32{..v_position, 1}
 	return
 }
 
@@ -151,7 +151,7 @@ when SHADOW_PASS {
 
 	 	bits: Some_Bit_Set
 
-		a: [4]f32 = { aces_approx(f_color.rgb), 0, }
+		a: [4]f32 = { ..aces_approx(f_color.rgb), 0, }
 
 		lighting   := clamp(dot(v_normal, shadow_uniforms.light_direction), 0, 1)
 		f_color     = (0.2 + 0.8 * lighting * f32(1 - shadow)) * texture[v_tex_coords]
@@ -262,4 +262,15 @@ test_arrays :: proc(a, b: [32]f32) -> [32]f32 {
 	return a - b + 10 + b - 69 + f
 }
 
-arr: [10]f32
+arr: [10][2]f32 = {
+	{ 0, 0, },
+	{ 1, 1, },
+	{ 2, 2, },
+	{ 3, 3, },
+	{ 4, 4, },
+	{ 5, 5, },
+	{ 6, 6, },
+	{ 7, 7, },
+	{ 8, 8, },
+	{ 9, 9, },
+}

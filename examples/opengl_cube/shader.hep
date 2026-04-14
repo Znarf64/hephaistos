@@ -9,10 +9,10 @@ vertex_main :: proc(
 	v_position: [3]f32 @ 0,
 	v_normal:   [3]f32 @ 1,
 ) {
-	v_position = (uniforms.model * [4]f32{a_position, 1}).xyz
+	v_position = (uniforms.model * [4]f32{..a_position, 1}).xyz
 	v_normal   = uniforms.normal_matrix * a_normal
 
-	$Position = uniforms.proj * uniforms.view * [4]f32{v_position, 1}
+	$Position = uniforms.proj * uniforms.view * [4]f32{..v_position, 1}
 	return
 }
 
@@ -25,5 +25,5 @@ fragment_main :: proc(
 ) {
 	v_normal := normalize(v_normal)
 	lighting := 0.5 * dot(v_normal, uniforms.light_direction) + 0.5
-	return {lighting * uniforms.albedo, 1}
+	return {..(lighting * uniforms.albedo), 1}
 }

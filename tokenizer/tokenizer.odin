@@ -51,6 +51,8 @@ Token_Kind :: enum u16 {
 	Range_Equal,
 	Range_Less,
 
+	Ellipsis, // ..
+
 	Equal,
 	Not_Equal,
 	Less_Equal,
@@ -297,10 +299,7 @@ tokenize :: proc(
 			if current < len(source) && source[current] == '.' {
 				current += 1
 				if current == len(source) {
-					append(&errors, Error {
-						location = token.location,
-						message  = "expected < or = after .., got EOF",
-					})
+					token.kind = .Ellipsis
 					break
 				}
 				switch source[current] {
@@ -311,10 +310,7 @@ tokenize :: proc(
 					token.kind = .Range_Equal
 					current   += 1
 				case:
-					append(&errors, Error {
-						location = token.location,
-						message  = fmt.aprintf("expected < or = after .., got '%c'", source[current], error_allocator),
-					})
+					token.kind = .Ellipsis
 				}
 			} else {
 				token.kind = Token_Kind(char)
@@ -519,6 +515,8 @@ token_strings := #sparse[Token_Kind]string {
 
 	.Range_Equal    = "..=",
 	.Range_Less     = "..<",
+
+	.Ellipsis       = "..",
 
 	.EOF            = "EOF",
 

@@ -84,6 +84,7 @@ Addressing_Mode :: enum {
 	Type,
 	Builtin,
 	Library,
+	Ellipsis,
 }
 
 @(rodata)
@@ -98,6 +99,7 @@ addressing_mode_string := [Addressing_Mode]string {
 	.Type       = "type",
 	.Builtin    = "builtin",
 	.Library    = "library",
+	.Ellipsis   = "ellipsis",
 }
 
 @(rodata)
@@ -174,13 +176,14 @@ builtin_names: [ast.Builtin_Id]string = {
 }
 
 Operand :: struct {
-	expr:       ^ast.Expr,
-	type:       ^types.Type,
-	mode:       Addressing_Mode,
-	value:      types.Const_Value,
-	builtin_id: ast.Builtin_Id,
-	library:    string,
-	is_call:    bool,
+	expr:              ^ast.Expr,
+	type:              ^types.Type,
+	mode:              Addressing_Mode,
+	value:             types.Const_Value,
+	builtin_id:        ast.Builtin_Id,
+	library:           string,
+	is_call:           bool,
+	constant_compound: bool,
 }
 
 Scope :: struct {
@@ -845,7 +848,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 			}
 			if comp, ok := a.value.derived_expr.(^ast.Expr_Compound); ok {
 				if len(comp.fields) != 3 {
-					error(checker, a.value, "'local_size' attribute value must be a compount literal of three constant integers")
+					error(checker, a.value, "'local_size' attribute value must be a compound literal of three constant integers")
 					break
 				}
 				for field, i in comp.fields {
@@ -860,7 +863,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 					}
 				}
 			} else {
-				error(checker, a.value, "'local_size' attribute value must be a compount literal of three constant integers")
+				error(checker, a.value, "'local_size' attribute value must be a compound literal of three constant integers")
 			}
 		case:
 			found: bool
@@ -1073,7 +1076,9 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		}
 	case:
 		if d.mutable {
-			error(checker, v, "Expected a constant expression in global variable declaration")
+			if !v.constant_compound {
+				error(checker, v, "Expected a constant expression in global variable declaration")
+			}
 		} else {
 			error(checker, v, "Expected a constant expression or type in constant declaration")
 		}
@@ -1690,6 +1695,8 @@ check_expr_internal :: proc(
 	check_proc_bodies: bool        = true,
 ) -> (operand: Operand) {
 	operand.expr = expr
+	operand.mode = .Invalid
+	operand.type = types.t_invalid
 
 	defer {
 		expr.type        = operand.type
@@ -1878,7 +1885,19 @@ check_expr_internal :: proc(
 		operand.type = type
 		return
 	case ^ast.Expr_Paren:
-		return check_expr_internal(checker, v.expr, {})
+		return check_expr_internal(checker, v.expr, {}, type_hint)
+
+	case ^ast.Expr_Ellipsis:
+		operand := check_expr_internal(checker, v.expr, {})
+		if types.is_array(operand.type) {
+			operand.mode = .Ellipsis
+		} else {
+			error(checker, operand, "'..' can only be applied to arrays, got %v", operand.type)
+			operand.mode = .Invalid
+			operand.type = types.t_invalid
+		}
+		return operand
+
 	case ^ast.Expr_Selector:
 		if v.lhs == nil {
 			if type_hint == nil {
@@ -2696,6 +2715,8 @@ check_expr_internal :: proc(
 			operand.is_call = true
 		}
 	case ^ast.Expr_Compound:
+		defer v.constant = operand.constant_compound
+
 		type: ^types.Type
 		if v.type_expr != nil {
 			type = check_type(checker, v.type_expr)
@@ -2711,6 +2732,7 @@ check_expr_internal :: proc(
 		operand.type = type
 		operand.mode = .RValue
 		if len(v.fields) == 0 { // {}
+			operand.constant_compound = true
 			return
 		}
 
@@ -2733,6 +2755,8 @@ check_expr_internal :: proc(
 		#partial switch type.kind {
 		case .Struct:
 			type := type.variant.(^types.Struct)
+
+			operand.constant_compound = true
 
 			if named {
 				seen := make(map[string]struct{}, context.temp_allocator)
@@ -2758,6 +2782,7 @@ check_expr_internal :: proc(
 					}
 
 					field_operand := check_expr(checker, field.value, type_hint = struct_field.type)
+					operand.constant_compound &&= field_operand.mode == .Const
 					if !types.implicitly_castable(field_operand.type, struct_field.type) {
 						error(checker, field.value, "expected value of type %v but got %v", struct_field.type, field_operand.type)
 						return
@@ -2774,6 +2799,7 @@ check_expr_internal :: proc(
 					struct_field := type.fields[i]
 
 					field_operand := check_expr(checker, field.value, type_hint = struct_field.type)
+					operand.constant_compound &&= field_operand.mode == .Const
 					if !types.implicitly_castable(field_operand.type, struct_field.type) {
 						error(checker, field.value, "expected value of type %v but got %v", struct_field.type, field_operand.type)
 						return
@@ -2782,8 +2808,13 @@ check_expr_internal :: proc(
 				}
 			}
 		case .Array:
+			operand.constant_compound = true
+
 			type := type.variant.(^types.Array)
 			if named {
+				if type.count > 4 {
+					error(checker, v, "swizzled initializers are only supported for arrays with up to 4 elements.")
+				}
 				seen: [4]bool
 				for field in v.fields {
 					coords: [4]int
@@ -2819,6 +2850,7 @@ check_expr_internal :: proc(
 					}
 
 					value := check_expr(checker, field.value, type_hint = expected_type)
+					operand.constant_compound &&= value.mode == .Const
 					if !types.implicitly_castable(value.type, expected_type) {
 						error(checker, field.value, "expected value of type %v but got %v", expected_type, value.type)
 						return
@@ -2832,22 +2864,28 @@ check_expr_internal :: proc(
 
 			n_values := 0
 			for field in v.fields {
-				f := check_expr(checker, field.value, type_hint = type.elem)
+				f := check_expr(checker, field.value, type_hint = type.elem, allow_ellipsis = true)
 				t := f.type
-				if types.is_array(t) {
+				if f.mode == .Ellipsis {
 					v        := f.type.variant.(^types.Array)
 					t         = v.elem
 					n_values += v.count
-				} else if types.is_tuple(t) {
-					error(checker, field.value, "multi valued expression found where single value was expected")
-					n_values += 1
+
+					operand.constant_compound &&= f.constant_compound
 				} else {
-					n_values        += 1
-					field.value.type = type.elem
+					operand.constant_compound &&= f.mode == .Const || f.constant_compound
+
+					if types.is_tuple(t) {
+						error(checker, field.value, "multi valued expression found where single value was expected")
+						n_values += 1
+					} else {
+						n_values        += 1
+						field.value.type = type.elem
+					}
 				}
+
 				if !types.implicitly_castable(t, type.elem) {
 					error(checker, field.value, "expected value of type %v but got %v", type.elem, f.type)
-					return
 				}
 			}
 
@@ -3251,6 +3289,7 @@ check_expr_or_type :: proc(
 	type_hint:         ^types.Type = nil,
 	check_proc_bodies: bool        = true,
 	allow_proc_groups: bool        = false,
+	allow_ellipsis:    bool        = false,
 ) -> (operand: Operand) {
 	operand = check_expr_internal(checker, expr, attributes, type_hint, check_proc_bodies)
 	switch operand.mode {
@@ -3268,6 +3307,11 @@ check_expr_or_type :: proc(
 		error(checker, operand, "expected an expression, got no value")
 	case .Library:
 		error(checker, operand, "expected an expression, got library")
+	case .Ellipsis:
+		if allow_ellipsis {
+			return
+		}
+		error(checker, operand, "illegal use of ellipsis ('..')")
 	case .Invalid:
 	}
 
@@ -3278,7 +3322,14 @@ check_expr_or_type :: proc(
 }
 
 @(require_results)
-check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}, type_hint: ^types.Type = nil, allow_no_value := false) -> (operand: Operand) {
+check_expr :: proc(
+	checker:        ^Checker,
+	expr:           ^ast.Expr,
+	attributes:     []ast.Field = {},
+	type_hint:      ^types.Type = nil,
+	allow_no_value: bool        = false,
+	allow_ellipsis: bool        = false,
+) -> (operand: Operand) {
 	operand = check_expr_internal(checker, expr, attributes, type_hint)
 	switch operand.mode {
 	case .RValue, .LValue, .Const, .Proc, .Proc_Group:
@@ -3295,6 +3346,11 @@ check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 		error(checker, operand, "expected an expression, got no value")
 	case .Library:
 		error(checker, operand, "expected an expression, got library")
+	case .Ellipsis:
+		if allow_ellipsis {
+			return
+		}
+		error(checker, operand, "illegal use of ellipsis ('..')")
 	case .Invalid:
 	}
 
@@ -3307,7 +3363,7 @@ check_expr :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}) -> ^types.Type {
 	operand := check_expr_internal(checker, expr, attributes)
 	switch operand.mode {
-	case .RValue, .LValue, .Const, .Proc, .Proc_Group:
+	case .RValue, .LValue, .Const, .Proc, .Proc_Group, .Ellipsis:
 		error(checker, operand, "expected a type, got expression")
 	case .Builtin:
 		error(checker, operand, "expected a type, got builtin")

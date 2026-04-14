@@ -474,6 +474,12 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 		s.lhs      = nil
 		s.selector = ident
 		return s, true
+	case .Ellipsis:
+		token_advance(parser)
+		e            := parse_expr(parser, allow_compound_literals = allow_compound_literals) or_return
+		ellipsis     := ast.new(ast.Expr_Ellipsis, token.location, parser.end_location, parser.allocator)
+		ellipsis.expr = e
+		return ellipsis, true
 	}
 
 	error(parser, token, "unexpected token")

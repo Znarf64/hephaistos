@@ -1876,6 +1876,8 @@ cg_expr_internal :: proc(
 		return
 	case ^ast.Expr_Paren:
 		return cg_expr(ctx, builder, v.expr)
+	case ^ast.Expr_Ellipsis:
+		return cg_expr(ctx, builder, v.expr)
 	case ^ast.Expr_Selector:
 		if v.library != "" {
 			return cg_ident(ctx, builder, v.selector.text, v.library)
@@ -2227,7 +2229,11 @@ cg_expr_internal :: proc(
 				}
 				i += 1
 			}
-			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values[:]), }
+			if v.constant {
+				return { id = spv.OpConstantComposite(&ctx.types, cg_type(ctx, v.type).type, ..values[:]), }
+			} else {
+				return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values[:]), }
+			}
 		}
 
 		if vector, ok := v.type.variant.(^types.Array); ok {

@@ -11,7 +11,7 @@ vertex_main :: proc(/* Nothing here! */) -> (
 	vertex_index := $VertexIndex
 	v_position    = constants.vertex_buffer[vertex_index].position
 	v_tex_coords  = constants.vertex_buffer[vertex_index].tex_coords
-	$Position     = { v_position, 0, 1, }
+	$Position     = { ..v_position, 0, 1, }
 }
 
 @(fragment_shader, link_name = "main")
@@ -19,6 +19,6 @@ fragment_main :: proc(
 	v_position:   [2]f32,
 	v_tex_coords: [2]f32,
 ) -> (f_color: [4]f32) {
-	f_color = { v_tex_coords, 1, 1, }
+	f_color = { ..v_tex_coords, 1, 1, }
 	return
 }

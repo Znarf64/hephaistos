@@ -226,6 +226,7 @@ Expr_Compound :: struct {
 	type_expr: ^Expr,
 	fields:   []Field,
 	named:      bool,
+	constant:   bool,
 }
 
 Expr_Index :: struct {
@@ -237,6 +238,11 @@ Expr_Cast :: struct {
 	using node: Expr,
 	value:     ^Expr,
 	type_expr: ^Expr,
+}
+
+Expr_Ellipsis :: struct {
+	using node: Expr,
+	expr:      ^Expr,
 }
 
 
@@ -415,6 +421,7 @@ Any_Node :: union {
 	^Expr_Interface,
 	^Expr_Directive,
 	^Expr_Ternary,
+	^Expr_Ellipsis,
 
 	^Type_Struct,
 	^Type_Array,
@@ -456,6 +463,7 @@ Any_Expr :: union {
 	^Expr_Interface,
 	^Expr_Directive,
 	^Expr_Ternary,
+	^Expr_Ellipsis,
 
 	^Type_Struct,
 	^Type_Array,
