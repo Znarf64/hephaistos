@@ -182,7 +182,7 @@ Builtin_Id :: enum {
 
 	/* intrinsics */
 
-	Type_Is_Vector,
+	Type_Is_Array,
 	Type_Is_Float,
 	Type_Is_Boolean,
 	Type_Is_Integer,

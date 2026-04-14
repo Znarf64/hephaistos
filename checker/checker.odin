@@ -155,7 +155,7 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Align_Of            = "align_of",
 	.Type_Of             = "type_of",
 
-	.Type_Is_Vector      = "intrinsics.type_is_vector",
+	.Type_Is_Array       = "intrinsics.type_is_array",
 	.Type_Is_Float       = "intrinsics.type_is_float",
 	.Type_Is_Boolean     = "intrinsics.type_is_boolean",
 	.Type_Is_Integer     = "intrinsics.type_is_integer",
@@ -1027,8 +1027,8 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 			size = size_of(types.Struct)
 		case ^types.Matrix:
 			size = size_of(types.Matrix)
-		case ^types.Vector:
-			size = size_of(types.Vector)
+		case ^types.Array:
+			size = size_of(types.Array)
 		case ^types.Buffer:
 			size = size_of(types.Buffer)
 		case ^types.Proc:
@@ -1273,7 +1273,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 		case:
 			fmt.panicf("complex types have to be either 8 or 16 bytes wide, got %v", ti.size)
 		}
-		return types.vector_new(elem, 2, allocator)
+		return types.array_new(elem, 2, allocator)
 	case reflect.Type_Info_Quaternion:
 		elem: ^types.Type
 		switch ti.size {
@@ -1284,7 +1284,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 		case:
 			fmt.panicf("quaternion types have to be either 16 or 32 bytes wide, got %v", ti.size)
 		}
-		return types.vector_new(elem, 4, allocator)
+		return types.array_new(elem, 4, allocator)
 	case reflect.Type_Info_String:
 		panic("string types can not be shared")
 	case reflect.Type_Info_Boolean:
@@ -1311,7 +1311,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 	case reflect.Type_Info_Procedure:
 		panic("procedure types can not be shared")
 	case reflect.Type_Info_Array:
-		return types.vector_new(type_info_to_type(v.elem, allocator), v.count, allocator)
+		return types.array_new(type_info_to_type(v.elem, allocator), v.count, allocator)
 	case reflect.Type_Info_Enumerated_Array:
 		unimplemented()
 	case reflect.Type_Info_Dynamic_Array, reflect.Type_Info_Fixed_Capacity_Dynamic_Array:
@@ -1371,10 +1371,10 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 	case reflect.Type_Info_Bit_Set:
 		return type_info_to_type(v.underlying, allocator)
 	case reflect.Type_Info_Simd_Vector:
-		return types.vector_new(type_info_to_type(v.elem, allocator), v.count, allocator)
+		return types.array_new(type_info_to_type(v.elem, allocator), v.count, allocator)
 	case reflect.Type_Info_Matrix:
 		elem := type_info_to_type(v.elem, allocator)
-		col  := types.vector_new(elem, v.row_count, allocator)
+		col  := types.array_new(elem, v.row_count, allocator)
 		return types.matrix_new(col, v.column_count, allocator)
 	case reflect.Type_Info_Soa_Pointer:
 		panic("soa pointer types can not be shared")
@@ -1960,7 +1960,7 @@ check_expr_internal :: proc(
 			}
 		}
 
-		if type.kind == .Vector {
+		if type.kind == .Array {
 			duplicates := false
 			seen: [4]bool
 			for char in v.selector.text {
@@ -1975,7 +1975,7 @@ check_expr_internal :: proc(
 				case 'a', 'w':
 					index = 3
 				}
-				if index == -1 || index >= types.vector_len(type) {
+				if index == -1 || index >= types.array_len(type) {
 					error(checker, v, "can not swizzle vector of type '%s' with coordinate '%v'", type, char)
 				}
 				if index != -1 {
@@ -1987,12 +1987,12 @@ check_expr_internal :: proc(
 			}
 
 			if len(v.selector.text) == 1 {
-				operand.type = types.vector_elem(type)
+				operand.type = types.array_elem(type)
 				operand.mode = lhs.mode
 				return
 			}
 
-			operand.type = types.vector_new(types.vector_elem(type), len(v.selector.text), checker.allocator)
+			operand.type = types.array_new(types.array_elem(type), len(v.selector.text), checker.allocator)
 			operand.mode = lhs.mode
 			if duplicates {
 				operand.mode = .RValue
@@ -2140,7 +2140,7 @@ check_expr_internal :: proc(
 			     .Align_Of,
 			     .Min,
 			     .Max,
-			     .Type_Is_Vector,
+			     .Type_Is_Array,
 			     .Type_Is_Float,
 			     .Type_Is_Boolean,
 			     .Type_Is_Integer,
@@ -2191,13 +2191,13 @@ check_expr_internal :: proc(
 				a    := args[0]
 				b    := args[1]
 				type := types.op_result_type(a.type, b.type)
-				if !types.is_vector(type) {
+				if !types.is_array(type) {
 					error(checker, v, "builtin 'dot' expects two vectors of the same type, got %v and %v", a.type, b.type)
 					break
 				}
 				v.args[0].value.type = type
 				v.args[1].value.type = type
-				operand.type = types.vector_elem(type)
+				operand.type = types.array_elem(type)
 				operand.mode = .RValue
 			case .Cross:
 				if len(v.args) != 2 {
@@ -2207,7 +2207,7 @@ check_expr_internal :: proc(
 				a    := args[0]
 				b    := args[1]
 				type := types.op_result_type(a.type, b.type)
-				if vec, ok := type.variant.(^types.Vector); !ok || vec.count != 3 {
+				if vec, ok := type.variant.(^types.Array); !ok || vec.count != 3 {
 					error(checker, v, "builtin 'cross' expects two 3 dimensional vectors, got %v and %v", a.type, b.type)
 					break
 				}
@@ -2232,7 +2232,7 @@ check_expr_internal :: proc(
 				for &arg in v.args {
 					arg.value.type = type
 				}
-				if !types.is_numeric(type) && !types.is_vector(type) {
+				if !types.is_numeric(type) && !types.is_array(type) {
 					error(checker, v, "builtin '%s' expects at least two vectors or scalars of the same type, got %v", builtin_names[v.builtin], type)
 					break
 				}
@@ -2252,7 +2252,7 @@ check_expr_internal :: proc(
 						return
 					}
 				}
-				if !types.is_numeric(type) && !types.is_vector(type) {
+				if !types.is_numeric(type) && !types.is_array(type) {
 					error(checker, v, "builtin 'clamp' expects 3 vectors or scalars of the same type, got %v", type)
 					break
 				}
@@ -2272,12 +2272,12 @@ check_expr_internal :: proc(
 					error(checker, v, "type mismatch in builtin '%s': %v vs %v", builtin_names[v.builtin], a, b)
 					break
 				}
-				if !types.is_numeric(type) && !types.is_vector(type) {
+				if !types.is_numeric(type) && !types.is_array(type) {
 					error(checker, v, "builtin '%s' expects two vectors or scalars of the same type, got %v", builtin_names[v.builtin], type)
 					break
 				}
 				t_valid := types.is_float(t)
-				if types.is_vector(t) && types.is_vector(type) {
+				if types.is_array(t) && types.is_array(type) {
 					t_valid = types.op_result_type(t, type).kind != .Invalid
 				}
 				if !t_valid {
@@ -2318,7 +2318,7 @@ check_expr_internal :: proc(
 				}
 				if !types.matrix_is_square(type) {
 					m   := type.variant.(^types.Matrix)
-					type = types.matrix_new(types.vector_new(types.matrix_elem(type), m.cols, checker.allocator), m.col_type.count, checker.allocator)
+					type = types.matrix_new(types.array_new(types.matrix_elem(type), m.cols, checker.allocator), m.col_type.count, checker.allocator)
 				}
 				operand.type = type
 				operand.mode = .RValue
@@ -2365,8 +2365,8 @@ check_expr_internal :: proc(
 				}
 				type := types.default_type(args[0].type)
 				t    := type
-				if types.is_vector(type) {
-					t = types.vector_elem(type)
+				if types.is_array(type) {
+					t = types.array_elem(type)
 				}
 				#partial switch t.kind {
 				case .Float, .Int:
@@ -2385,8 +2385,8 @@ check_expr_internal :: proc(
 				y         := args[1]
 				type      := types.op_result_type(x.type, y.type)
 				elem_type := type
-				if types.is_vector(type) {
-					elem_type = types.vector_elem(type)
+				if types.is_array(type) {
+					elem_type = types.array_elem(type)
 				}
 				if type.kind == .Invalid || !types.is_float(elem_type) {
 					error(checker, v, "builtin 'tan' expects two float vectors or scalars, got %v and %v", x.type, y.type)
@@ -2403,14 +2403,14 @@ check_expr_internal :: proc(
 				}
 				x    := args[0]
 				type := types.base_type(x.type)
-				if !types.is_vector(type) || !types.is_float(types.vector_elem(type)) {
+				if !types.is_array(type) || !types.is_float(types.array_elem(type)) {
 					error(checker, x, "builtin '%v' expects a vector of floats, got %v", builtin_names[v.builtin], type)
 					return
 				}
 				operand.mode = .RValue
 				operand.type = x.type
 				if v.builtin == .Length {
-					operand.type = types.vector_elem(type)
+					operand.type = types.array_elem(type)
 				}
 			case .Distance:
 				if len(v.args) != 2 {
@@ -2423,14 +2423,14 @@ check_expr_internal :: proc(
 					error(checker, v, "type mismatch in builtin 'distance': %v vs %v", a, b)
 					break
 				}
-				if !types.is_vector(type) {
+				if !types.is_array(type) {
 					error(checker, v, "builtin 'distance' expects a two vectors of the same type, got %v", type)
 					break
 				}
 				v.args[0].value.type = type
 				v.args[1].value.type = type
 				operand.mode         = .RValue
-				operand.type         = types.vector_elem(type)
+				operand.type         = types.array_elem(type)
 			case .Discard:
 				if len(v.args) != 0 {
 					error(checker, v, "builtin 'discard' expects no arguments, got %d", len(v.args))
@@ -2449,7 +2449,7 @@ check_expr_internal :: proc(
 					return
 				}
 				sampler     := args[0].type.variant.(^types.Image)
-				operand.type = types.vector_new(types.t_i32, sampler.dimensions, checker.allocator)
+				operand.type = types.array_new(types.t_i32, sampler.dimensions, checker.allocator)
 				operand.mode = .RValue
 			case .Image_Size:
 				if len(v.args) != 1 {
@@ -2461,7 +2461,7 @@ check_expr_internal :: proc(
 					return
 				}
 				sampler     := args[0].type.variant.(^types.Image)
-				operand.type = types.vector_new(types.t_i32, sampler.dimensions, checker.allocator)
+				operand.type = types.array_new(types.t_i32, sampler.dimensions, checker.allocator)
 				operand.mode = .RValue
 			case .Count_Ones, .Count_Zeros, .Reverse_Bits:
 				if len(v.args) != 1 {
@@ -2469,8 +2469,8 @@ check_expr_internal :: proc(
 					return
 				}
 				type := args[0].type
-				if types.is_vector(type) {
-					type = types.vector_elem(type)
+				if types.is_array(type) {
+					type = types.array_elem(type)
 				}
 				type = types.default_type(type)
 				if !types.is_integer(type) {
@@ -2509,7 +2509,7 @@ check_expr_internal :: proc(
 				}
 				operand.type = types.t_u64
 				operand.mode = .RValue
-			case .Type_Is_Vector,
+			case .Type_Is_Array,
 			     .Type_Is_Float,
 			     .Type_Is_Boolean,
 			     .Type_Is_Integer,
@@ -2529,8 +2529,8 @@ check_expr_internal :: proc(
 				operand.type = types.t_bool
 
 				#partial switch v.builtin {
-				case .Type_Is_Vector:
-					operand.value = types.is_vector(args[0].type)
+				case .Type_Is_Array:
+					operand.value = types.is_array(args[0].type)
 				case .Type_Is_Float:
 					operand.value = types.is_float(args[0].type)
 				case .Type_Is_Boolean:
@@ -2781,8 +2781,8 @@ check_expr_internal :: proc(
 					field.value.type = struct_field.type
 				}
 			}
-		case .Vector:
-			type := type.variant.(^types.Vector)
+		case .Array:
+			type := type.variant.(^types.Array)
 			if named {
 				seen: [4]bool
 				for field in v.fields {
@@ -2815,7 +2815,7 @@ check_expr_internal :: proc(
 					if n == 1 {
 						expected_type = type.elem
 					} else {
-						expected_type = types.vector_new(type.elem, n, context.temp_allocator)
+						expected_type = types.array_new(type.elem, n, context.temp_allocator)
 					}
 
 					value := check_expr(checker, field.value, type_hint = expected_type)
@@ -2834,8 +2834,8 @@ check_expr_internal :: proc(
 			for field in v.fields {
 				f := check_expr(checker, field.value, type_hint = type.elem)
 				t := f.type
-				if types.is_vector(t) {
-					v        := f.type.variant.(^types.Vector)
+				if types.is_array(t) {
+					v        := f.type.variant.(^types.Array)
 					t         = v.elem
 					n_values += v.count
 				} else if types.is_tuple(t) {
@@ -2892,11 +2892,11 @@ check_expr_internal :: proc(
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
 			operand.type = types.matrix_elem(lhs.type)
-		case .Vector:
+		case .Array:
 			if !types.is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = types.vector_elem(lhs.type)
+			operand.type = types.array_elem(lhs.type)
 		case .Buffer:
 			if !types.is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
@@ -2915,7 +2915,7 @@ check_expr_internal :: proc(
 					)
 				}
 			} else {
-				if !types.is_vector(rhs.type) || types.vector_len(rhs.type) != sampler.dimensions {
+				if !types.is_array(rhs.type) || types.array_len(rhs.type) != sampler.dimensions {
 					error(
 						checker,
 						rhs,
@@ -2943,8 +2943,8 @@ check_expr_internal :: proc(
 				}
 			} else {
 				if types.is_integer(rhs.type) {
-					v.rhs.type = types.vector_new(types.default_type(rhs.type), image.dimensions, checker.allocator)
-				} else if !types.is_vector(rhs.type) || !types.is_numeric(types.vector_elem(rhs.type)) || types.vector_len(rhs.type) != image.dimensions {
+					v.rhs.type = types.array_new(types.default_type(rhs.type), image.dimensions, checker.allocator)
+				} else if !types.is_array(rhs.type) || !types.is_numeric(types.array_elem(rhs.type)) || types.array_len(rhs.type) != image.dimensions {
 					error(
 						checker,
 						rhs,
@@ -3042,7 +3042,7 @@ check_expr_internal :: proc(
 			}
 		}
 
-		col_type    := types.vector_new(types.default_type(check_type(checker, v.elem)), int(rows.value.(i64) or_else 0), checker.allocator)
+		col_type    := types.array_new(types.default_type(check_type(checker, v.elem)), int(rows.value.(i64) or_else 0), checker.allocator)
 		operand.type = types.matrix_new(col_type, cols, checker.allocator)
 		operand.mode = .Type
 	case ^ast.Type_Array:
@@ -3057,11 +3057,11 @@ check_expr_internal :: proc(
 		} else {
 			count := check_expr(checker, v.count)
 			if c, ok := count.value.(i64); ok {
-				if c < 2 || c > 4 {
-					error(checker, count, "vector size has to be between 2 and 4, got %d", c)
+				if c < 1 {
+					error(checker, count, "array size has to be a positive integer, got %d", c)
 					return
 				}
-				operand.type = types.vector_new(elem, int(c), checker.allocator)
+				operand.type = types.array_new(elem, int(c), checker.allocator)
 				operand.mode = .Type
 			} else {
 				error(checker, count, "expected a constant integer as the count of an array")
@@ -3208,7 +3208,7 @@ check_expr_internal :: proc(
 		}
 
 		texel_type := types.default_type(check_type(checker, v.texel_type))
-		if !(types.is_numeric(texel_type) || types.is_vector(texel_type)) {
+		if !(types.is_numeric(texel_type) || types.is_array(texel_type)) {
 			error(checker, v.texel_type, "texel type of sampler has to be either a numeric type or a vector, got: %v", texel_type)
 			return
 		}

@@ -350,9 +350,6 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 
 		return m, true
 
-	case .Vector:
-		token_advance(parser)
-		fallthrough
 	case .Open_Bracket:
 		token_expect(parser, .Open_Bracket) or_return
 		count: ^ast.Expr

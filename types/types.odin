@@ -35,7 +35,7 @@ Struct :: struct {
 	fields:     []Field,
 }
 
-Vector :: struct {
+Array :: struct {
 	using base: Type,
 	count:      int,
 	elem:       ^Type,
@@ -43,7 +43,7 @@ Vector :: struct {
 
 Complex :: struct {
 	using base: Type,
-	vector:     ^Vector,
+	array:     ^Array,
 }
 
 Buffer :: struct {
@@ -55,7 +55,7 @@ Buffer :: struct {
 Matrix :: struct {
 	using base: Type,
 	cols:       int,
-	col_type:   ^Vector,
+	col_type:   ^Array,
 }
 
 Proc :: struct {
@@ -99,7 +99,7 @@ Kind :: enum {
 
 	Struct,
 	Matrix,
-	Vector,
+	Array,
 	Buffer,
 	Proc,
 	Proc_Group,
@@ -120,7 +120,7 @@ Type :: struct {
 	variant: union {
 		^Struct,
 		^Matrix,
-		^Vector,
+		^Array,
 		^Buffer,
 		^Proc,
 		^Proc_Group,
@@ -136,7 +136,7 @@ new_any :: proc(allocator: mem.Allocator) -> ^Type {
 	size := max(
 		size_of(Struct),
 		size_of(Matrix),
-		size_of(Vector),
+		size_of(Array),
 		size_of(Buffer),
 		size_of(Proc),
 		size_of(Image),
@@ -191,13 +191,13 @@ _base_types_init :: proc "contextless" () {
 	mem.arena_init(&_base_type_arena, _base_type_arena_mem[:])
 	allocator := mem.arena_allocator(&_base_type_arena)
 
-	t_vec2 = vector_new(t_f32, 2, allocator)
-	t_vec3 = vector_new(t_f32, 3, allocator)
-	t_vec4 = vector_new(t_f32, 4, allocator)
+	t_vec2 = array_new(t_f32, 2, allocator)
+	t_vec3 = array_new(t_f32, 3, allocator)
+	t_vec4 = array_new(t_f32, 4, allocator)
 
-	t_ivec2 = vector_new(t_i32, 2, allocator)
-	t_ivec3 = vector_new(t_i32, 3, allocator)
-	t_ivec4 = vector_new(t_i32, 4, allocator)
+	t_ivec2 = array_new(t_i32, 2, allocator)
+	t_ivec3 = array_new(t_i32, 3, allocator)
+	t_ivec4 = array_new(t_i32, 4, allocator)
 
 	t_complex64  = complex_new(t_f32, allocator)
 	t_complex128 = complex_new(t_f64, allocator)
@@ -244,9 +244,9 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 		c := m.col_type
 		fmt.wprintf(w, "matrix[%d, %d]", m.cols, c.count)
 		print_writer(w, c.elem)
-	case .Vector:
-		v := type.variant.(^Vector)
-		fmt.wprintf(w, "vector[%d]", v.count)
+	case .Array:
+		v := type.variant.(^Array)
+		fmt.wprintf(w, "[%d]", v.count)
 		print_writer(w, v.elem)
 	case .Buffer:
 		v := type.variant.(^Buffer)
@@ -385,9 +385,9 @@ equal :: proc(a, b: ^Type) -> bool {
 		}
 
 		return equal(a.col_type, b.col_type)
-	case .Vector:
-		a := a.variant.(^Vector)
-		b := b.variant.(^Vector)
+	case .Array:
+		a := a.variant.(^Array)
+		b := b.variant.(^Array)
 
 		if a.count != b.count {
 			return false
@@ -457,7 +457,7 @@ base_type :: proc(type: ^Type, keep_complex := false) -> ^Type {
 			if keep_complex {
 				return type
 			}
-			type = type.variant.(^Complex).vector
+			type = type.variant.(^Complex).array
 		case:
 			return type
 		}
@@ -481,8 +481,8 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 		return true
 	}
 
-	if is_numeric(from) && to.kind == .Vector {
-		return implicitly_castable(from, vector_elem(to))
+	if is_numeric(from) && to.kind == .Array {
+		return implicitly_castable(from, array_elem(to))
 	}
 
 	if is_numeric(from) && to.kind == .Matrix {
@@ -552,20 +552,20 @@ castable :: proc(from, to: ^Type) -> bool {
 		return true
 	}
 
-	if is_numeric(from) && is_vector(to) {
+	if is_numeric(from) && is_array(to) {
 		return true
 	}
 
-	if is_vector(from) && is_vector(to) {
-		return vector_len(from) == vector_len(to)
+	if is_array(from) && is_array(to) {
+		return array_len(from) == array_len(to)
 	}
 
 	return false
 }
 
 @(require_results)
-is_vector :: proc(type: ^Type) -> bool {
-	return type.kind == .Vector
+is_array :: proc(type: ^Type) -> bool {
+	return type.kind == .Array
 }
 
 @(require_results)
@@ -640,18 +640,18 @@ is_boolean :: proc(type: ^Type) -> bool {
 }
 
 @(require_results)
-vector_len :: proc(type: ^Type) -> int {
-	return type.variant.(^Vector).count
+array_len :: proc(type: ^Type) -> int {
+	return type.variant.(^Array).count
 }
 
 @(require_results)
-vector_elem :: proc(type: ^Type) -> ^Type {
-	return type.variant.(^Vector).elem
+array_elem :: proc(type: ^Type) -> ^Type {
+	return type.variant.(^Array).elem
 }
 
 @(require_results)
 complex_elem :: proc(type: ^Type) -> ^Type {
-	return type.variant.(^Complex).vector.elem
+	return type.variant.(^Complex).array.elem
 }
 
 @(require_results)
@@ -676,11 +676,11 @@ type_hash :: proc(type: ^Type, seed: u64 = 0xcbf29ce484222325) -> u64 {
 	case ^Matrix:
 		h = type_hash(v.col_type, h)
 		h = hash.fnv64a(to_bytes(&v.cols), h)
-	case ^Vector:
+	case ^Array:
 		h = type_hash(v.elem, h)
 		h = hash.fnv64a(to_bytes(&v.count), h)
 	case ^Complex:
-		h = type_hash(v.vector, h)
+		h = type_hash(v.array, h)
 	case ^Proc:
 		for field in v.args {
 			h = type_hash(field.type, h)
@@ -729,13 +729,13 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 			return t_invalid
 		}
 
-		col := vector_new(a.col_type.elem, a.col_type.count, allocator)
+		col := array_new(a.col_type.elem, a.col_type.count, allocator)
 		return matrix_new(col, b.cols, allocator)
 	}
 
-	if a.kind == .Matrix && b.kind == .Vector {
+	if a.kind == .Matrix && b.kind == .Array {
 		a := a.variant.(^Matrix)
-		v := b.variant.(^Vector)
+		v := b.variant.(^Array)
 
 		if a.cols != v.count {
 			return t_invalid
@@ -745,11 +745,11 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 			return t_invalid
 		}
 
-		return vector_new(v.elem, a.col_type.count, allocator)
+		return array_new(v.elem, a.col_type.count, allocator)
 	}
 
-	if a.kind == .Vector && b.kind == .Matrix {
-		v := a.variant.(^Vector)
+	if a.kind == .Array && b.kind == .Matrix {
+		v := a.variant.(^Array)
 		b := b.variant.(^Matrix)
 
 		if v.count != b.col_type.count {
@@ -760,7 +760,7 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 			return t_invalid
 		}
 
-		return vector_new(v.elem, b.cols, allocator)
+		return array_new(v.elem, b.cols, allocator)
 	}
 
 	if a.kind == .Float {
@@ -792,11 +792,11 @@ matrix_is_square :: proc(t: ^Type) -> bool {
 }
 
 @(require_results)
-vector_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Vector {
+array_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Array {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
-	type := new(.Vector, Vector, allocator)
+	type := new(.Array, Array, allocator)
 	type.elem  = elem
 	type.count = count
 	type.align = elem.align
@@ -810,10 +810,10 @@ complex_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Complex {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
-	type       := new(.Complex, Complex, allocator)
-	type.vector = vector_new(elem, 2, allocator)
-	type.size   = type.vector.size
-	type.align  = type.vector.align
+	type      := new(.Complex, Complex, allocator)
+	type.array = array_new(elem, 2, allocator)
+	type.size  = type.array.size
+	type.align = type.array.align
 
 	return type
 }
@@ -823,10 +823,10 @@ quaternion_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Complex {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
-	type       := new(.Quaternion, Complex, allocator)
-	type.vector = vector_new(elem, 4, allocator)
-	type.size   = type.vector.size
-	type.align  = type.vector.align
+	type      := new(.Quaternion, Complex, allocator)
+	type.array = array_new(elem, 4, allocator)
+	type.size  = type.array.size
+	type.align = type.array.align
 
 	return type
 }
@@ -871,7 +871,7 @@ image_new :: proc(texel_type: ^Type, dimensions: int, format: string, allocator:
 }
 
 @(require_results)
-matrix_new :: proc(col_type: ^Vector, cols: int, allocator: mem.Allocator) -> ^Matrix {
+matrix_new :: proc(col_type: ^Array, cols: int, allocator: mem.Allocator) -> ^Matrix {
 	assert(col_type      != nil)
 	assert(col_type.size != 0)
 
@@ -967,8 +967,8 @@ operator_applicable :: proc(type: ^Type, op: tokenizer.Token_Kind) -> bool {
 		case .Not, .And, .Or:
 			return true
 		}
-	case .Vector:
-		return operator_applicable(vector_elem(type), op)
+	case .Array:
+		return operator_applicable(array_elem(type), op)
 	case .Complex:
 		return operator_applicable(complex_elem(type), op)
 	case .Quaternion:

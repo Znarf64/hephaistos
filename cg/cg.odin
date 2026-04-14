@@ -11,7 +11,6 @@ import "../ast"
 import "../types"
 import "../tokenizer"
 import "../checker"
-import "../hashmap"
 
 import spv      "../spirv-odin"
 import spv_glsl "../spirv-odin/spirv_glsl"
@@ -41,16 +40,23 @@ Type_Info :: struct {
 }
 
 Type_Key :: struct {
-	type:  ^types.Type,
+	types, annotations: string, // really []u32, but strings can be hashed and compared
+}
+
+Type_Cache_Key :: struct {
+	type: ^types.Type,
 	flags: Type_Flags,
 }
 
-Type_Registry :: hashmap.Hash_Map(Type_Key, ^Type_Info)
+Type_Registry :: struct {
+	cache:    map[Type_Cache_Key]^Type_Info,
+	registry: map[Type_Key]^Type_Info,
+}
 
 Image_Type :: struct {
 	dimensions: int,
 	sampled:    bool,
-	format :    string,
+	format:     string,
 	texel_type: struct {
 		size: int,
 		kind: types.Kind,
@@ -65,10 +71,10 @@ Proc_Lit_Info :: struct {
 
 Constant_Key :: struct {
 	value: types.Const_Value,
-	type: ^types.Type,
+	type:  spv.Id,
 }
 
-Constant_Cache :: hashmap.Hash_Map(Constant_Key, spv.Id)
+Constant_Cache :: map[Constant_Key]spv.Id
 
 Runtime_Proc :: enum {
 	Complex64_Mul = 1,
@@ -86,10 +92,6 @@ Context :: struct {
 	constant_cache:     Constant_Cache,
 	string_cache:       map[string]spv.Id,
 	type_registry:      Type_Registry,
-	image_types:        map[Image_Type]struct {
-		image:   spv.Id,
-		sampler: spv.Id,
-	},
 	type_void:          spv.Id,
 	type_void_proc:     spv.Id,
 
@@ -246,17 +248,6 @@ find_scope_by_kind :: proc(
 	return nil
 }
 
-register_type :: proc(registry: ^Type_Registry, key: Type_Key) -> (type_info: ^Type_Info, ok: bool) {
-	ti := hashmap.get(registry^, key)
-	if ti != nil {
-		return ti^, true
-	} else {
-		type_info = new(Type_Info)
-		hashmap.insert(registry, key, type_info)
-		return
-	}
-}
-
 cg_string :: proc(ctx: ^Context, str: string) -> spv.Id {
 	if id, ok := ctx.string_cache[str]; ok {
 		return id
@@ -266,7 +257,7 @@ cg_string :: proc(ctx: ^Context, str: string) -> spv.Id {
 	return id
 }
 
-cg_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl, global: bool) {
+cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Value, global: bool) {
 	value_builder     := builder
 	decl_builder      := &ctx.functions
 	storage_class     := Storage_Class.Function
@@ -435,37 +426,6 @@ generate :: proc(
 		checker       = checker,
 		spirv_version = spirv_version,
 	}
-	hashmap.init(
-		&ctx.type_registry,
-		proc(key: Type_Key, seed: uintptr) -> uintptr {
-			h := seed
-			if key.type.kind == .Struct {
-				flags := key.flags
-				h      = runtime.default_hasher(&flags, seed, size_of(flags))
-			}
-			return uintptr(types.type_hash(key.type, u64(h)))
-		},
-		proc(a, b: Type_Key) -> bool {
-			if a.type.kind == .Struct && b.type.kind == .Struct {
-				if a.flags != b.flags {
-					return false
-				}
-			}
-			return types.equal(a.type, b.type)
-		},
-	)
-	hashmap.init(
-		&ctx.constant_cache,
-		proc(key: Constant_Key, seed: uintptr) -> uintptr {
-			h     := seed
-			value := key.value
-			h      = runtime.default_hasher(&value, seed, size_of(value))
-			return uintptr(types.type_hash(key.type, u64(h)))
-		},
-		proc(a, b: Constant_Key) -> bool {
-			return a.value == b.value && types.equal(a.type, b.type)
-		},
-	)
 
 	for b := cast([^]spv.Builder)&ctx.meta; b != cast([^]spv.Builder)&ctx.current_id; b = b[1:] {
 		b[0].current_id = &ctx.current_id
@@ -775,24 +735,23 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 
 		case .Matrix:
 			type = types.matrix_elem(type)
-		case .Vector:
-			type = types.vector_elem(type)
+		case .Array:
+			type = types.array_elem(type)
 		}
 	}
 
+	ti := cg_type(ctx, type)
+
 	key := Constant_Key {
-		type  = type,
+		type  = ti.type,
 		value = value,
 	}
-	cached := hashmap.get(ctx.constant_cache, key)
-	if cached != nil {
+	if cached, ok := ctx.constant_cache[key]; ok {
 		return {
-			id   = cached^,
+			id   = cached,
 			type = type,
-		},
+		}
 	}
-
-	ti := cg_type(ctx, type)
 
 	id: spv.Id
 	switch v in value {
@@ -842,7 +801,7 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 		panic("")
 	}
 
-	hashmap.insert(&ctx.constant_cache, key, id)
+	ctx.constant_cache[key] = id
 
 	return { id = id, type = type, }
 }
@@ -917,23 +876,54 @@ Type_Flag :: enum {
 
 Type_Flags :: bit_set[Type_Flag]
 
+// NOTE(Franz): This just generates the spirv for the type and hashes the resulting spirv code to deduplicate the types
 @(require_results)
-cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Type_Info {
+cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> (info: ^Type_Info) {
+	ok: bool
+	info, ok = ctx.type_registry.cache[{ type, flags, }]
+	if ok {
+		return
+	}
+
+	current_id:         spv.Id      = 0
+	type_builder:       spv.Builder = { current_id = &current_id, }
+	annotation_builder: spv.Builder = { current_id = &current_id, }
+	_ = cg_type_internal(ctx, &type_builder, &annotation_builder, type, flags)
+
+	key := Type_Key {
+		types       = string(slice.to_bytes(type_builder.data[:])), // []u32 is not a valid hash key...
+		annotations = string(slice.to_bytes(annotation_builder.data[:])),
+	}
+
+	if info, ok = ctx.type_registry.registry[key]; ok {
+		return info
+	}
+
+	info  = new(Type_Info)
+	info^ = cg_type_internal(ctx, &ctx.types, &ctx.annotations, type, flags)
+
+	ctx.type_registry.cache[{ type, flags, }] = info
+	ctx.type_registry.registry[key]           = info
+
+	return info
+}
+
+@(require_results)
+cg_type_internal :: proc(
+	ctx:                ^Context,
+	type_builder:       ^spv.Builder,
+	annotation_builder: ^spv.Builder,
+	type:               ^types.Type,
+	flags:              Type_Flags,
+) -> (info: Type_Info) {
 	assert(type != nil)
 	assert(.Block not_in flags || .Explicit_Layout in flags)
 	type := types.base_type(type)
 
-	registry := &ctx.type_registry
-	info, ok := register_type(registry, { type, flags, })
-	if ok {
-		assert(info.type != 0)
-		return info
-	}
-
 	switch type.kind {
 	case .Uint:
 		assert(type.size != 0)
-		info.type = spv.OpTypeInt(&ctx.types, u32(type.size * 8), 0)
+		info.type = spv.OpTypeInt(type_builder, u32(type.size * 8), 0)
 		cap: spv.Capability
 		switch type.size {
 		case 1:
@@ -948,7 +938,7 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 		}
 	case .Int:
 		assert(type.size != 0)
-		info.type = spv.OpTypeInt(&ctx.types, u32(type.size * 8), 1)
+		info.type = spv.OpTypeInt(type_builder, u32(type.size * 8), 1)
 		cap: spv.Capability
 		switch type.size {
 		case 1:
@@ -963,7 +953,7 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 		}
 	case .Float:
 		assert(type.size != 0)
-		info.type = spv.OpTypeFloat(&ctx.types, u32(type.size * 8))
+		info.type = spv.OpTypeFloat(type_builder, u32(type.size * 8))
 		cap: spv.Capability
 		switch type.size {
 		case 2:
@@ -975,7 +965,7 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 			ctx.capabilities[cap] = {}
 		}
 	case .Bool:
-		info.type = spv.OpTypeBool(&ctx.types)
+		info.type = spv.OpTypeBool(type_builder)
 	case .Struct, .Tuple:
 		type := type.variant.(^types.Struct)
 		if len(type.fields) != 0 {
@@ -983,31 +973,35 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 			for &f, i in fields {
 				f = cg_type(ctx, type.fields[i].type, flags - { .Block, }).type
 			}
-			info.type = spv.OpTypeStruct(&ctx.types, ..fields)
+			info.type = spv.OpTypeStruct(type_builder, ..fields)
 			for f, i in type.fields {
 				i := u32(i)
-				spv.OpMemberName(&ctx.debug_b, info.type, i, f.name.text)
+				// spv.OpMemberName(&ctx.debug_b, info.type, i, f.name.text)
 
 				if .Explicit_Layout not_in flags {
 					continue
 				}
-				spv.OpMemberDecorate(&ctx.annotations, info.type, u32(i), .Offset, u32(f.offset))
+				spv.OpMemberDecorate(annotation_builder, info.type, u32(i), .Offset, u32(f.offset))
 				type_matrix := type.fields[i].type.variant.(^types.Matrix) or_continue
-				spv.OpMemberDecorate(&ctx.annotations, info.type, i, .MatrixStride, u32(type_matrix.col_type.size))
-				spv.OpMemberDecorate(&ctx.annotations, info.type, i, .ColMajor)
+				spv.OpMemberDecorate(annotation_builder, info.type, i, .MatrixStride, u32(type_matrix.col_type.size))
+				spv.OpMemberDecorate(annotation_builder, info.type, i, .ColMajor)
 			}
 			if .Block in flags {
-				spv.OpDecorate(&ctx.annotations, info.type, .Block)
+				spv.OpDecorate(annotation_builder, info.type, .Block)
 			}
 		} else {
 			info.type = ctx.type_void
 		}
-	case .Vector:
-		type := type.variant.(^types.Vector)
-		info.type = spv.OpTypeVector(&ctx.types, cg_type(ctx, type.elem).type, u32(type.count))
+	case .Array:
+		type := type.variant.(^types.Array)
+		if type.count >= 2 && type.count <= 4 {
+			info.type = spv.OpTypeVector(type_builder, cg_type(ctx, type.elem).type, u32(type.count))
+		} else {
+			info.type = spv.OpTypeArray(type_builder, cg_type(ctx, type.elem).type, cg_constant(ctx, i64(type.count), nil).id)
+		}
 	case .Matrix:
-		type := type.variant.(^types.Matrix)
-		info.type = spv.OpTypeMatrix(&ctx.types, cg_type(ctx, type.col_type).type, u32(type.cols))
+		type     := type.variant.(^types.Matrix)
+		info.type = spv.OpTypeMatrix(type_builder, cg_type(ctx, type.col_type).type, u32(type.cols))
 		ctx.capabilities[.Matrix] = {}
 	case .Proc:
 		type := type.variant.(^types.Proc)
@@ -1015,56 +1009,27 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 		for &arg, i in args {
 			arg = cg_type(ctx, type.args[i].type).type
 		}
-		info.type = spv.OpTypeFunction(&ctx.types, cg_type(ctx, type.return_type).type, ..args)
+		info.type = spv.OpTypeFunction(type_builder, cg_type(ctx, type.return_type).type, ..args)
 	case .Sampler:
 		type := type.variant.(^types.Image)
 		sampled_type: ^types.Type
 		if types.is_numeric(type.texel_type) {
 			sampled_type = type.texel_type
 		} else {
-			assert(types.is_vector(type.texel_type))
-			sampled_type = types.vector_elem(type.texel_type)
-		}
-		image_type := Image_Type {
-			dimensions = type.dimensions,
-			texel_type = {
-				size = sampled_type.size,
-				kind = sampled_type.kind,
-			},
-			sampled = true,
+			assert(types.is_array(type.texel_type))
+			sampled_type = types.array_elem(type.texel_type)
 		}
 
-		if cached, ok := ctx.image_types[image_type]; ok {
-			info.image_type = cached.image
-			info.type       = cached.sampler
-			break
-		}
-
-		info.image_type = spv.OpTypeImage(&ctx.types, cg_type(ctx, sampled_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 1, .Unknown)
-		info.type       = spv.OpTypeSampledImage(&ctx.types, info.image_type)
-		ctx.image_types[image_type] = { info.image_type, info.type, }
+		info.image_type = spv.OpTypeImage(type_builder, cg_type(ctx, sampled_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 1, .Unknown)
+		info.type       = spv.OpTypeSampledImage(type_builder, info.image_type)
 	case .Image:
 		type := type.variant.(^types.Image)
 		texel_type: ^types.Type
 		if types.is_numeric(type.texel_type) {
 			texel_type = type.texel_type
 		} else {
-			assert(types.is_vector(type.texel_type))
-			texel_type = types.vector_elem(type.texel_type)
-		}
-		image_type := Image_Type {
-			dimensions = type.dimensions,
-			texel_type = {
-				size = texel_type.size,
-				kind = texel_type.kind,
-			},
-			sampled = false,
-			format  = type.format,
-		}
-
-		if cached, ok := ctx.image_types[image_type]; ok {
-			info.type = cached.image
-			break
+			assert(types.is_array(type.texel_type))
+			texel_type = types.array_elem(type.texel_type)
 		}
 
 		image_format: spv.ImageFormat
@@ -1090,35 +1055,34 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> ^Ty
 			ctx.capabilities[.Int64ImageEXT] = {}
 		}
 
-		info.type = spv.OpTypeImage(&ctx.types, cg_type(ctx, texel_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 2, image_format)
-		ctx.image_types[image_type] = { image = info.type, }
+		info.type = spv.OpTypeImage(type_builder, cg_type(ctx, texel_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 2, image_format)
 	case .Buffer:
 		type := type.variant.(^types.Buffer)
 		elem := cg_type(ctx, type.elem, { .Explicit_Layout, })
 		if type.physical {
 			ctx.extensions["SPV_KHR_physical_storage_buffer"] = {}
 			ctx.capabilities[.PhysicalStorageBufferAddresses] = {}
-			info.type = spv.OpTypePointer(&ctx.types, .PhysicalStorageBuffer, elem.type)
-			spv.OpDecorate(&ctx.annotations, info.type, .ArrayStride, u32(type.elem.size))
+			info.type = spv.OpTypePointer(type_builder, .PhysicalStorageBuffer, elem.type)
+			spv.OpDecorate(annotation_builder, info.type, .ArrayStride, u32(type.elem.size))
 			if .Block in flags {
-				spv.OpDecorate(&ctx.annotations, info.type, .Block)
-				spv.OpMemberDecorate(&ctx.annotations, info.type, 0, .Offset, 0)
+				spv.OpDecorate(annotation_builder, info.type, .Block)
+				spv.OpMemberDecorate(annotation_builder, info.type, 0, .Offset, 0)
 			}
 		} else {
-			info.array_type = spv.OpTypeRuntimeArray(&ctx.types, elem.type)
-			info.type       = spv.OpTypeStruct(&ctx.types, info.array_type)
-			info.array_ptr  = spv.OpTypePointer(&ctx.types, .StorageBuffer, info.array_type)
-			spv.OpDecorate(&ctx.annotations, info.array_type, .ArrayStride, u32(type.elem.size))
+			info.array_type = spv.OpTypeRuntimeArray(type_builder, elem.type)
+			info.type       = spv.OpTypeStruct(type_builder, info.array_type)
+			info.array_ptr  = spv.OpTypePointer(type_builder, .StorageBuffer, info.array_type)
+			spv.OpDecorate(annotation_builder, info.array_type, .ArrayStride, u32(type.elem.size))
 			if .Block in flags {
-				spv.OpDecorate(&ctx.annotations, info.type, .Block)
-				spv.OpMemberDecorate(&ctx.annotations, info.type, 0, .Offset, 0)
+				spv.OpDecorate(annotation_builder, info.type, .Block)
+				spv.OpMemberDecorate(annotation_builder, info.type, 0, .Offset, 0)
 			}
 		}
 	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion, .Proc_Group:
 		unreachable()
 	}
 
-	return info
+	return
 }
 
 image_format_names: [spv.ImageFormat]string
@@ -1170,7 +1134,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 				location = u32(arg.location)
 			}
 			spv.OpDecorate(&ctx.annotations, id, .Location, location)
-			if types.is_integer(arg.type) || (types.is_vector(arg.type) && types.is_integer(types.vector_elem(arg.type))) {
+			if types.is_integer(arg.type) || (types.is_array(arg.type) && types.is_integer(types.array_elem(arg.type))) {
 				spv.OpDecorate(&ctx.annotations, id, .Flat)
 			}
 		}
@@ -1193,7 +1157,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 					location = u32(ret.location)
 				}
 				spv.OpDecorate(&ctx.annotations, id, .Location, location)
-				if types.is_integer(ret.type) || (types.is_vector(ret.type) && types.is_integer(types.vector_elem(ret.type))) {
+				if types.is_integer(ret.type) || (types.is_array(ret.type) && types.is_integer(types.array_elem(ret.type))) {
 					spv.OpDecorate(&ctx.annotations, id, .Flat)
 				}
 			}
@@ -1321,13 +1285,13 @@ cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Value) -> spv.Id {
 		vector_len: int
 		if types.is_numeric(value.type) {
 			vector_len = 1
-			texel_type = types.vector_new(value.type, 4, context.temp_allocator)
-		} else if types.is_vector(value.type) {
-			vector_len = types.vector_len(value.type)
+			texel_type = types.array_new(value.type, 4, context.temp_allocator)
+		} else if types.is_array(value.type) {
+			vector_len = types.array_len(value.type)
 			if vector_len == 4 {
 				texel_type = value.type
 			} else {
-				texel_type = types.vector_new(types.vector_elem(value.type), 4, context.temp_allocator)
+				texel_type = types.array_new(types.array_elem(value.type), 4, context.temp_allocator)
 			}
 		} else {
 			panic("")
@@ -1437,85 +1401,90 @@ cg_expr_binary :: proc(
 		panic("")
 	}
 
-	type^      = types.op_result_type(lhs_type, rhs_type, op == .Multiply, context.temp_allocator)
-	type_info := cg_type(ctx, type^)
+	type^ = types.op_result_type(lhs_type, rhs_type, op == .Multiply, context.temp_allocator)
 
-	Binary_Op_Proc :: proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id)
+	cg_binary_op :: proc(
+		ctx:         ^Context,
+		builder:     ^spv.Builder,
+		result_type: spv.Id,
+		lhs, rhs:    Value,
+		type:        ^types.Type,
+		op:          tokenizer.Token_Kind,
+	) -> spv.Id {
+		runtime_proc:   Runtime_Proc
+		binary_op_proc: proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id)
 
-	binary_op_inst :: proc(ctx: ^Context, lhs_type, rhs_type, type: ^types.Type, op: tokenizer.Token_Kind) -> Binary_Op_Proc {
-		runtime_proc: Runtime_Proc
 		#partial switch type.kind {
 		case .Int:
 			#partial switch op {
 			case .Add:
-				return spv.OpIAdd
+				binary_op_proc = spv.OpIAdd
 			case .Subtract:
-				return spv.OpISub
+				binary_op_proc = spv.OpISub
 			case .Multiply:
-				return spv.OpIMul
+				binary_op_proc = spv.OpIMul
 			case .Divide:
-				return spv.OpSDiv
+				binary_op_proc = spv.OpSDiv
 			case .Modulo:
-				return spv.OpSMod
+				binary_op_proc = spv.OpSMod
 			case .Bit_Or:
-				return spv.OpBitwiseOr
+				binary_op_proc = spv.OpBitwiseOr
 			case .Bit_And:
-				return spv.OpBitwiseAnd
+				binary_op_proc = spv.OpBitwiseAnd
 			case .Xor:
-				return spv.OpBitwiseXor
+				binary_op_proc = spv.OpBitwiseXor
 			}
 		case .Uint:
 			#partial switch op {
 			case .Add:
-				return spv.OpIAdd
+				binary_op_proc = spv.OpIAdd
 			case .Subtract:
-				return spv.OpISub
+				binary_op_proc = spv.OpISub
 			case .Multiply:
-				return spv.OpIMul
+				binary_op_proc = spv.OpIMul
 			case .Divide:
-				return spv.OpUDiv
+				binary_op_proc = spv.OpUDiv
 			case .Modulo:
-				return spv.OpUMod
+				binary_op_proc = spv.OpUMod
 			case .Bit_Or:
-				return spv.OpBitwiseOr
+				binary_op_proc = spv.OpBitwiseOr
 			case .Bit_And:
-				return spv.OpBitwiseAnd
+				binary_op_proc = spv.OpBitwiseAnd
 			case .Xor:
-				return spv.OpBitwiseXor
+				binary_op_proc = spv.OpBitwiseXor
 			}
 		case .Float:
 			#partial switch op {
 			case .Add:
-				return spv.OpFAdd
+				binary_op_proc = spv.OpFAdd
 			case .Subtract:
-				return spv.OpFSub
+				binary_op_proc = spv.OpFSub
 			case .Multiply:
-				return spv.OpFMul
+				binary_op_proc = spv.OpFMul
 			case .Modulo:
-				return spv.OpFMod
+				binary_op_proc = spv.OpFMod
 			case .Divide:
-				return spv.OpFDiv
+				binary_op_proc = spv.OpFDiv
 			}
 		case .Bool:
 			#partial switch op {
 			case .And:
-				return spv.OpLogicalAnd
+				binary_op_proc = spv.OpLogicalAnd
 			case .Or:
-				return spv.OpLogicalOr
+				binary_op_proc = spv.OpLogicalOr
 			}
-			unimplemented()
 		case .Matrix:
 			#partial switch op {
 			case .Multiply:
-				return spv.OpMatrixTimesMatrix
+				binary_op_proc = spv.OpMatrixTimesMatrix
 			}
-			unimplemented()
-		case .Vector:
-			if lhs_type.kind == .Matrix || rhs_type.kind == .Matrix {
+		case .Array:
+			if lhs.type.kind == .Matrix || rhs.type.kind == .Matrix {
 				assert(op == .Multiply)
 
-				if lhs_type.kind == .Matrix {
-					return spv.OpMatrixTimesVector
+				if lhs.type.kind == .Matrix {
+					binary_op_proc = spv.OpMatrixTimesVector
+					break
 				} else {
 					panic("")
 					// assert(rhs_type.kind == .Matrix)
@@ -1523,13 +1492,52 @@ cg_expr_binary :: proc(
 				}
 			}
 
-			if lhs_type.kind == .Vector && rhs_type.kind == .Vector {
-				return binary_op_inst(ctx, types.vector_elem(lhs_type), types.vector_elem(rhs_type), types.vector_elem(type), op)
+			if lhs.type.kind == .Array && rhs.type.kind == .Array {
+				len := types.array_len(lhs.type)
+
+				if len < 4 {
+					return cg_binary_op(
+						ctx,
+						builder,
+						result_type,
+						{ id = lhs.id, type = types.array_elem(lhs.type), },
+						{ id = rhs.id, type = types.array_elem(rhs.type), },
+						types.array_elem(type),
+						op,
+					)
+				}
+
+				elem    := types.array_elem(type)
+				elem_id := cg_type(ctx, elem).type
+
+				values := make([]spv.Id, len, context.temp_allocator)
+				for i in 0 ..< len {
+					l        := spv.OpCompositeExtract(builder, elem_id, lhs.id, u32(i))
+					r        := spv.OpCompositeExtract(builder, elem_id, rhs.id, u32(i))
+					values[i] = cg_binary_op(
+						ctx,
+						builder,
+						elem_id,
+						{ id = l, type = elem, },
+						{ id = r, type = elem, },
+						elem,
+						op,
+					)
+				}
+				return spv.OpCompositeConstruct(builder, result_type, ..values)
 			}
 		case .Complex:
 			#partial switch op {
 			case .Add, .Subtract:
-				return binary_op_inst(ctx, types.complex_elem(lhs_type), types.complex_elem(rhs_type), types.complex_elem(type), op)
+				return cg_binary_op(
+					ctx,
+					builder,
+					result_type,
+					{ id = lhs.id, type = types.complex_elem(lhs.type), },
+					{ id = rhs.id, type = types.complex_elem(rhs.type), },
+					types.complex_elem(type),
+					op,
+				)
 			case .Multiply:
 				switch types.complex_elem(type).size {
 				case 4:
@@ -1549,7 +1557,15 @@ cg_expr_binary :: proc(
 		case .Quaternion:
 			#partial switch op {
 			case .Add, .Subtract:
-				return binary_op_inst(ctx, types.complex_elem(lhs_type), types.complex_elem(rhs_type), types.complex_elem(type), op)
+				return cg_binary_op(
+					ctx,
+					builder,
+					result_type,
+					{ id = lhs.id, type = types.complex_elem(lhs.type), },
+					{ id = rhs.id, type = types.complex_elem(rhs.type), },
+					types.complex_elem(type),
+					op,
+				)
 			case .Multiply:
 				switch types.complex_elem(type).size {
 				case 4:
@@ -1567,22 +1583,19 @@ cg_expr_binary :: proc(
 			}
 		}
 
-		if runtime_proc != nil {
-			@(static)
-			runtime_proc_id: spv.Id
-			runtime_proc_id = get_runtime_proc(ctx, runtime_proc)
-
-			return proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id) {
-				return spv.OpFunctionCall(builder, result_type, runtime_proc_id, operand_1, operand_2)
-			}
+		if binary_op_proc != nil {
+			return binary_op_proc(builder, result_type, lhs.id, rhs.id)
 		}
 
-		return nil
+		if runtime_proc != nil {
+			runtime_proc_id := get_runtime_proc(ctx, runtime_proc)
+			return spv.OpFunctionCall(builder, result_type, runtime_proc_id, lhs.id, rhs.id)
+		}
+
+		panic("Failed to generated binary operation")
 	}
 
-	op_fn := binary_op_inst(ctx, lhs_type, rhs_type, type^, op)
-	assert(op_fn != nil)
-	return op_fn(builder, type_info.type, lhs, rhs)
+	return cg_binary_op(ctx, builder, cg_type(ctx, type^).type, lhs_value, rhs_value, type^, op)
 }
 
 @(require_results)
@@ -1715,8 +1728,8 @@ cg_cast :: proc(
 	case .Complex:
 		zero := cg_nil_value(ctx, ti)
 		return spv.OpCompositeInsert(builder, ti.type, value.id, zero, 0)
-	case .Vector:
-		type := type.variant.(^types.Vector)
+	case .Array:
+		type := type.variant.(^types.Array)
 		if types.is_numeric(v_type) {
 			values := make([]spv.Id, type.count, context.temp_allocator)
 			casted := cg_cast(ctx, builder, value, type.elem)
@@ -1725,7 +1738,7 @@ cg_cast :: proc(
 			}
 			return spv.OpCompositeConstruct(builder, ti.type, ..values)
 		} else {
-			op_inst := numeric_cast_op_inst(types.vector_elem(v_type), type.elem)
+			op_inst := numeric_cast_op_inst(types.array_elem(v_type), type.elem)
 			assert(op_inst != nil)
 			return op_inst(builder, ti.type, value.id)
 		}
@@ -1848,7 +1861,7 @@ cg_expr_internal :: proc(
 			return { id = ptr, storage_class = lhs.storage_class, type = field_type, }
 		}
 
-		assert(lhs.type.kind == .Vector)
+		assert(lhs.type.kind == .Array)
 
 		indices := make([dynamic]u32, 0, len(v.selector.text))
 		for char in v.selector.text {
@@ -1865,7 +1878,7 @@ cg_expr_internal :: proc(
 		}
 
 		if len(indices) == 1 && lhs.storage_class != .Image {
-			t := types.vector_elem(lhs.type)
+			t := types.array_elem(lhs.type)
 			if lhs.storage_class != nil {
 				id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, t, lhs.storage_class), lhs.id, cg_constant(ctx, i64(indices[0]), nil).id)
 				value := Value { id = id, storage_class = lhs.storage_class, type = t, }
@@ -1895,7 +1908,7 @@ cg_expr_internal :: proc(
 			     .Size_Of,
 			     .Align_Of,
 			     .Type_Of,
-			     .Type_Is_Vector,
+			     .Type_Is_Array,
 			     .Type_Is_Float,
 			     .Type_Is_Boolean,
 			     .Type_Is_Integer,
@@ -1909,7 +1922,7 @@ cg_expr_internal :: proc(
 				a := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), t)
 				b := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), t)
 				id: spv.Id
-				#partial switch types.vector_elem(t).kind {
+				#partial switch types.array_elem(t).kind {
 				case .Float:
 					id = spv.OpDot (builder, ti.type, a, b)
 				case .Int:
@@ -1923,7 +1936,7 @@ cg_expr_internal :: proc(
 			case .Cross:
 				a   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
 				b   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
-				e   := types.vector_elem(v.type)
+				e   := types.array_elem(v.type)
 				eti := cg_type(ctx, e)
 				id: spv.Id
 				#partial switch e.kind {
@@ -1950,8 +1963,8 @@ cg_expr_internal :: proc(
 			case .Min, .Max:
 				f: type_of(spv_glsl.OpFMin)
 				elem_type := v.type
-				if v.type.kind == .Vector {
-					elem_type = types.vector_elem(v.type)
+				if v.type.kind == .Array {
+					elem_type = types.array_elem(v.type)
 				}
 
 				#partial switch elem_type.kind {
@@ -2000,8 +2013,8 @@ cg_expr_internal :: proc(
 				return { id = spv_glsl.OpInverseSqrt(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Abs:
 				t := v.args[0].value.type
-				if types.is_vector(t) {
-					t = types.vector_elem(t)
+				if types.is_array(t) {
+					t = types.array_elem(t)
 				}
 				if types.is_integer(t) {
 					return { id = spv_glsl.OpSAbs(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
@@ -2018,8 +2031,8 @@ cg_expr_internal :: proc(
 			case .Length:
 				v := cg_expr(ctx, builder, v.args[0].value)
 				t: ^types.Type
-				if types.is_vector(v.type) {
-					t = types.vector_elem(v.type)
+				if types.is_array(v.type) {
+					t = types.array_elem(v.type)
 				} else {
 					t = types.complex_elem(v.type)
 				}
@@ -2030,8 +2043,8 @@ cg_expr_internal :: proc(
 				return { id = spv_glsl.OpDistance(builder, ti.type, a, b), }
 			case .Clamp:
 				elem_type := v.type
-				if v.type.kind == .Vector {
-					elem_type = types.vector_elem(v.type)
+				if v.type.kind == .Array {
+					elem_type = types.array_elem(v.type)
 				}
 
 				value := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
@@ -2158,15 +2171,15 @@ cg_expr_internal :: proc(
 			for field in v.fields {
 				type: ^types.Type
 				#partial switch v.type.kind {
-				case .Vector:
-					type = types.vector_elem(v.type)
+				case .Array:
+					type = types.array_elem(v.type)
 				case .Matrix:
 					type = types.matrix_elem(v.type)
 				case .Struct:
 					type = v.type.variant.(^types.Struct).fields[i].type
 				}
 				value := cg_expr(ctx, builder, field.value)
-				if types.is_vector(value.type) && types.is_vector(v.type) {
+				if types.is_array(value.type) && types.is_array(v.type) {
 					values[i] = cg_deref(ctx, builder, value)
 				} else {
 					values[i] = cg_cast(ctx, builder, value, type)
@@ -2176,7 +2189,7 @@ cg_expr_internal :: proc(
 			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values[:]), }
 		}
 
-		if vector, ok := v.type.variant.(^types.Vector); ok {
+		if vector, ok := v.type.variant.(^types.Array); ok {
 			elem_type_id := cg_type(ctx, vector.elem).type
 			values       := make([]spv.Id, vector.count, context.temp_allocator)
 			for field in v.fields {
@@ -2201,7 +2214,7 @@ cg_expr_internal :: proc(
 				if n == 1 {
 					values[coords[0]] = cg_cast(ctx, builder, val, vector.elem)
 				} else {
-					vec := types.vector_new(vector.elem, n, context.temp_allocator)
+					vec := types.array_new(vector.elem, n, context.temp_allocator)
 					val := cg_cast(ctx, builder, val, vec)
 
 					for dst_coord, src_coord in coords[:n] {
@@ -2247,7 +2260,7 @@ cg_expr_internal :: proc(
 		lhs := cg_expr(ctx, builder, v.lhs, false)
 		rhs := cg_expr(ctx, builder, v.rhs)
 
-		if types.is_vector(lhs.type) && len(lhs.swizzle) != 0 {
+		if types.is_array(lhs.type) && len(lhs.swizzle) != 0 {
 			lhs.id            = cg_deref(ctx, builder, lhs)
 			lhs.storage_class = {}
 			lhs.swizzle       = {}
@@ -2257,13 +2270,13 @@ cg_expr_internal :: proc(
 			sampler    := lhs.type.variant.(^types.Image)
 			count      := 1
 			texel_type := sampler.texel_type
-			if v, ok := sampler.texel_type.variant.(^types.Vector); ok {
+			if v, ok := sampler.texel_type.variant.(^types.Array); ok {
 				count = v.count
 				if v.count != 4 {
-					texel_type = types.vector_new(v.elem, 4, context.temp_allocator)
+					texel_type = types.array_new(v.elem, 4, context.temp_allocator)
 				}
 			} else {
-				texel_type = types.vector_new(sampler.texel_type, 4, context.temp_allocator)
+				texel_type = types.array_new(sampler.texel_type, 4, context.temp_allocator)
 			}
 
 			image := cg_deref(ctx, builder, lhs)
@@ -2287,13 +2300,13 @@ cg_expr_internal :: proc(
 			sampler    := lhs.type.variant.(^types.Image)
 			count      := 1
 			texel_type := sampler.texel_type
-			if v, ok := sampler.texel_type.variant.(^types.Vector); ok {
+			if v, ok := sampler.texel_type.variant.(^types.Array); ok {
 				count = v.count
 				if v.count != 4 {
-					texel_type = types.vector_new(v.elem, 4, context.temp_allocator)
+					texel_type = types.array_new(v.elem, 4, context.temp_allocator)
 				}
 			} else {
-				texel_type = types.vector_new(sampler.texel_type, 4, context.temp_allocator)
+				texel_type = types.array_new(sampler.texel_type, 4, context.temp_allocator)
 			}
 
 			return {
@@ -2340,7 +2353,12 @@ cg_expr_internal :: proc(
 			}
 		}
 
-		return { id = spv.OpVectorExtractDynamic(builder, cg_type(ctx, v.type).type, lhs.id, rhs.id), }
+		type := types.array_elem(lhs.type.variant.(^types.Array))
+		return {
+			id   = spv.OpVectorExtractDynamic(builder, cg_type(ctx, type).type, lhs.id, rhs.id),
+			type = type,
+		}
+
 	case ^ast.Expr_Cast:
 		return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.value), v.type), }
 	case ^ast.Expr_Unary:
@@ -2359,8 +2377,8 @@ cg_expr_internal :: proc(
 				case .Float:
 					return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
 				}
-			case .Vector:
-				#partial switch types.vector_elem(type).kind {
+			case .Array:
+				#partial switch types.array_elem(type).kind {
 				case .Int, .Uint:
 					return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
 				case .Float:
@@ -2764,7 +2782,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 
 				if len(lhs.swizzle) != 0 {
 					type := cg_type(ctx, lhs.real_type)
-					elem := cg_type(ctx, types.vector_elem(lhs.real_type))
+					elem := cg_type(ctx, types.array_elem(lhs.real_type))
 
 					lhs_ptr       := lhs.id
 					storage_class := lhs.storage_class
@@ -2835,7 +2853,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		}
 
 	case ^ast.Decl_Value:
-		cg_decl(ctx, builder, v, global)
+		cg_value_decl(ctx, builder, v, global)
 	case ^ast.Decl_Import:
 	}
 

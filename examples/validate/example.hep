@@ -256,3 +256,10 @@ test_uint :: proc(a, b: u64, c: u32, d: u16, e: u8) -> u64 {
 test_int :: proc(a, b: i64, c: i32, d: i16, e: i8) -> i64 {
 	return a + b * 10 + i64(c % 10) + i64(d) * i64(e)
 }
+
+test_arrays :: proc(a, b: [32]f32) -> [32]f32 {
+	f: f32
+	return a - b + 10 + b - 69 + f
+}
+
+arr: [10]f32
