@@ -127,6 +127,16 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Sin                 = "sin",
 	.Cos                 = "cos",
 	.Tan                 = "tan",
+	.Sinh                = "sinh",
+	.Cosh                = "cosh",
+	.Tanh                = "tanh",
+	.Asin                = "asin",
+	.Acos                = "acos",
+	.Atan                = "atan",
+	.Asinh               = "asinh",
+	.Acosh               = "acosh",
+	.Atanh               = "atanh",
+	.Atan2               = "atan2",
 	.Exp                 = "exp",
 	.Log                 = "log",
 	.Exp2                = "exp2",
@@ -2410,7 +2420,30 @@ check_expr_internal :: proc(
 					break
 				}
 				fallthrough
-			case .Sqrt, .Sin, .Cos, .Tan, .Exp, .Exp2, .Log, .Log2, .Floor, .Fract, .Ceil, .Round, .Trunc, .Inverse_Sqrt, .Sign:
+			case .Sqrt,
+			     .Sin,
+			     .Cos,
+			     .Tan,
+			     .Sinh,
+			     .Cosh,
+			     .Tanh,
+			     .Asin,
+			     .Acos,
+			     .Atan,
+			     .Asinh,
+			     .Acosh,
+			     .Atanh,
+			     .Exp,
+			     .Exp2,
+			     .Log,
+			     .Log2,
+			     .Floor,
+			     .Fract,
+			     .Ceil,
+			     .Round,
+			     .Trunc,
+			     .Inverse_Sqrt,
+			     .Sign:
 				if len(v.args) != 1 {
 					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(args))
 					break
@@ -2424,6 +2457,24 @@ check_expr_internal :: proc(
 				v.args[0].value.type = type
 				operand.mode         = .RValue
 				operand.type         = type
+			case .Atan2:
+				if len(v.args) != 2 {
+					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(args))
+					break
+				}
+				type := types.op_result_type(args[0].type, args[1].type)
+				elem := type
+				if types.is_array(type) {
+					elem = types.array_elem(type)
+				}
+				if elem.kind == .Invalid || elem.kind != .Float {
+					error(checker, v, "builtin '%s' expects a float or vector, got %v", builtin_names[v.builtin], type)
+					return
+				}
+				v.args[0].value.type = type
+				v.args[1].value.type = type
+				operand.type         = type
+				operand.mode         = .RValue
 			case .Abs:
 				if len(v.args) != 1 {
 					error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(args))

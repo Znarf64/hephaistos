@@ -285,8 +285,12 @@ test_reflect_refract :: proc(a, b: [3]f32) -> [3]f32 {
 }
 
 test_trig :: proc(a, b, c: f32) -> f32 {
-	v := sin(a) + cos(b) + tan(c)
 	m :: math
-	u := m.sin(a) + m.cos(b) + m.tan(c)
-	return v + u
+
+	v1 := m.sin(a)   + m.cos(b)   + m.tan(c)
+	v2 := m.asin(a)  + m.acos(b)  + m.atan(c)
+	v3 := m.sinh(a)  + m.cosh(b)  + m.tanh(c)
+	v4 := m.asinh(a) + m.acosh(b) + m.atanh(c)
+
+	return v1 + v2 + v3 + v4 + m.atan2(a, b)
 }

@@ -2045,6 +2045,28 @@ cg_expr_internal :: proc(
 				return { id = spv_glsl.OpCos(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Tan:
 				return { id = spv_glsl.OpTan(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Sinh:
+				return { id = spv_glsl.OpSinh(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Cosh:
+				return { id = spv_glsl.OpCosh(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Tanh:
+				return { id = spv_glsl.OpTanh(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Asin:
+				return { id = spv_glsl.OpAsin(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Acos:
+				return { id = spv_glsl.OpAcos(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Atan:
+				return { id = spv_glsl.OpAtan(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Asinh:
+				return { id = spv_glsl.OpAsinh(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Acosh:
+				return { id = spv_glsl.OpAcosh(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Atanh:
+				return { id = spv_glsl.OpAtanh(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Atan2:
+				y := cg_expr(ctx, builder, v.args[0].value).id
+				x := cg_expr(ctx, builder, v.args[1].value).id
+				return { id = spv_glsl.OpAtan2(builder, ti.type, y, x), }
 			case .Exp:
 				return { id = spv_glsl.OpExp(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Log:

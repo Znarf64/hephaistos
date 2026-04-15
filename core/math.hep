@@ -37,6 +37,16 @@ sqrt         :: builtin.sqrt
 sin          :: builtin.sin
 cos          :: builtin.cos
 tan          :: builtin.tan
+sinh         :: builtin.sinh
+cosh         :: builtin.cosh
+tanh         :: builtin.tanh
+asin         :: builtin.asin
+acos         :: builtin.acos
+atan         :: builtin.atan
+asinh        :: builtin.asinh
+acosh        :: builtin.acosh
+atanh        :: builtin.atanh
+atan2        :: builtin.atan2
 exp          :: builtin.exp
 log          :: builtin.log
 exp2         :: builtin.exp2

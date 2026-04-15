@@ -22,6 +22,16 @@ sqrt         :: proc(x: $T) -> T
 sin          :: proc(x: $T) -> T
 cos          :: proc(x: $T) -> T
 tan          :: proc(x: $T) -> T
+sinh         :: proc(x: $T) -> T
+cosh         :: proc(x: $T) -> T
+tanh         :: proc(x: $T) -> T
+asin         :: proc(x: $T) -> T
+acos         :: proc(x: $T) -> T
+atan         :: proc(x: $T) -> T
+asinh        :: proc(x: $T) -> T
+acosh        :: proc(x: $T) -> T
+atanh        :: proc(x: $T) -> T
+atan2        :: proc(x, y: $T) -> T
 exp          :: proc(x: $T) -> T
 log          :: proc(x: $T) -> T
 exp2         :: proc(x: $T) -> T
