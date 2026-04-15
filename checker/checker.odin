@@ -950,7 +950,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 			} else {
 				t        := v.library
 				t.text    = v.name
-				e        := entity_new(.Library, t, nil, allocator = checker.allocator)
+				e        := entity_new(.Library, t, types.t_invalid, allocator = checker.allocator)
 				e.library = library_name
 				e.flags   = { .Resolved, }
 				scope_insert_entity(checker, e)
@@ -1074,7 +1074,13 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		return
 	}
 
-	v := check_expr_or_type(checker, d.values[value_index], d.attributes, type, false, true)
+	v := check_expr_internal(
+		checker,
+		d.values[value_index],
+		d.attributes,
+		type,
+		false,
+	)
 
 	#partial switch v.mode {
 	case .Type:
@@ -1083,6 +1089,12 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		e.kind = .Proc
 	case .Proc_Group:
 		e.kind = .Proc_Group
+	case .Library:
+		e.kind    = .Library
+		e.library = v.library
+	case .Builtin:
+		e.kind       = .Builtin
+		e.builtin_id = v.builtin_id
 	case .Const:
 		if d.mutable {
 			e.kind  = .Var
@@ -1200,27 +1212,32 @@ checker_init :: proc(
 
 	scope_push(checker, .Global)
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "bool", }, types.t_bool, allocator = allocator))
+	create_builtin_type :: proc(checker: ^Checker, type: ^types.Type, type_expr := #caller_expression(type)) {
+		name := type_expr[len("types.t_"):]
+		scope_insert_entity(checker, entity_new(.Type, { text = name, }, type, flags = { .Resolved, }, allocator = checker.allocator))
+	}
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "i8",   }, types.t_i8,   allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "i16",  }, types.t_i16,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "i32",  }, types.t_i32,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "i64",  }, types.t_i64,  allocator = allocator))
+	create_builtin_type(checker, types.t_bool)
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "u8",   }, types.t_u8,   allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "u16",  }, types.t_u16,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "u32",  }, types.t_u32,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "u64",  }, types.t_u64,  allocator = allocator))
+	create_builtin_type(checker, types.t_i8)
+	create_builtin_type(checker, types.t_i16)
+	create_builtin_type(checker, types.t_i32)
+	create_builtin_type(checker, types.t_i64)
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "f16",  }, types.t_f16,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "f32",  }, types.t_f32,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "f64",  }, types.t_f64,  allocator = allocator))
+	create_builtin_type(checker, types.t_u8)
+	create_builtin_type(checker, types.t_u16)
+	create_builtin_type(checker, types.t_u32)
+	create_builtin_type(checker, types.t_u64)
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "complex64",  }, types.t_complex64,  allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "complex128", }, types.t_complex128, allocator = allocator))
+	create_builtin_type(checker, types.t_f16)
+	create_builtin_type(checker, types.t_f32)
+	create_builtin_type(checker, types.t_f64)
 
-	scope_insert_entity(checker, entity_new(.Type, { text = "quaternion128", }, types.t_quaternion128, allocator = allocator))
-	scope_insert_entity(checker, entity_new(.Type, { text = "quaternion256", }, types.t_quaternion256, allocator = allocator))
+	create_builtin_type(checker, types.t_complex64)
+	create_builtin_type(checker, types.t_complex128)
+
+	create_builtin_type(checker, types.t_quaternion128)
+	create_builtin_type(checker, types.t_quaternion256)
 
 	for name, builtin in builtin_names {
 		find_or_create_lib :: proc(checker: ^Checker, name: string) -> (library: ^Library) {
@@ -1233,27 +1250,37 @@ checker_init :: proc(
 			}
 			return
 		}
+
+		create_builtin_proc :: proc(checker: ^Checker, name: string, builtin: ast.Builtin_Id) -> ^Entity {
+			return entity_new(
+				.Builtin,
+				{ text = name, },
+				types.t_invalid,
+				builtin_id = builtin,
+				flags      = { .Resolved, },
+				allocator  = checker.allocator,
+			)
+		}
+
 		name     := name
 		dot      := strings.index(name, ".")
 		if dot >= 0 {
 			lib               := find_or_create_lib(checker, name[:dot])
 			name               = name[dot + 1:]
-			lib.entities[name] = entity_new(.Builtin, { text = name, }, nil, builtin_id = builtin, allocator = allocator)
+			lib.entities[name] = create_builtin_proc(checker, name, builtin)
 		} else {
 			lib                         := find_or_create_lib(checker, "builtin")
-			e                           := entity_new(.Builtin, { text = name, }, nil, builtin_id = builtin, allocator = allocator)
+			e                           := create_builtin_proc(checker, name, builtin)
 			lib.entities[name]           = e
 			checker.scope.entities[name] = e
 		}
 	}
 
+	scope_push(checker, .Global)
+
 	checker.shared_types.allocator = allocator
 	for s in shared_types {
 		checker.shared_types[s.name] = s.type
-	}
-
-	for _, &e in checker.scope.entities {
-		e.flags += { .Resolved, }
 	}
 
 	checker.config_vars = defines

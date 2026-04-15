@@ -1,3 +1,5 @@
+import "base:builtin"
+
 TAU          :: 6.28318530717958647692528676655900576
 PI           :: 3.14159265358979323846264338327950288
 
@@ -12,3 +14,46 @@ LN10         :: 2.30258509299404568401799145468436421
 
 RAD_PER_DEG  :: TAU / 360
 DEG_PER_RAD  :: 360 / TAU
+
+
+min          :: builtin.min
+max          :: builtin.max
+clamp        :: builtin.clamp
+
+inverse      :: builtin.inverse
+transpose    :: builtin.transpose
+determinant  :: builtin.determinant
+
+dot          :: builtin.dot
+cross        :: builtin.cross
+distance     :: builtin.distance
+reflect      :: builtin.reflect
+refract      :: builtin.refract
+normalize    :: builtin.normalize
+length       :: builtin.length
+
+pow          :: builtin.pow
+sqrt         :: builtin.sqrt
+sin          :: builtin.sin
+cos          :: builtin.cos
+tan          :: builtin.tan
+exp          :: builtin.exp
+log          :: builtin.log
+exp2         :: builtin.exp2
+log2         :: builtin.log2
+fract        :: builtin.fract
+floor        :: builtin.floor
+ceil         :: builtin.ceil
+round        :: builtin.round
+trunc        :: builtin.trunc
+inverse_sqrt :: builtin.inverse_sqrt
+abs          :: builtin.abs
+sign         :: builtin.sign
+
+smooth_step  :: builtin.smooth_step
+lerp         :: builtin.lerp
+
+real         :: builtin.real
+imag         :: builtin.imag
+jmag         :: builtin.jmag
+kmag         :: builtin.kmag

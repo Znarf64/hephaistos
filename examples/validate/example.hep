@@ -283,3 +283,10 @@ compute_shader :: proc() {
 test_reflect_refract :: proc(a, b: [3]f32) -> [3]f32 {
 	return reflect(a, b) + refract(a, b, 2)
 }
+
+test_trig :: proc(a, b, c: f32) -> f32 {
+	v := sin(a) + cos(b) + tan(c)
+	m :: math
+	u := m.sin(a) + m.cos(b) + m.tan(c)
+	return v + u
+}

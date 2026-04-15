@@ -235,7 +235,7 @@ core_library_source_files := #load_directory("core")
 check_core_libraries :: proc(
 	allocator := context.allocator,
 	error_writer: io.Writer = {},
-) -> (libraries: map[string]Library, ok: bool) {
+) -> (libraries: map[string]Library, ok: bool = true) {
 	error_writer := error_writer if error_writer.procedure != nil else os.to_stream(os.stderr)
 
 	libraries = make(map[string]Library, allocator)
@@ -247,12 +247,12 @@ check_core_libraries :: proc(
 			for error in errors {
 				print_error(error_writer, file.name, lines, error)
 			}
+			ok = false
 		}
 		name, _ := strings.concatenate({ "core:", file.name, }, allocator)
 		name     = strings.trim_suffix(name, ".hep")
 		libraries[name] = lib
 	}
 
-	ok = true
 	return
 }
