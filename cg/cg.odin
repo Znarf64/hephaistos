@@ -564,7 +564,7 @@ generate :: proc(
 
 		id := id - 1
 		ctx.functions.current_id = &id
-		_ = spv.OpFunction(&ctx.functions, return_type_id, {}, cg_type(&ctx, proc_type).type)
+		_ = spv.OpFunction(&ctx.functions, return_type_id, { .Inline, .Pure, .Const, }, cg_type(&ctx, proc_type).type)
 		ctx.functions.current_id = &ctx.current_id
 
 		_args: [10]spv.Id
@@ -847,7 +847,7 @@ cg_nil_value :: proc {
 }
 
 @(require_results)
-cg_nil_value_from_type :: proc(ctx: ^Context, type_info: ^Type_Info) -> spv.Id {
+cg_nil_value_from_type_info :: proc(ctx: ^Context, type_info: ^Type_Info) -> spv.Id {
 	if type_info.nil_value == 0 {
 		type_info.nil_value = spv.OpConstantNull(&ctx.types, type_info.type)
 	}
@@ -855,8 +855,8 @@ cg_nil_value_from_type :: proc(ctx: ^Context, type_info: ^Type_Info) -> spv.Id {
 }
 
 @(require_results)
-cg_nil_value_from_type_info :: proc(ctx: ^Context, type: ^types.Type) -> spv.Id {
-	return cg_nil_value_from_type(ctx, cg_type(ctx, type))
+cg_nil_value_from_type :: proc(ctx: ^Context, type: ^types.Type) -> spv.Id {
+	return cg_nil_value_from_type_info(ctx, cg_type(ctx, type))
 }
 
 cg_type_ptr :: proc {
@@ -865,7 +865,7 @@ cg_type_ptr :: proc {
 }
 
 @(require_results)
-cg_type_ptr_from_type :: proc(ctx: ^Context, type_info: ^Type_Info, storage_class: Storage_Class) -> spv.Id {
+cg_type_ptr_from_type_info :: proc(ctx: ^Context, type_info: ^Type_Info, storage_class: Storage_Class) -> spv.Id {
 	if type_info.ptr_types[storage_class] == 0 {
 		spv_storage_class: spv.StorageClass
 		switch storage_class {
@@ -900,8 +900,8 @@ cg_type_ptr_from_type :: proc(ctx: ^Context, type_info: ^Type_Info, storage_clas
 }
 
 @(require_results)
-cg_type_ptr_from_type_info :: proc(ctx: ^Context, type: ^types.Type, storage_class: Storage_Class) -> spv.Id {
-	return cg_type_ptr_from_type(ctx, cg_type(ctx, type), storage_class)
+cg_type_ptr_from_type :: proc(ctx: ^Context, type: ^types.Type, storage_class: Storage_Class) -> spv.Id {
+	return cg_type_ptr_from_type_info(ctx, cg_type(ctx, type), storage_class)
 }
 
 Type_Flag :: enum {
@@ -2197,6 +2197,57 @@ cg_expr_internal :: proc(
 				ones := spv.OpBitCount(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id)
 				bits := cg_constant(ctx, i64(v.type.size * 8), nil).id
 				return { id = spv.OpISub(builder, ti.type, bits, ones), }
+			case .Find_Lsb, .Find_Msb, .Count_Leading_Zeros, .Count_Trailing_Zeros, .Count_Leading_Ones, .Count_Trailing_Ones:
+				t := v.type
+				if types.is_array(t) {
+					t = types.array_elem(t)
+				}
+
+				arg := cg_expr(ctx, builder, v.args[0].value).id
+
+				#partial switch v.builtin {
+				case .Count_Leading_Ones:
+					arg = spv.OpNot(builder, ti.type, arg)
+					fallthrough
+				case .Count_Leading_Zeros:
+					ret: spv.Id
+					#partial switch t.kind {
+					case .Int:
+						ret = spv_glsl.OpFindSMsb(builder, ti.type, arg)
+					case .Uint:
+						ret = spv_glsl.OpFindUMsb(builder, ti.type, arg)
+					}
+
+					adjust    := cg_constant(ctx, i64(t.size * 8 - 1), v.type).id
+					ret        = spv.OpISub(builder, ti.type, adjust, ret)
+
+					bit_count := cg_constant(ctx, i64(t.size * 8), v.type).id
+					zero      := cg_nil_value(ctx, v.type)
+					is_zero   := spv.OpIEqual(builder, cg_type(ctx, types.t_bool).type, arg, zero)
+					return { id = spv.OpSelect(builder, ti.type, is_zero, bit_count, ret), }
+
+				case .Count_Trailing_Ones:
+					arg = spv.OpNot(builder, ti.type, arg)
+					fallthrough
+				case .Count_Trailing_Zeros:
+					ret       := spv_glsl.OpFindILsb(builder, ti.type, arg)
+					bit_count := cg_constant(ctx, i64(t.size * 8), v.type).id
+					zero      := cg_nil_value(ctx, v.type)
+					is_zero   := spv.OpIEqual(builder, cg_type(ctx, types.t_bool).type, arg, zero)
+					return { id = spv.OpSelect(builder, ti.type, is_zero, bit_count, ret), }
+
+				case .Find_Lsb:
+					return { id = spv_glsl.OpFindILsb(builder, ti.type, arg), }
+				case .Find_Msb:
+					#partial switch t.kind {
+					case .Int:
+						return { id = spv_glsl.OpFindSMsb(builder, ti.type, arg), }
+					case .Uint:
+						return { id = spv_glsl.OpFindUMsb(builder, ti.type, arg), }
+					}
+				}
+
+				unimplemented()
 			case .Reverse_Bits:
 				return { id = spv.OpBitReverse(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Real, .Imag, .Jmag, .Kmag:

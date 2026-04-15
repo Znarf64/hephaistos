@@ -206,6 +206,12 @@ Builtin_Id :: enum {
 
 	Count_Ones,
 	Count_Zeros,
+	Count_Leading_Zeros,
+	Count_Trailing_Zeros,
+	Count_Leading_Ones,
+	Count_Trailing_Ones,
+	Find_Lsb,
+	Find_Msb,
 	Reverse_Bits,
 
 	Read_Subgroup_Clock,

@@ -294,3 +294,14 @@ test_trig :: proc(a, b, c: f32) -> f32 {
 
 	return v1 + v2 + v3 + v4 + m.atan2(a, b)
 }
+
+test_bit_intrinsics :: proc(a, b, c: u32) -> u32 {
+	return \
+		intrinsics.count_ones(a)           +
+		intrinsics.count_zeros(b)          +
+		intrinsics.count_leading_zeros(c)  +
+		intrinsics.count_leading_ones(a)   +
+		intrinsics.count_trailing_zeros(b) +
+		intrinsics.count_trailing_ones(c)  +
+		intrinsics.reverse_bits(a)
+}

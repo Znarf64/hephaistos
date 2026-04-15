@@ -9,9 +9,15 @@ type_is_complex    :: proc($T: typeid) -> bool ---
 type_is_quaternion :: proc($T: typeid) -> bool ---
 type_is_matrix     :: proc($T: typeid) -> bool ---
 
-count_ones   :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
-count_zeros  :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
-reverse_bits :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
+count_ones           :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
+count_zeros          :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
+count_leading_zeros  :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
+count_trailing_zeros :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
+count_leading_ones   :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
+count_trailing_ones  :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
+find_lsb             :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
+find_msb             :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
+reverse_bits         :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
 
 // read the subgroup clock, this requires the "SPV_KHR_shader_clock" extension
 read_subgroup_clock :: proc() -> u64 ---
