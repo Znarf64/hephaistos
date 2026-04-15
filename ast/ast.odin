@@ -142,6 +142,8 @@ Builtin_Id :: enum {
 	Distance,
 	Normalize,
 	Length,
+	Reflect,
+	Refract,
 
 	Pow,
 	Sqrt,

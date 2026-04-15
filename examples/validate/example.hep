@@ -279,3 +279,7 @@ compute_shader :: proc() {
 	id2 := $GlobalInvocationId
 	intrinsics.barrier()
 }
+
+test_reflect_refract :: proc(a, b: [3]f32) -> [3]f32 {
+	return reflect(a, b) + refract(a, b, 2)
+}

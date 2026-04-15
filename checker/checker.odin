@@ -119,6 +119,8 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Distance            = "distance",
 	.Normalize           = "normalize",
 	.Length              = "length",
+	.Reflect             = "reflect",
+	.Refract             = "refract",
 
 	.Pow                 = "pow",
 	.Sqrt                = "sqrt",
@@ -2450,25 +2452,53 @@ check_expr_internal :: proc(
 				if v.builtin == .Length {
 					operand.type = types.array_elem(type)
 				}
-			case .Distance:
+			case .Distance, .Reflect:
 				if len(v.args) != 2 {
-					error(checker, v, "builtin 'distance' expects two arguments, got %d", len(v.args))
+					error(checker, v, "builtin '%s' expects two arguments, got %d", builtin_names[v.builtin], len(v.args))
 					return
 				}
 				a, b := args[0].type, args[1].type
 				type := types.op_result_type(a, b)
 				if type.kind == .Invalid {
-					error(checker, v, "type mismatch in builtin 'distance': %v vs %v", a, b)
+					error(checker, v, "type mismatch in builtin '%s': %v vs %v", builtin_names[v.builtin], a, b)
 					break
 				}
 				if !types.is_array(type) {
-					error(checker, v, "builtin 'distance' expects a two vectors of the same type, got %v", type)
+					error(checker, v, "builtin '%s' expects a two vectors of the same type, got %v", builtin_names[v.builtin], type)
 					break
 				}
 				v.args[0].value.type = type
 				v.args[1].value.type = type
 				operand.mode         = .RValue
-				operand.type         = types.array_elem(type)
+				operand.type         = types.array_elem(type) if v.builtin == .Distance else type
+			case .Refract:
+				if len(v.args) != 3 {
+					error(checker, v, "builtin '%s' expects three arguments, got %d", builtin_names[v.builtin], len(v.args))
+					return
+				}
+				a, b := args[0].type, args[1].type
+				type := types.op_result_type(a, b)
+				if type.kind == .Invalid {
+					error(checker, v, "type mismatch in builtin '%s': %v vs %v", builtin_names[v.builtin], a, b)
+					break
+				}
+				if !types.is_array(type) {
+					error(checker, v, "builtin '%s' expects a two vectors of the same type, got %v", builtin_names[v.builtin], type)
+				}
+
+				eta_type := args[2].type
+				if !types.is_float(eta_type) {
+					eta_type = types.op_result_type(types.array_elem(type), eta_type)
+				}
+				if !types.is_float(eta_type) {
+					error(checker, v, "builtin '%s' expects a float as the third argument, got %v", builtin_names[v.builtin], args[2].type)
+				}
+
+				v.args[0].value.type = type
+				v.args[1].value.type = type
+				v.args[2].value.type = eta_type
+				operand.mode         = .RValue
+				operand.type         = type
 			case .Discard, .Barrier:
 				if len(v.args) != 0 {
 					error(checker, v, "builtin 'discard' expects no arguments, got %d", len(v.args))

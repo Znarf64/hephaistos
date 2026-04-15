@@ -2097,6 +2097,15 @@ cg_expr_internal :: proc(
 				a := cg_expr(ctx, builder, v.args[0].value).id
 				b := cg_expr(ctx, builder, v.args[1].value).id
 				return { id = spv_glsl.OpDistance(builder, ti.type, a, b), }
+			case .Reflect:
+				a := cg_expr(ctx, builder, v.args[0].value).id
+				b := cg_expr(ctx, builder, v.args[1].value).id
+				return { id = spv_glsl.OpReflect(builder, ti.type, a, b), }
+			case .Refract:
+				a := cg_expr(ctx, builder, v.args[0].value).id
+				b := cg_expr(ctx, builder, v.args[1].value).id
+				e := cg_expr(ctx, builder, v.args[2].value).id
+				return { id = spv_glsl.OpRefract(builder, ti.type, a, b, e), }
 			case .Clamp:
 				elem_type := v.type
 				if v.type.kind == .Array {

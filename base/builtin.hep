@@ -12,6 +12,8 @@ determinant :: proc(m: matrix[$N, N]$E) -> E
 dot       :: proc(a, b: [$N]$E) -> E
 cross     :: proc(a, b [$N]$E) -> [N]E
 distance  :: proc(a, b: [$N]$E) -> E
+reflect   :: proc(i, n: [$N]$E) -> [N]E
+refract   :: proc(i, n: [$N]$E, eta: E) -> [N]E
 normalize :: proc(v: [$N]$E) -> [N]E
 length    :: proc(v: [$N]$E) -> E
 
