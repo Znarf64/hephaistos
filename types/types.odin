@@ -6,6 +6,7 @@ import "core:fmt"
 import "core:io"
 import "core:mem"
 import "core:strings"
+import "core:slice"
 
 import "../tokenizer"
 
@@ -88,6 +89,12 @@ Bit_Set :: struct {
 	backing:    ^Type,
 }
 
+// A deliberately opaque type such as OpTypeAccelerationStructureKHR
+Opaque :: struct {
+	using base: Type,
+	name:       string,
+}
+
 Kind :: enum {
 	Invalid,
 
@@ -108,6 +115,7 @@ Kind :: enum {
 	Bit_Set,
 	Complex,
 	Quaternion,
+	Opaque,
 
 	Tuple,
 }
@@ -127,6 +135,7 @@ Type :: struct {
 		^Enum,
 		^Bit_Set,
 		^Complex,
+		^Opaque,
 	},
 }
 
@@ -180,6 +189,12 @@ t_ivec2, t_ivec3, t_ivec4: ^Type
 t_complex64,     t_complex128:    ^Type
 t_quaternion128, t_quaternion256: ^Type
 
+t_mat4x3:    ^Type
+t_Hit_Kind:  ^Type
+t_Ray_Flags: ^Type
+
+t_Acceleration_Structure: ^Type
+
 _base_type_arena_mem: [1 << 12]byte
 _base_type_arena: mem.Arena
 
@@ -203,6 +218,37 @@ _base_types_init :: proc "contextless" () {
 
 	t_quaternion128 = quaternion_new(t_f32, allocator)
 	t_quaternion256 = quaternion_new(t_f64, allocator)
+
+	t_mat4x3 = matrix_new(t_vec3.variant.(^Array), 4, allocator)
+
+	e := new(.Enum, Enum, allocator)
+	e.backing = t_u32
+	e.values  = slice.clone([]Enum_Value {
+		{ { text = "Front", }, 0xFE, },
+		{ { text = "Back",  }, 0xFF, },
+	}, allocator)
+	t_Hit_Kind = e
+
+	ray_flags_bits := new(.Enum, Enum, allocator)
+	ray_flags_bits.values = slice.clone([]Enum_Value {
+		{ { text = "NoOpaque",                   }, 0 },
+		{ { text = "TerminateOnFirstHit",        }, 1 },
+		{ { text = "SkipClosestHitShader",       }, 2 },
+		{ { text = "CullBackFacingTriangles",    }, 3 },
+		{ { text = "CullFrontFacingTriangles",   }, 4 },
+		{ { text = "CullOpaque",                 }, 5 },
+		{ { text = "CullNoOpaque",               }, 6 },
+		{ { text = "SkipTriangles",              }, 7 },
+		{ { text = "SkipAABBs",                  }, 8 },
+		{ { text = "ForceOpacityMicromap2State", }, 9 },
+	}, allocator)
+
+	set          := new(.Bit_Set, Bit_Set, allocator)
+	set.enum_type = ray_flags_bits
+	set.backing   = t_i32
+	t_Ray_Flags   = set
+
+	t_Acceleration_Structure = opaque_new("AccelerationStructureKHR", allocator)
 }
 
 print_writer :: proc(w: io.Writer, type: ^Type) {
@@ -326,6 +372,9 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 		fmt.wprintf(w, ";")
 		print_writer(w, type.backing)
 		fmt.wprintf(w, "]")
+	case .Opaque:
+		type := type.variant.(^Opaque)
+		fmt.wprintf(w, "`%s`", type.name)
 	}
 }
 
@@ -436,6 +485,8 @@ equal :: proc(a, b: ^Type) -> bool {
 		}
 
 		return equal(a.texel_type, b.texel_type)
+	case .Opaque:
+		return opaque_name(a) == opaque_name(b)
 	}
 
 	return true
@@ -547,7 +598,7 @@ castable :: proc(from, to: ^Type) -> bool {
 		return true
 	}
 
-	if is_bool(from) && is_integer(to) {
+	if is_boolean(from) && is_integer(to) {
 		return true
 	}
 
@@ -598,8 +649,18 @@ is_struct :: proc(type: ^Type) -> bool {
 }
 
 @(require_results)
-is_bool :: proc(type: ^Type) -> bool {
+is_boolean :: proc(type: ^Type) -> bool {
 	return type.kind == .Bool
+}
+
+@(require_results)
+is_float :: proc(type: ^Type) -> bool {
+	return type.kind == .Float
+}
+
+@(require_results)
+is_opaque :: proc(type: ^Type) -> bool {
+	return type.kind == .Opaque
 }
 
 @(require_results)
@@ -615,24 +676,6 @@ is_numeric :: proc(type: ^Type) -> bool {
 is_integer :: proc(type: ^Type) -> bool {
 	#partial switch type.kind {
 	case .Int, .Uint:
-		return true
-	}
-	return false
-}
-
-@(require_results)
-is_float :: proc(type: ^Type) -> bool {
-	#partial switch type.kind {
-	case .Float:
-		return true
-	}
-	return false
-}
-
-@(require_results)
-is_boolean :: proc(type: ^Type) -> bool {
-	#partial switch type.kind {
-	case .Bool:
 		return true
 	}
 	return false
@@ -656,6 +699,11 @@ complex_elem :: proc(type: ^Type) -> ^Type {
 @(require_results)
 buffer_elem :: proc(type: ^Type) -> ^Type {
 	return type.variant.(^Buffer).elem
+}
+
+@(require_results)
+opaque_name :: proc(type: ^Type) -> string {
+	return type.variant.(^Opaque).name
 }
 
 @(private="file")
@@ -838,23 +886,13 @@ matrix_new :: proc(col_type: ^Array, cols: int, allocator: mem.Allocator) -> ^Ma
 	return type
 }
 
-// @(require_results)
-// struct_new :: proc(fields: []Field, allocator: mem.Allocator) -> ^Struct {
-// 	type       := new(.Struct, Struct, allocator)
-// 	type.fields = fields
+@(require_results)
+opaque_new :: proc(name: string, allocator: mem.Allocator) -> ^Opaque {
+	type     := new(.Opaque, Opaque, allocator)
+	type.name = name
 
-// 	offset: int
-// 	for &field in fields {
-// 		if field.type.align != 0 {
-// 			offset = mem.align_forward_int(offset, field.type.align)
-// 		}
-// 		field.offset = offset
-// 		offset      += type.size
-// 		type.align   = max(type.align, field.type.align)
-// 	}
-// 	type.size = offset
-// 	return type
-// }
+	return type
+}
 
 @(require_results)
 bit_set_new :: proc(enum_type: ^Type, backing: ^Type, allocator: mem.Allocator) -> ^Bit_Set {

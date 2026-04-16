@@ -50,6 +50,7 @@ Entity :: struct {
 	library:    string,
 	value:      types.Const_Value,
 	builtin_id: ast.Builtin_Id,
+	interface:  ast.Interface_Kind,
 	flags:      Entity_Flags,
 	scope:      ^Scope,
 }

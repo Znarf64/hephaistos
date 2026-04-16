@@ -305,3 +305,93 @@ test_bit_intrinsics :: proc(a, b, c: u32) -> u32 {
 		intrinsics.count_trailing_ones(c)  +
 		intrinsics.reverse_bits(a)
 }
+
+import rt "extensions:raytracing"
+
+@(uniform, binding = 1)
+acceleration_structure: rt.Acceleration_Structure
+
+@(ray_payload)
+payload: f32
+
+@(incoming_ray_payload)
+incoming_payload: f32
+
+@(ray_generation_shader)
+ray_generation_shader :: proc() {
+	launch_id := $LaunchId
+
+	origin, dir: [3]f32
+	rt.trace_ray(acceleration_structure, 0, 0xff, 0, 1, 0, origin, 0, dir, 1000, payload)
+}
+
+@(intersection_shader)
+ray_intersection_shader :: proc() {
+	launch_id := $LaunchId
+
+	if rt.report_intersection(69, .Front) {
+		
+	}
+}
+
+@(any_hit_shader)
+any_hit_shader :: proc() {
+	launch_id := $LaunchId
+
+	if 1 > 0 {
+		rt.ignore_intersection()
+	} else {
+		rt.terminate_ray()
+	}
+}
+
+@(hit_attribute)
+barycentrics: [2]f32
+
+@(closest_hit_shader)
+closest_hit_shader :: proc() {
+	launch_id := $LaunchId
+	payload    = incoming_payload
+
+	flags: rt.Ray_Flags = $IncomingRayFlags
+
+	v:   [4]f32 = { 1, 2, 3, 0, }
+	pos: [3]f32 = $WorldToObject * v
+
+	a1  := $LaunchId
+	a2  := $LaunchSize
+	a3  := $WorldRayOrigin
+	a4  := $WorldRayDirection
+	a5  := $ObjectRayOrigin
+	a6  := $ObjectRayDirection
+	a7  := $RayTmin
+	a8  := $RayTmax
+	a9  := $InstanceCustomIndex
+	a10 := $ObjectToWorld
+	a11 := $WorldToObject
+	a12 := $HitKind
+	a13 := $IncomingRayFlags
+	a14 := $RayGeometryIndex
+
+	attr := barycentrics
+}
+
+@(miss_shader)
+miss_shader :: proc() {
+	launch_id := $LaunchId
+	payload    = 0
+
+	a1 := $LaunchId
+	a2 := $LaunchSize
+	a3 := $WorldRayOrigin
+	a4 := $WorldRayDirection
+	a5 := $RayTmin
+	a6 := $RayTmax
+	a7 := $IncomingRayFlags
+}
+
+import "extensions:clock"
+
+test_clock :: proc() -> (device: u64, subgroup: u64) {
+	return clock.read_device_clock(), clock.read_subgroup_clock()
+}

@@ -364,15 +364,30 @@ tokenize :: proc(
 			}
 
 		case '0' ..= '9':
+			hex: bool
 			if char == '0' && current < len(source) {
 				switch source[current] {
-				case 'x', 'o', 'b', 'X', 'O', 'B':
+				case 'x':
+					hex      = true
+					current += 1
+				case 'o', 'b':
 					current += 1
 				}
 			}
 
 			for current < len(source) {
 				switch source[current] {
+				case 'a' ..= 'f', 'A' ..= 'F':
+					if hex {
+						current += 1
+						continue
+					}
+					fallthrough
+				case 'g' ..= 'z', 'G' ..= 'Z':
+					append(&errors, Error {
+						location = token.location,
+						message  = fmt.aprintf("unexpected character in number", source[current], allocator = error_allocator),
+					})
 				case '_', '0' ..= '9':
 					current += 1
 					continue
@@ -382,7 +397,7 @@ tokenize :: proc(
 
 			has_decimal: bool
 			if current <= len(source) && source[current] == '.' {
-				current += 1
+				current    += 1
 				has_decimal = true
 				for current < len(source) {
 					switch source[current] {
@@ -402,7 +417,7 @@ tokenize :: proc(
 				} else {
 					append(&errors, Error {
 						location = token.location,
-						message  = fmt.aprintf("failed to parse float literal: '%s'", source[start:current], error_allocator),
+						message  = fmt.aprintf("failed to parse float literal: '%s'", source[start:current], allocator = error_allocator),
 					})
 				}
 			} else {
@@ -413,7 +428,7 @@ tokenize :: proc(
 				} else {
 					append(&errors, Error {
 						location = token.location,
-						message  = fmt.aprintf("failed to parse integer literal: '%s'", source[start:current], error_allocator),
+						message  = fmt.aprintf("failed to parse integer literal: '%s'", source[start:current], allocator = error_allocator),
 					})
 				}
 			}
@@ -552,7 +567,6 @@ token_strings := #sparse[Token_Kind]string {
 	.Image          = "image",
 
 	.Cast           = "cast",
-
 }
 
 to_string :: proc(token_kind: Token_Kind) -> string {

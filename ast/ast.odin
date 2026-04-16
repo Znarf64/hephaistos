@@ -65,6 +65,7 @@ Expr_Ident :: struct {
 Expr_Interface :: struct {
 	using node: Expr,
 	ident:      tokenizer.Token,
+	library:    tokenizer.Token,
 }
 
 Directive :: enum {
@@ -97,16 +98,27 @@ Shader_Stage :: enum {
 	Geometry,
 	Tesselation,
 	Compute,
+	Ray_Generation,
+	Intersection,
+	Any_Hit,
+	Closest_Hit,
+	Miss,
 }
 
 @(rodata)
 shader_stage_names: [Shader_Stage]string = {
-	.Invalid     = "<invalid>",
-	.Vertex      = "vertex_shader",
-	.Fragment    = "fragment_shader",
-	.Geometry    = "geometry_shader",
-	.Tesselation = "tesselation_shader",
-	.Compute     = "compute_shader",
+	.Invalid          = "<invalid>",
+	.Vertex           = "vertex_shader",
+	.Fragment         = "fragment_shader",
+	.Geometry         = "geometry_shader",
+	.Tesselation      = "tesselation_shader",
+	.Compute          = "compute_shader",
+
+	.Ray_Generation   = "ray_generation_shader",
+	.Intersection     = "intersection_shader",
+	.Any_Hit          = "any_hit_shader",
+	.Closest_Hit      = "closest_hit_shader",
+	.Miss             = "miss_shader",
 }
 
 Expr_Proc_Lit :: struct {
@@ -214,10 +226,19 @@ Builtin_Id :: enum {
 	Find_Msb,
 	Reverse_Bits,
 
+	Barrier,
+
+	/** extensions **/
+
+	/* clock */
 	Read_Subgroup_Clock,
 	Read_Device_Clock,
 
-	Barrier,
+	/* raytracing */
+	Trace_Ray,
+	Report_Intersection,
+	Ignore_Intersection,
+	Terminate_Ray,
 }
 
 Expr_Call :: struct {
@@ -314,6 +335,10 @@ Interface_Kind :: enum {
 	Push_Constant,
 	Storage_Buffer,
 	Shared,
+
+	Ray_Payload,
+	Incoming_Ray_Payload,
+	Hit_Attribute,
 }
 
 Decl_Value :: struct {
@@ -537,6 +562,7 @@ new :: proc($T: typeid, start, end: tokenizer.Location, allocator: mem.Allocator
 
 Field :: struct {
 	ident:    tokenizer.Token,
+	library:  tokenizer.Token,
 	type:     ^Expr,
 	value:    ^Expr,
 	location: ^Expr,

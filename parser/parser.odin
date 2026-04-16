@@ -714,6 +714,12 @@ parse_attributes :: proc(parser: ^Parser) -> (_attributes: []ast.Field, ok: bool
 			}
 
 			ident := token_expect(parser, .Ident) or_return
+			library: tokenizer.Token
+			if token_peek(parser).kind == .Period {
+				token_advance(parser)
+				library = ident
+				ident   = token_expect(parser, .Ident) or_return
+			}
 
 			value: ^ast.Expr
 			if token_peek(parser).kind == .Assign {
@@ -722,8 +728,9 @@ parse_attributes :: proc(parser: ^Parser) -> (_attributes: []ast.Field, ok: bool
 			}
 
 			append(attributes, ast.Field {
-				ident = ident,
-				value = value,
+				ident   = ident,
+				library = library,
+				value   = value,
 			})
 
 			if token_peek(parser).kind == .Comma {

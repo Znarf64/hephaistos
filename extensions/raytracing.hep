@@ -1,0 +1,38 @@
+// This is purely for documentation
+
+Acceleration_Structure :: struct{}
+
+Ray_Flags :: bit_set[enum {
+	NoOpaque,
+	TerminateOnFirstHit,
+	SkipClosestHitShader,
+	CullBackFacingTriangles,
+	CullFrontFacingTriangles,
+	CullOpaque,
+	CullNoOpaque,
+	SkipTriangles,
+	SkipAABBs,
+	ForceOpacityMicromap2State,
+}; i32]
+
+Hit_Kind :: enum u32 {
+	Front = 0xFE,
+	Back  = 0xFF,
+}
+
+report_intersection :: proc(hit: f32, hit_kind: Hit_Kind) -> bool
+ignore_intersection :: proc() -> !
+terminate_ray       :: proc() -> !
+
+trace_ray :: proc(
+	acceleration_structure: Acceleration_Structure,
+	ray_flags:              Ray_Flags,
+	cull_mask:              i32,
+	sbt_offset:             i32,
+	sbt_stride:             i32,
+	miss_index:             i32,
+	ray_origin:             vec3,
+	ray_tmin:               f32,
+	ray_direction:          vec3,
+	ray_tmax:               f32,
+)

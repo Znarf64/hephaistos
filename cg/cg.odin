@@ -27,6 +27,9 @@ Storage_Class :: enum {
 	Uniform_Constant,
 	Storage_Buffer,
 	Physical_Storage_Buffer,
+	Ray_Payload,
+	Incoming_Ray_Payload,
+	Hit_Attribute,
 	Image,
 }
 
@@ -346,6 +349,24 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 		has_nil_value     = false
 		storage_class     = .Workgroup
 		spv_storage_class = .Workgroup
+	case .Ray_Payload:
+		value_builder     = nil
+		decl_builder      = &ctx.globals
+		storage_class     = .Ray_Payload
+		spv_storage_class = .RayPayloadKHR
+		has_nil_value     = false
+	case .Hit_Attribute:
+		value_builder     = nil
+		decl_builder      = &ctx.globals
+		storage_class     = .Hit_Attribute
+		spv_storage_class = .HitAttributeKHR
+		has_nil_value     = false
+	case .Incoming_Ray_Payload:
+		value_builder     = nil
+		decl_builder      = &ctx.globals
+		storage_class     = .Incoming_Ray_Payload
+		spv_storage_class = .IncomingRayPayloadKHR
+		has_nil_value     = false
 	}
 
 	prev_link_name := ctx.link_name
@@ -364,6 +385,14 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 		if len(v.values) == 0 {
 			for type, i in v.types {
 				if types.is_sampler(type) || types.is_image(type) && v.interface == .Uniform {
+					assert(len(v.types) == 1)
+					storage_class     = .Uniform_Constant
+					spv_storage_class = .UniformConstant
+					has_nil_value     = false
+					annotate          = true
+				}
+
+				if types.is_opaque(type) && types.opaque_name(type) == "AccelerationStructureKHR" {
 					assert(len(v.types) == 1)
 					storage_class     = .Uniform_Constant
 					spv_storage_class = .UniformConstant
@@ -743,30 +772,20 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 		case .Uint, .Int, .Bool, .Float:
 			// fine
 
-		case .Invalid:
-			panic("Tried to generate constant with invalid type")
-		case .Struct:
-			panic("Tried to generate constant with struct type")
-		case .Sampler:
-			panic("Tried to generate constant with sampler type")
-		case .Image:
-			panic("Tried to generate constant with image type")
-		case .Buffer:
-			panic("Tried to generate constant with buffer type")
-		case .Proc:
-			panic("Tried to generate constant with proc type")
-		case .Proc_Group:
-			panic("Tried to generate constant with proc group type")
-		case .Tuple:
-			panic("Tried to generate constant with tuple type")
-		case .Enum:
-			panic("Tried to generate constant with enum type")
-		case .Bit_Set:
-			panic("Tried to generate constant with bit_set type")
-		case .Complex:
-			panic("Tried to generate constant with complex type")
-		case .Quaternion:
-			panic("Tried to generate constant with quaternion type")
+		case .Invalid,
+		     .Struct,
+		     .Sampler,
+		     .Image,
+		     .Buffer,
+		     .Proc,
+		     .Proc_Group,
+		     .Tuple,
+		     .Enum,
+		     .Bit_Set,
+		     .Complex,
+		     .Quaternion,
+		     .Opaque:
+			fmt.panicf("Tried to generate constant with type", type)
 
 		case .Matrix:
 			type = types.matrix_elem(type)
@@ -893,6 +912,12 @@ cg_type_ptr_from_type_info :: proc(ctx: ^Context, type_info: ^Type_Info, storage
 			spv_storage_class = .PhysicalStorageBuffer
 		case .Image:
 			spv_storage_class = .Image
+		case .Ray_Payload:
+			spv_storage_class = .RayPayloadKHR
+		case .Hit_Attribute:
+			spv_storage_class = .HitAttributeKHR
+		case .Incoming_Ray_Payload:
+			spv_storage_class = .IncomingRayPayloadKHR
 		}
 		type_info.ptr_types[storage_class] = spv.OpTypePointer(&ctx.types, spv_storage_class, type_info.type)
 	}
@@ -1120,6 +1145,14 @@ cg_type_internal :: proc(
 				spv.OpMemberDecorate(annotation_builder, info.type, 0, .Offset, 0)
 			}
 		}
+	case .Opaque:
+		type := type.variant.(^types.Opaque)
+		switch type.name {
+		case "AccelerationStructureKHR":
+			info.type = spv.OpTypeAccelerationStructureKHR(type_builder)
+		case:
+			panic(type.name)
+		}
 	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion, .Proc_Group:
 		unreachable()
 	}
@@ -1252,33 +1285,43 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 	append(&ctx.functions.data, ..body.data[:])
 	spv.OpFunctionEnd(&ctx.functions)
 
-	if p.shader_stage != nil {
-		execution_mode: spv.ExecutionModel
-		#partial switch p.shader_stage {
-		case .Vertex:
-			execution_mode = .Vertex
-		case .Fragment:
-			execution_mode = .Fragment
-		case .Geometry:
-			execution_mode = .Geometry
-		case .Tesselation:
-			execution_mode = .TessellationControl
-		case .Compute:
-			execution_mode = .GLCompute
-		}
-		interface := make([dynamic]spv.Id, 0, len(ctx.referenced_globals))
-		for g in ctx.referenced_globals {
-			append(&interface, g)
-		}
-		clear(&ctx.referenced_globals)
-		clear(&ctx.interface_variables)
-		spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, link_name, ..interface[:])
-		#partial switch p.shader_stage {
-		case .Fragment:
-			spv.OpExecutionMode(&ctx.execution_modes, id, .OriginUpperLeft)
-		case .Compute:
-			spv.OpExecutionMode(&ctx.execution_modes, id, .LocalSize, u32(ctx.local_size.x), u32(ctx.local_size.y), u32(ctx.local_size.z))
-		}
+	execution_mode: spv.ExecutionModel
+	switch p.shader_stage {
+	case .Invalid:
+		return
+	case .Vertex:
+		execution_mode = .Vertex
+	case .Fragment:
+		execution_mode = .Fragment
+	case .Geometry:
+		execution_mode = .Geometry
+	case .Tesselation:
+		execution_mode = .TessellationControl
+	case .Compute:
+		execution_mode = .GLCompute
+	case .Ray_Generation:
+		execution_mode = .RayGenerationKHR
+	case .Intersection:
+		execution_mode = .IntersectionKHR
+	case .Any_Hit:
+		execution_mode = .AnyHitKHR
+	case .Closest_Hit:
+		execution_mode = .ClosestHitKHR
+	case .Miss:
+		execution_mode = .MissKHR
+	}
+	interface := make([dynamic]spv.Id, 0, len(ctx.referenced_globals))
+	for g in ctx.referenced_globals {
+		append(&interface, g)
+	}
+	clear(&ctx.referenced_globals)
+	clear(&ctx.interface_variables)
+	spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, link_name, ..interface[:])
+	#partial switch p.shader_stage {
+	case .Fragment:
+		spv.OpExecutionMode(&ctx.execution_modes, id, .OriginUpperLeft)
+	case .Compute:
+		spv.OpExecutionMode(&ctx.execution_modes, id, .LocalSize, u32(ctx.local_size.x), u32(ctx.local_size.y), u32(ctx.local_size.z))
 	}
 }
 
@@ -1648,14 +1691,12 @@ cg_interface :: proc(
 ) -> (value: Value) {
 	defer ctx.referenced_globals[value.id] = {}
 
-	builtin, ok := reflect.enum_from_name(spv.BuiltIn, builtin)
-	assert(ok)
+	info := checker.interface_infos[builtin]
 
-	if cached, ok := ctx.interface_variables[builtin]; ok {
+	if cached, ok := ctx.interface_variables[info.id]; ok {
 		return cached
 	}
 
-	info := checker.interface_infos[builtin]
 	storage_class:     Storage_Class
 	spv_storage_class: spv.StorageClass
 	switch info.usage[ctx.shader_stage] {
@@ -1673,9 +1714,9 @@ cg_interface :: proc(
 	value.type          = info.type
 	type_info          := cg_type(ctx, value.type)
 	value.id            = spv.OpVariable(&ctx.globals, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class)
-	spv.OpDecorate(&ctx.annotations, value.id, .BuiltIn, u32(builtin))
+	spv.OpDecorate(&ctx.annotations, value.id, .BuiltIn, u32(info.id))
 
-	ctx.interface_variables[builtin] = value
+	ctx.interface_variables[info.id] = value
 
 	return
 }
@@ -1853,7 +1894,7 @@ cg_expr_internal :: proc(
 		case .Push_Constant, .Storage_Buffer, .Uniform, .Uniform_Constant:
 			value.explicit_layout = true
 			fallthrough
-		case .Global:
+		case .Global, .Ray_Payload, .Hit_Attribute, .Incoming_Ray_Payload:
 			if ctx.spirv_version > spv_version(1, 3) {
 				ctx.referenced_globals[value.id] = {}
 			}
@@ -2254,8 +2295,6 @@ cg_expr_internal :: proc(
 				coord := u32(v.builtin - .Real)
 				return { id = spv.OpCompositeExtract(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id, coord), }
 			case .Read_Device_Clock, .Read_Subgroup_Clock:
-				ctx.extensions["SPV_KHR_shader_clock"] = {}
-				ctx.capabilities[.ShaderClockKHR]      = {}
 				scope: spv.Scope
 				#partial switch v.builtin {
 				case .Read_Device_Clock:
@@ -2269,6 +2308,42 @@ cg_expr_internal :: proc(
 				semantics := cg_constant(ctx, i64(spv.MemorySemantics{ .AcquireRelease, .WorkgroupMemory, }), nil).id
 				spv.OpControlBarrier(builder, scope, scope, semantics)
 				return
+			case .Trace_Ray:
+				args := make([]spv.Id, 11, context.temp_allocator)
+				types: [11]^types.Type = {
+					nil,                // Acceleration Structure
+					types.t_Ray_Flags,  // Ray Flags
+					types.t_i32,        // Cull Mask
+					types.t_i32,        // SBT Offset
+					types.t_i32,        // SBT Stride
+					types.t_i32,        // Miss Index
+					types.t_vec3,       // Ray Origin
+					types.t_f32,        // Ray Tmin
+					types.t_vec3,       // Ray Direction
+					types.t_f32,        // Ray Tmax
+					nil,                // Payload
+				}
+				for &arg, i in args {
+					type := types[i]
+					val  := cg_expr(ctx, builder, v.args[i].value, i != 10)
+					if i == 10 || type == nil {
+						arg = val.id
+					} else {
+						arg = cg_cast(ctx, builder, val, type)
+					}
+				}
+				spv.OpTraceRayKHR(builder, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10])
+				return
+			case .Ignore_Intersection:
+				spv.OpIgnoreIntersectionKHR(builder)
+				return { discard = true, }
+			case .Terminate_Ray:
+				spv.OpTerminateRayKHR(builder)
+				return { discard = true, }
+			case .Report_Intersection:
+				hit      := cg_expr(ctx, builder, v.args[0].value).id
+				hit_kind := cg_expr(ctx, builder, v.args[1].value).id
+				return { id = spv.OpReportIntersectionKHR(builder, cg_type(ctx, types.t_bool).type, hit, hit_kind), }
 			}
 
 			unreachable()
@@ -3029,6 +3104,15 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 	case ^ast.Decl_Value:
 		cg_value_decl(ctx, builder, v, global)
 	case ^ast.Decl_Import:
+		text := v.library.text[1:len(v.library.text) - 1]
+		switch text {
+		case "extensions:raytracing":
+			ctx.extensions["SPV_KHR_ray_tracing"] = {}
+			ctx.capabilities[.RayTracingKHR]      = {}
+		case "extensions:clock":
+			ctx.extensions["SPV_KHR_shader_clock"] = {}
+			ctx.capabilities[.ShaderClockKHR]      = {}
+		}
 	}
 
 	return

@@ -1,0 +1,4 @@
+// This is purely for documentation
+
+read_subgroup_clock :: proc() -> u64 ---
+read_device_clock   :: proc() -> u64 ---

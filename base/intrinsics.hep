@@ -19,10 +19,5 @@ find_lsb             :: proc(i: $I) where type_is_integer(I) || type_is_vector(I
 find_msb             :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
 reverse_bits         :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
 
-// read the subgroup clock, this requires the "SPV_KHR_shader_clock" extension
-read_subgroup_clock :: proc() -> u64 ---
-// read the device clock, this requires the "SPV_KHR_shader_clock" extension
-read_device_clock   :: proc() -> u64 ---
-
 // synchronize workgroup control flow and memory
 barrier :: proc()
