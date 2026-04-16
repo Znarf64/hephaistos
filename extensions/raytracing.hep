@@ -20,9 +20,9 @@ Hit_Kind :: enum u32 {
 	Back  = 0xFF,
 }
 
-report_intersection :: proc(hit: f32, hit_kind: Hit_Kind) -> bool
-ignore_intersection :: proc() -> !
-terminate_ray       :: proc() -> !
+report_intersection :: proc(hit: f32, hit_kind: Hit_Kind) -> bool ---
+ignore_intersection :: proc() -> ! ---
+terminate_ray       :: proc() -> ! ---
 
 trace_ray :: proc(
 	acceleration_structure: Acceleration_Structure,
@@ -35,4 +35,4 @@ trace_ray :: proc(
 	ray_tmin:               f32,
 	ray_direction:          vec3,
 	ray_tmax:               f32,
-)
+) ---

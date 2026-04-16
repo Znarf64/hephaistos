@@ -20,4 +20,4 @@ find_msb             :: proc(i: $I) where type_is_integer(I) || type_is_vector(I
 reverse_bits         :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
 
 // synchronize workgroup control flow and memory
-barrier :: proc()
+barrier :: proc() ---
