@@ -323,7 +323,8 @@ ray_generation_shader :: proc() {
 
 	origin, dir: [3]f32
 	u: u64
-	rt.trace_ray(rt.Acceleration_Structure(u), { .NoOpaque, .SkipClosestHitShader, }, 0xff, 0, 1, 0, origin, 0, dir, 1000, payload) }
+	rt.trace_ray(rt.Acceleration_Structure(u), { .NoOpaque, .SkipClosestHitShader, }, 0xff, 0, 1, 0, origin, 0, dir, 1000, payload)
+}
 
 @(intersection_shader)
 ray_intersection_shader :: proc() {

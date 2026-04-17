@@ -392,7 +392,7 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 					annotate          = true
 				}
 
-				if types.is_opaque(type) && types.opaque_name(type) == "AccelerationStructureKHR" {
+				if types.is_opaque(type) && types.opaque_kind(type) == .Acceleration_Structure {
 					assert(len(v.types) == 1)
 					storage_class     = .Uniform_Constant
 					spv_storage_class = .UniformConstant
@@ -1147,11 +1147,9 @@ cg_type_internal :: proc(
 		}
 	case .Opaque:
 		type := type.variant.(^types.Opaque)
-		switch type.name {
-		case "AccelerationStructureKHR":
+		switch type.opaque_kind {
+		case .Acceleration_Structure:
 			info.type = spv.OpTypeAccelerationStructureKHR(type_builder)
-		case:
-			panic(type.name)
 		}
 	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion, .Proc_Group:
 		unreachable()
@@ -1807,8 +1805,8 @@ cg_cast :: proc(
 			}
 		case .Opaque:
 			to := to.variant.(^types.Opaque)
-			switch to.name {
-			case "AccelerationStructureKHR":
+			switch to.opaque_kind {
+			case .Acceleration_Structure:
 				return spv.OpConvertUToAccelerationStructureKHR
 			}
 		}

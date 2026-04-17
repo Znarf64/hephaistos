@@ -89,11 +89,15 @@ Bit_Set :: struct {
 	backing:    ^Type,
 }
 
+Opaque_Kind :: enum {
+	Acceleration_Structure,
+}
+
 // A deliberately opaque type such as OpTypeAccelerationStructureKHR
 Opaque :: struct {
-	using base: Type,
-	name:       string,
-	backing:    ^Type,
+	using base:  Type,
+	opaque_kind: Opaque_Kind,
+	backing:     ^Type,
 }
 
 Kind :: enum {
@@ -250,7 +254,7 @@ _base_types_init :: proc "contextless" () {
 	set.backing   = t_i32
 	t_Ray_Flags   = set
 
-	t_Acceleration_Structure = opaque_new("AccelerationStructureKHR", t_u64, allocator)
+	t_Acceleration_Structure = opaque_new(.Acceleration_Structure, t_u64, allocator)
 }
 
 print_writer :: proc(w: io.Writer, type: ^Type) {
@@ -376,7 +380,7 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 		fmt.wprintf(w, "]")
 	case .Opaque:
 		type := type.variant.(^Opaque)
-		fmt.wprintf(w, "`%s`", type.name)
+		fmt.wprintf(w, `"%v"`, type.opaque_kind)
 	}
 }
 
@@ -488,7 +492,7 @@ equal :: proc(a, b: ^Type) -> bool {
 
 		return equal(a.texel_type, b.texel_type)
 	case .Opaque:
-		return opaque_name(a) == opaque_name(b)
+		return opaque_kind(a) == opaque_kind(b)
 	}
 
 	return true
@@ -708,8 +712,8 @@ buffer_elem :: proc(type: ^Type) -> ^Type {
 }
 
 @(require_results)
-opaque_name :: proc(type: ^Type) -> string {
-	return type.variant.(^Opaque).name
+opaque_kind :: proc(type: ^Type) -> Opaque_Kind {
+	return type.variant.(^Opaque).opaque_kind
 }
 
 @(require_results)
@@ -898,10 +902,10 @@ matrix_new :: proc(col_type: ^Array, cols: int, allocator: mem.Allocator) -> ^Ma
 }
 
 @(require_results)
-opaque_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Opaque {
-	type        := new(.Opaque, Opaque, allocator)
-	type.name    = name
-	type.backing = backing
+opaque_new :: proc(kind: Opaque_Kind, backing: ^Type, allocator: mem.Allocator) -> ^Opaque {
+	type            := new(.Opaque, Opaque, allocator)
+	type.opaque_kind = kind
+	type.backing     = backing
 
 	return type
 }
