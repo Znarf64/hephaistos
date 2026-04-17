@@ -1805,6 +1805,12 @@ cg_cast :: proc(
 			case:
 				unreachable()
 			}
+		case .Opaque:
+			to := to.variant.(^types.Opaque)
+			switch to.name {
+			case "AccelerationStructureKHR":
+				return spv.OpConvertUToAccelerationStructureKHR
+			}
 		}
 		return nil
 	}
@@ -2408,6 +2414,20 @@ cg_expr_internal :: proc(
 			}
 
 			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..columns[:]), }
+		}
+
+		if v.type.kind == .Bit_Set {
+			bit_set_id := cg_type(ctx, v.type).type
+			value      := cg_nil_value(ctx, v.type)
+			one        := cg_constant(ctx, i64(1), v.type).id
+			for field in v.fields {
+				shift := cg_cast(ctx, builder, cg_expr(ctx, builder, field.value), v.type)
+				elem  := spv.OpShiftLeftLogical(builder, bit_set_id, one, shift)
+
+				value = spv.OpBitwiseOr(builder, bit_set_id, value, elem)
+			}
+
+			return { id = value, }
 		}
 
 		if !v.named {

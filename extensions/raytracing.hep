@@ -1,6 +1,6 @@
 // This is purely for documentation
 
-Acceleration_Structure :: struct{}
+Acceleration_Structure :: distinct u64
 
 Ray_Flags :: bit_set[enum {
 	NoOpaque,

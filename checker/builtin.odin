@@ -126,6 +126,8 @@ check_builtin :: proc(checker: ^Checker, v: ^ast.Expr_Call, fn: Operand) -> (ope
 		allow_types = true
 	case .Report_Intersection:
 		type_hints = { nil, types.t_Hit_Kind, }
+	case .Trace_Ray:
+		type_hints = { nil, types.t_Ray_Flags, }
 	}
 
 	args := make([]Operand, len(v.args), context.temp_allocator)
@@ -600,16 +602,16 @@ check_builtin :: proc(checker: ^Checker, v: ^ast.Expr_Call, fn: Operand) -> (ope
 		}
 	case .Trace_Ray:
 		arg_types: [11]^types.Type = {
-			types.t_Acceleration_Structure, // Acceleration Structure	
-			types.t_i32,                    // Ray Flags	
-			types.t_i32,                    // Cull Mask	
-			types.t_i32,                    // SBT Offset	
-			types.t_i32,                    // SBT Stride	
-			types.t_i32,                    // Miss Index	
-			types.t_vec3,                   // Ray Origin	
-			types.t_f32,                    // Ray Tmin	
-			types.t_vec3,                   // Ray Direction	
-			types.t_f32,                    // Ray Tmax	
+			types.t_Acceleration_Structure, // Acceleration Structure
+			types.t_Ray_Flags,              // Ray Flags
+			types.t_i32,                    // Cull Mask
+			types.t_i32,                    // SBT Offset
+			types.t_i32,                    // SBT Stride
+			types.t_i32,                    // Miss Index
+			types.t_vec3,                   // Ray Origin
+			types.t_f32,                    // Ray Tmin
+			types.t_vec3,                   // Ray Direction
+			types.t_f32,                    // Ray Tmax
 			nil,                            // Payload
 		}
 

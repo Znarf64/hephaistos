@@ -2458,6 +2458,33 @@ check_expr_internal :: proc(
 				}
 				field.value.type = type.col_type.elem
 			}
+		case .Bit_Set:
+			type := type.variant.(^types.Bit_Set)
+			if named {
+				error(checker, v, "named values are not supported for bit_set literals")
+				return
+			}
+			operand.mode = .Const
+			const_value: i64
+			for field in v.fields {
+				value := check_expr(checker, field.value, type_hint = type.enum_type)
+				if !types.implicitly_castable(value.type, type.enum_type) {
+					error(checker, field.value, "expected value of type %v but got %v", type.enum_type, value.type)
+					return
+				}
+				if value.mode == .Const {
+					bit: i64 = 1 << uint(value.value.(i64))
+					if const_value & bit != 0 {
+						error(checker, value, "duplicate value in bit_set literal")
+					}
+					const_value |= bit
+				} else {
+					operand.mode = .RValue
+				}
+			}
+			if operand.mode == .Const {
+				operand.value = const_value
+			}
 		case:
 			error(checker, v, "illegal type in compound literal: %v", type)
 		}

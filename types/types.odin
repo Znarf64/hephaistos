@@ -93,6 +93,7 @@ Bit_Set :: struct {
 Opaque :: struct {
 	using base: Type,
 	name:       string,
+	backing:    ^Type,
 }
 
 Kind :: enum {
@@ -230,7 +231,8 @@ _base_types_init :: proc "contextless" () {
 	t_Hit_Kind = e
 
 	ray_flags_bits := new(.Enum, Enum, allocator)
-	ray_flags_bits.values = slice.clone([]Enum_Value {
+	ray_flags_bits.backing = t_i32
+	ray_flags_bits.values  = slice.clone([]Enum_Value {
 		{ { text = "NoOpaque",                   }, 0 },
 		{ { text = "TerminateOnFirstHit",        }, 1 },
 		{ { text = "SkipClosestHitShader",       }, 2 },
@@ -248,7 +250,7 @@ _base_types_init :: proc "contextless" () {
 	set.backing   = t_i32
 	t_Ray_Flags   = set
 
-	t_Acceleration_Structure = opaque_new("AccelerationStructureKHR", allocator)
+	t_Acceleration_Structure = opaque_new("AccelerationStructureKHR", t_u64, allocator)
 }
 
 print_writer :: proc(w: io.Writer, type: ^Type) {
@@ -610,6 +612,10 @@ castable :: proc(from, to: ^Type) -> bool {
 		return array_len(from) == array_len(to)
 	}
 
+	if is_opaque(to) && opaque_backing(to) != nil {
+		return castable(from, opaque_backing(to))
+	}
+
 	return false
 }
 
@@ -704,6 +710,11 @@ buffer_elem :: proc(type: ^Type) -> ^Type {
 @(require_results)
 opaque_name :: proc(type: ^Type) -> string {
 	return type.variant.(^Opaque).name
+}
+
+@(require_results)
+opaque_backing :: proc(type: ^Type) -> ^Type {
+	return type.variant.(^Opaque).backing
 }
 
 @(private="file")
@@ -887,9 +898,10 @@ matrix_new :: proc(col_type: ^Array, cols: int, allocator: mem.Allocator) -> ^Ma
 }
 
 @(require_results)
-opaque_new :: proc(name: string, allocator: mem.Allocator) -> ^Opaque {
-	type     := new(.Opaque, Opaque, allocator)
-	type.name = name
+opaque_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Opaque {
+	type        := new(.Opaque, Opaque, allocator)
+	type.name    = name
+	type.backing = backing
 
 	return type
 }
