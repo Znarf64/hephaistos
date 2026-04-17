@@ -6,6 +6,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:reflect"
+import "core:slice"
 import "core:strings"
 
 import "../ast"
@@ -26,7 +27,8 @@ Flag :: enum {
 Flags :: bit_set[Flag]
 
 Library :: struct {
-	entities: map[string]^Entity,
+	entities:  map[string]^Entity,
+	extension: string,
 }
 
 to_library :: proc(checker: Checker) -> Library {
@@ -585,6 +587,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 		.Push_Constant        = "push constant",
 		.Storage_Buffer       = "storage buffer",
 		.Shared               = "shared",
+
 		.Ray_Payload          = "ray payload",
 		.Incoming_Ray_Payload = "incoming ray payload",
 		.Hit_Attribute        = "hit attribute",
@@ -675,19 +678,6 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 	decl.binding  = -1
 	seen := make(map[string]struct{}, context.temp_allocator)
 
-	@(static, rodata)
-	interface_kind_names := [ast.Interface_Kind]string {
-		.None                 = "none",
-		.Uniform              = "uniform",
-		.Uniform_Buffer       = "uniform_buffer",
-		.Push_Constant        = "push_constant",
-		.Storage_Buffer       = "storage_buffer",
-		.Shared               = "shared",
-		.Ray_Payload          = "ray_payload",
-		.Hit_Attribute        = "hit_attribute",
-		.Incoming_Ray_Payload = "incoming_ray_payload",
-	}
-
 	for a in decl.attributes {
 		if a.ident.text in seen {
 			error(checker, a.ident, "duplicate attribute: '%v'", a.ident.text)
@@ -695,8 +685,8 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 		seen[a.ident.text] = {}
 
 		interface_kind: ast.Interface_Kind
-		for name, interface in interface_kind_names {
-			if name == a.ident.text {
+		for name, interface in ast.interface_kind_names {
+			if check_attribute_matches(checker, a, name) {
 				interface_kind = interface
 				break
 			}
@@ -704,7 +694,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 
 		if interface_kind != nil {
 			if decl.interface != nil {
-				error(checker, a.ident, "the '%s' and '%s' attributes are mutually exclusive", interface_kind_names[decl.interface], a.ident.text)
+				error(checker, a.ident, "the '%s' and '%s' attributes are mutually exclusive", ast.interface_kind_names[decl.interface], a.ident.text)
 			}
 			if a.value != nil {
 				error(checker, a.value, "'%s' attribute does not accept a value", a.ident.text)
@@ -790,7 +780,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 		case:
 			found: bool
 			for name, stage in ast.shader_stage_names {
-				if name == a.ident.text {
+				if check_attribute_matches(checker, a, name) {
 					if decl.shader_stage != nil {
 						error(checker, a.ident, "procedures can only be annotated with one shader stage")
 					}
@@ -829,14 +819,14 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 				checker,
 				decl,
 				"variable with '%s' attribute can not have any values",
-				interface_kind_names[decl.interface],
+				ast.interface_kind_names[decl.interface],
 			)
 		} else if len(decl.lhs) != 1 {
 			error(
 				checker,
 				decl,
 				"attribute '%s' can not be applied to a declaration of multiple variables",
-				interface_kind_names[decl.interface],
+				ast.interface_kind_names[decl.interface],
 			)
 		}
 	}
@@ -844,29 +834,28 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 
 collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entities: ^[dynamic]^Entity) {
 	for stmt in stmts {
-		if v, ok := stmt.derived_stmt.(^ast.Decl_Import); ok {
-			if checker.scope.kind != .Global {
-				error(checker, v, "Imports must be placed at file scope")
-				return
-			}
+		v := stmt.derived_stmt.(^ast.Decl_Import) or_continue
 
-			library_name := v.library.text[1:len(v.library.text) - 1]
-			if library_name not_in checker.libraries {
-				error(checker, v.library, "Imported library does not exist: \"%v\"", library_name)
-			} else {
-				t        := v.library
-				t.text    = v.name
-				e        := entity_new(.Library, t, types.t_invalid, allocator = checker.allocator)
-				e.library = library_name
-				e.flags   = { .Resolved, }
-				scope_insert_entity(checker, e)
-			}
-			continue
+		if checker.scope.kind != .Global {
+			error(checker, v, "Imports must be placed at file scope")
+			return
 		}
-		d, ok := stmt.derived_stmt.(^ast.Decl_Value)
-		if !ok {
-			continue
+
+		library_name := v.library.text[1:len(v.library.text) - 1]
+		if library_name not_in checker.libraries {
+			error(checker, v.library, "Imported library does not exist: \"%v\"", library_name)
+		} else {
+			t        := v.library
+			t.text    = v.name
+			e        := entity_new(.Library, t, types.t_invalid, allocator = checker.allocator)
+			e.library = library_name
+			e.flags   = { .Resolved, }
+			scope_insert_entity(checker, e)
 		}
+	}
+
+	for stmt in stmts {
+		d := stmt.derived_stmt.(^ast.Decl_Value) or_continue
 		if d.mutable && !global {
 			continue
 		}
@@ -1039,7 +1028,14 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 	if v.mode == .Proc {
 		e.flags -= { .In_Progress, }
 		e.flags += { .Resolved, }
-		_        = check_expr_or_type(checker, d.values[value_index], d.attributes, type, true)
+
+		if d.shader_stage != nil {
+			checker.shader_stage = d.shader_stage
+		}
+		_  = check_expr_or_type(checker, d.values[value_index], d.attributes, type, true)
+		if d.shader_stage != nil {
+			checker.shader_stage = nil
+		}
 	}
 
 	if .Enable_Reflection not_in checker.flags && d.shader_stage != nil {
@@ -1152,6 +1148,11 @@ checker_init :: proc(
 		if library == nil {
 			checker.libraries[name] = { entities = make(map[string]^Entity, checker.allocator), }
 			library                 = &checker.libraries[name]
+
+			name := name
+			if base, ok := strings.split_iterator(&name, ":"); ok && base == "extensions" {
+				library.extension = name
+			}
 		}
 		return
 	}
@@ -1382,6 +1383,9 @@ check :: proc(
 	shared_types := shared_types_from_typeids(types, allocator)
 	checker_init(&checker, defines, shared_types, libraries, flags, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
+	slice.sort_by(checker.errors[:], proc(a, b: tokenizer.Error) -> bool {
+		return a.offset < b.offset
+	})
 	return checker, checker.errors[:]
 }
 
@@ -1754,36 +1758,6 @@ check_expr_internal :: proc(
 		}
 
 	case ^ast.Expr_Proc_Lit:
-		shader_stage: ast.Shader_Stage
-		for attribute in attributes {
-			s: ast.Shader_Stage
-			for name, kind in ast.shader_stage_names {
-				if name == attribute.ident.text {
-					s = kind
-					break
-				}
-			}
-			if s == nil {
-				continue
-			}
-			if shader_stage != nil {
-				error(
-					checker,
-					attribute.ident,
-					"the attributes '%s' and '%s' are mutually exclusive",
-					ast.shader_stage_names[shader_stage],
-					ast.shader_stage_names[s],
-				)
-			}
-			shader_stage = s
-		}
-
-		prev_shader_stage         := checker.shader_stage
-		defer checker.shader_stage = prev_shader_stage
-
-		v.shader_stage       = shader_stage
-		checker.shader_stage = shader_stage
-
 		type := check_proc_type(checker, v)
 
 		operand.type = type
@@ -3058,5 +3032,29 @@ deconstruct_tuple :: proc(checker: ^Checker, ts: ^[]^types.Type) -> bool {
 		ts[i] = field.type
 	}
 
+	return true
+}
+
+check_attribute_matches :: proc(checker: ^Checker, a: ast.Field, name: string) -> bool {
+	name := name
+	extension: string
+	if dot := strings.index(name, "."); dot >= 0 {
+		extension = name[:dot]
+		name     = name[dot + 1:]
+	}
+
+	if name != a.ident.text {
+		return false
+	}
+
+	if a.library.text == "" && extension != "" {
+		error(checker, a.ident, "attribute '%v' is part of the '%s' extension, use `@(%s.%s)`", name, extension, extension, name)
+	}
+	if a.library.text != "" {
+		e, ok := scope_lookup(checker, a.library)
+		if ok && e.kind != .Library{
+			error(checker, a.library, "expected a library")
+		}
+	}
 	return true
 }

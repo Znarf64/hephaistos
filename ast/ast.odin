@@ -107,24 +107,23 @@ Shader_Stage :: enum {
 
 @(rodata)
 shader_stage_names: [Shader_Stage]string = {
-	.Invalid          = "<invalid>",
+	.Invalid          = "<invalid shader stage>",
 	.Vertex           = "vertex_shader",
 	.Fragment         = "fragment_shader",
 	.Geometry         = "geometry_shader",
 	.Tesselation      = "tesselation_shader",
 	.Compute          = "compute_shader",
 
-	.Ray_Generation   = "ray_generation_shader",
-	.Intersection     = "intersection_shader",
-	.Any_Hit          = "any_hit_shader",
-	.Closest_Hit      = "closest_hit_shader",
-	.Miss             = "miss_shader",
+	.Ray_Generation   = "raytracing.ray_generation_shader",
+	.Intersection     = "raytracing.intersection_shader",
+	.Any_Hit          = "raytracing.any_hit_shader",
+	.Closest_Hit      = "raytracing.closest_hit_shader",
+	.Miss             = "raytracing.miss_shader",
 }
 
 Expr_Proc_Lit :: struct {
 	using sig:    Expr_Proc_Sig,
 	body:         []^Stmt,
-	shader_stage: Shader_Stage,
 }
 
 Expr_Proc_Sig :: struct {
@@ -339,6 +338,20 @@ Interface_Kind :: enum {
 	Ray_Payload,
 	Incoming_Ray_Payload,
 	Hit_Attribute,
+}
+
+@(rodata)
+interface_kind_names := [Interface_Kind]string {
+	.None                 = "none",
+	.Uniform              = "uniform",
+	.Uniform_Buffer       = "uniform_buffer",
+	.Push_Constant        = "push_constant",
+	.Storage_Buffer       = "storage_buffer",
+	.Shared               = "shared",
+
+	.Ray_Payload          = "raytracing.ray_payload",
+	.Hit_Attribute        = "raytracing.hit_attribute",
+	.Incoming_Ray_Payload = "raytracing.incoming_ray_payload",
 }
 
 Decl_Value :: struct {

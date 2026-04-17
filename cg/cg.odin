@@ -101,9 +101,10 @@ Image_Type :: struct {
 }
 
 Proc_Lit_Info :: struct {
-	expr:      ^ast.Expr_Proc_Lit,
-	id:        spv.Id,
-	link_name: string,
+	expr:         ^ast.Expr_Proc_Lit,
+	id:           spv.Id,
+	link_name:    string,
+	shader_stage: ast.Shader_Stage,
 }
 
 Constant_Key :: struct {
@@ -465,7 +466,7 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 					ctx.link_name = prev_link_name
 				}
 
-				val := cg_expr(ctx, nil, value)
+				val := cg_expr(ctx, nil, value, shader_stage = v.shader_stage)
 				cg_insert_entity_value(ctx, name, val)
 			case .Proc_Group:
 				val := cg_expr(ctx, nil, value)
@@ -536,7 +537,7 @@ generate :: proc(
 		}
 
 		for p in ctx.procs {
-			cg_proc_internal(&ctx, p.expr, p.id, strings.concatenate({ ctx.name_prefix, p.link_name, }))
+			cg_proc_internal(&ctx, p.expr, p.id, strings.concatenate({ ctx.name_prefix, p.link_name, }), p.shader_stage)
 		}
 		clear(&ctx.procs)
 
@@ -1169,13 +1170,13 @@ image_format_table_init :: proc "contextless" () {
 	}
 }
 
-cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_name: string) {
-	ctx.shader_stage  = p.shader_stage
+cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_name: string, shader_stage: ast.Shader_Stage) {
+	ctx.shader_stage  = shader_stage
 	type             := p.type.variant.(^types.Proc)
 	return_type_info := cg_type(ctx, type.return_type)
 	proc_type_id     := cg_type(ctx, type).type
 	return_type_id   := return_type_info.type
-	if p.shader_stage != nil {
+	if shader_stage != nil {
 		proc_type_id   = ctx.type_void_proc
 		return_type_id = ctx.type_void
 	}
@@ -1197,7 +1198,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 	body := spv.Builder { current_id = &ctx.current_id, }
 
 	outputs: [dynamic]spv.Id
-	if p.shader_stage != nil {
+	if shader_stage != nil {
 		for arg, i in type.args {
 			id := spv.OpVariable(&ctx.globals, cg_type_ptr(ctx, arg.type, .Input), .Input, nil)
 			cg_insert_entity(ctx, p.args[i].ident.text, .Input, arg.type, id)
@@ -1284,7 +1285,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 	spv.OpFunctionEnd(&ctx.functions)
 
 	execution_mode: spv.ExecutionModel
-	switch p.shader_stage {
+	switch shader_stage {
 	case .Invalid:
 		return
 	case .Vertex:
@@ -1315,7 +1316,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 	clear(&ctx.referenced_globals)
 	clear(&ctx.interface_variables)
 	spv.OpEntryPoint(&ctx.entry_points, execution_mode, id, link_name, ..interface[:])
-	#partial switch p.shader_stage {
+	#partial switch shader_stage {
 	case .Fragment:
 		spv.OpExecutionMode(&ctx.execution_modes, id, .OriginUpperLeft)
 	case .Compute:
@@ -1324,14 +1325,15 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 }
 
 @(require_results)
-cg_proc_lit :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit) -> Value {
+cg_proc_lit :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, shader_stage: ast.Shader_Stage) -> Value {
 	ctx.current_id += 1
 	id := ctx.current_id
 
 	append(&ctx.procs, Proc_Lit_Info {
-		expr      = p,
-		id        = id,
-		link_name = ctx.link_name,
+		expr         = p,
+		id           = id,
+		link_name    = ctx.link_name,
+		shader_stage = shader_stage,
 	})
 
 	return { id = id, }
@@ -1705,7 +1707,7 @@ cg_interface :: proc(
 		storage_class     = .Output
 		spv_storage_class = .Output
 	case:
-		panic("")
+		panic("Invalid builtin")
 	}
 
 	value.storage_class = storage_class
@@ -1721,15 +1723,16 @@ cg_interface :: proc(
 
 @(require_results)
 cg_expr :: proc(
-	ctx:     ^Context,
-	builder: ^spv.Builder,
-	expr:    ^ast.Expr,
-	deref:   bool = true,
+	ctx:          ^Context,
+	builder:      ^spv.Builder,
+	expr:         ^ast.Expr,
+	deref:        bool             = true,
+	shader_stage: ast.Shader_Stage = nil,
 ) -> (value: Value) {
 	assert(expr      != nil)
 	assert(expr.type != nil)
 
-	value = cg_expr_internal(ctx, builder, expr)
+	value = cg_expr_internal(ctx, builder, expr, shader_stage)
 	if value.type == nil {
 		value.type = expr.type
 	}
@@ -1867,6 +1870,7 @@ cg_expr_internal :: proc(
 	ctx:     ^Context,
 	builder: ^spv.Builder,
 	expr:    ^ast.Expr,
+	shader_stage: ast.Shader_Stage = nil,
 ) -> (value: Value) {
 	assert(expr      != nil)
 	assert(expr.type != nil)
@@ -1918,7 +1922,7 @@ cg_expr_internal :: proc(
 	case ^ast.Expr_Ident:
 		return cg_ident(ctx, builder, v.ident.text)
 	case ^ast.Expr_Proc_Lit:
-		return cg_proc_lit(ctx, v)
+		return cg_proc_lit(ctx, v, shader_stage)
 	case ^ast.Expr_Proc_Sig:
 	case ^ast.Expr_Proc_Group:
 		members := make([]spv.Id, len(v.members))
@@ -3144,7 +3148,7 @@ cg_stmt_list :: proc(ctx: ^Context, builder: ^spv.Builder, stmts: []^ast.Stmt, g
 	}
 	if global {
 		for p in ctx.procs {
-			cg_proc_internal(ctx, p.expr, p.id, p.link_name)
+			cg_proc_internal(ctx, p.expr, p.id, p.link_name, p.shader_stage)
 		}
 		clear(&ctx.procs)
 	}
