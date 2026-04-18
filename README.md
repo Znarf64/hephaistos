@@ -116,6 +116,21 @@ main :: proc() {
 | `read_only` | Prohibit writes to variable |
 | `link_name` | Set link name of shader entry point, defaults to name of procedure |
 
+### Extensions
+The types and functions for various extensions can be found in "extensions/*.hep".
+Additionally some extensions include attributes:
+
+| Attribute | Description |
+| --- | --- |
+| `raytracing.ray_generation_shader` | Ray generation shader |
+| `raytracing.intersection_shader` | Custom ray intersection shader |
+| `raytracing.any_hit_shader` | Any hit shader |
+| `raytracing.closest_hit_shader` | Closest hit shader |
+| `raytracing.miss_shader` | Miss shader |
+| `raytracing.ray_payload` | Variable that holds data about a ray intersection, this is where the "returned" data from the hit/miss shaders can be read |
+| `raytracing.incoming_ray_payload` | Variable that holds data about a ray intersection, this is where hit/miss shaders "return" data |
+| `raytracing.hit_attribute` | Variable that contains additional data about an intersection, eg. Barycentric coordinates in a standard ray-triangle intersection |
+
 ## OpenGL
 When using Hephaistos with OpenGL you will have to specify the SPIR-V version as 1.0:
 ```odin
