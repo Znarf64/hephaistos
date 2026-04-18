@@ -322,8 +322,7 @@ ray_generation_shader :: proc() {
 	launch_id := $LaunchId
 
 	origin, dir: [3]f32
-	u: u64
-	rt.trace_ray(rt.Acceleration_Structure(u), { .NoOpaque, .SkipClosestHitShader, }, 0xff, 0, 1, 0, origin, 0, dir, 1000, payload)
+	rt.trace_ray(acceleration_structure, { .NoOpaque, .SkipClosestHitShader, }, 0xff, 0, 1, 0, origin, 0, dir, 1000, payload)
 }
 
 @(rt.intersection_shader)
@@ -395,4 +394,20 @@ import "extensions:clock"
 
 test_clock :: proc() -> (device: u64, subgroup: u64) {
 	return clock.read_device_clock(), clock.read_subgroup_clock()
+}
+
+import rq "extensions:ray_query"
+
+@(fragment_shader)
+ray_query_fragment :: proc() {
+	q: rq.Query
+	rq.initialize(q, acceleration_structure, {}, 0xff, {}, 0, {}, 1)
+	rq.proceed(q)
+	dist: f32
+	if rq.get_candidate_intersection_type(q) != .AABB {
+		dist = rq.get_candidate_intersection_t(q)
+	}
+	if rq.get_commited_intersection_type(q) != .None {
+		dist = rq.get_commited_intersection_t(q)
+	}
 }

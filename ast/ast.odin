@@ -96,7 +96,8 @@ Shader_Stage :: enum {
 	Vertex,
 	Fragment,
 	Geometry,
-	Tesselation,
+	Tesselation_Control,
+	Tesselation_Evaluation,
 	Compute,
 	Ray_Generation,
 	Intersection,
@@ -107,18 +108,19 @@ Shader_Stage :: enum {
 
 @(rodata)
 shader_stage_names: [Shader_Stage]string = {
-	.Invalid          = "<invalid shader stage>",
-	.Vertex           = "vertex_shader",
-	.Fragment         = "fragment_shader",
-	.Geometry         = "geometry_shader",
-	.Tesselation      = "tesselation_shader",
-	.Compute          = "compute_shader",
+	.Invalid                = "<invalid shader stage>",
+	.Vertex                 = "vertex_shader",
+	.Fragment               = "fragment_shader",
+	.Geometry               = "geometry_shader",
+	.Tesselation_Control    = "tesselation_control_shader",
+	.Tesselation_Evaluation = "tesselation_evaluation_shader",
+	.Compute                = "compute_shader",
 
-	.Ray_Generation   = "raytracing.ray_generation_shader",
-	.Intersection     = "raytracing.intersection_shader",
-	.Any_Hit          = "raytracing.any_hit_shader",
-	.Closest_Hit      = "raytracing.closest_hit_shader",
-	.Miss             = "raytracing.miss_shader",
+	.Ray_Generation         = "raytracing.ray_generation_shader",
+	.Intersection           = "raytracing.intersection_shader",
+	.Any_Hit                = "raytracing.any_hit_shader",
+	.Closest_Hit            = "raytracing.closest_hit_shader",
+	.Miss                   = "raytracing.miss_shader",
 }
 
 Expr_Proc_Lit :: struct {
@@ -238,6 +240,58 @@ Builtin_Id :: enum {
 	Report_Intersection,
 	Ignore_Intersection,
 	Terminate_Ray,
+
+	/* ray query */
+	Ray_Query_Initialize,
+	Generate_Intersection,
+	Terminate,
+	Confirm_Intersection,
+	Proceed,
+
+	Get_Ray_T_Min,
+	Get_Ray_Flags,
+	Get_Intersection_Candidate_AABB_Opaque,
+	Get_World_Ray_Direction,
+	Get_World_Ray_Origin,
+
+	Get_Candidate_Intersection_Type,
+	Get_Commited_Intersection_Type,
+
+	Get_Candidate_Intersection_T,
+	Get_Commited_Intersection_T,
+
+	Get_Candidate_Intersection_Instance_Custom_Index,
+	Get_Commited_Intersection_Instance_Custom_Index,
+
+	Get_Candidate_Intersection_Instance_Id,
+	Get_Commited_Intersection_Instance_Id,
+
+	Get_Candidate_Intersection_Instance_Sbt_Offset,
+	Get_Commited_Intersection_Instance_Sbt_Offset,
+
+	Get_Candidate_Intersection_Geometry_Index,
+	Get_Commited_Intersection_Geometry_Index,
+
+	Get_Candidate_Intersection_Primitive_Index,
+	Get_Commited_Intersection_Primitive_Index,
+
+	Get_Candidate_Intersection_Barycentrics,
+	Get_Commited_Intersection_Barycentrics,
+
+	Get_Candidate_Intersection_Front_Face,
+	Get_Commited_Intersection_Front_Face,
+
+	Get_Candidate_Intersection_Object_Ray_Direction,
+	Get_Commited_Intersection_Object_Ray_Direction,
+
+	Get_Candidate_Intersection_Object_Ray_Origin,
+	Get_Commited_Intersection_Object_Ray_Origin,
+
+	Get_Candidate_Intersection_Object_To_World,
+	Get_Commited_Intersection_Object_To_World,
+
+	Get_Candidate_Intersection_World_To_Object,
+	Get_Commited_Intersection_World_To_Object,
 }
 
 Expr_Call :: struct {

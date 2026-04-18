@@ -6,7 +6,7 @@ output: image[2][4]f32
 @(push_constant)
 constants: #import(Compute_Constants)
 
-@(compute_shader)
+@(compute_shader, local_size = { 8, 8, 1, })
 main :: proc() {
 	SAMPLES :: 4
 	coord      := $GlobalInvocationId.xy

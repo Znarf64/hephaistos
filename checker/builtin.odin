@@ -99,11 +99,63 @@ builtin_names: [ast.Builtin_Id]string = {
 	.Report_Intersection  = "extensions:raytracing.report_intersection",
 	.Ignore_Intersection  = "extensions:raytracing.ignore_intersection",
 	.Terminate_Ray        = "extensions:raytracing.terminate_ray",
+
+	.Ray_Query_Initialize                             = "extensions:ray_query.initialize",
+	.Terminate                                        = "extensions:ray_query.terminate",
+	.Generate_Intersection                            = "extensions:ray_query.generate_intersection",
+	.Confirm_Intersection                             = "extensions:ray_query.confirm_intersection",
+	.Proceed                                          = "extensions:ray_query.proceed",
+
+	.Get_Ray_T_Min                                    = "extensions:ray_query.get_ray_t_min",
+	.Get_Ray_Flags                                    = "extensions:ray_query.get_ray_flags",
+	.Get_Intersection_Candidate_AABB_Opaque           = "extensions:ray_query.get_intersection_candidate_aabb_opaque",
+	.Get_World_Ray_Direction                          = "extensions:ray_query.get_world_ray_direction",
+	.Get_World_Ray_Origin                             = "extensions:ray_query.get_world_ray_origin",
+
+	.Get_Candidate_Intersection_Type                  = "extensions:ray_query.get_candidate_intersection_type",
+	.Get_Commited_Intersection_Type                   = "extensions:ray_query.get_commited_intersection_type",
+
+	.Get_Candidate_Intersection_T                     = "extensions:ray_query.get_candidate_intersection_t",
+	.Get_Commited_Intersection_T                      = "extensions:ray_query.get_commited_intersection_t",
+
+	.Get_Candidate_Intersection_Instance_Custom_Index = "extensions:ray_query.get_candidate_intersection_instance_custom_index",
+	.Get_Commited_Intersection_Instance_Custom_Index  = "extensions:ray_query.get_commited_intersection_instance_custom_index",
+
+	.Get_Candidate_Intersection_Instance_Id           = "extensions:ray_query.get_candidate_intersection_instance_id",
+	.Get_Commited_Intersection_Instance_Id            = "extensions:ray_query.get_commited_intersection_instance_id",
+
+	.Get_Candidate_Intersection_Instance_Sbt_Offset   = "extensions:ray_query.get_candidate_intersection_instance_sbt_offset",
+	.Get_Commited_Intersection_Instance_Sbt_Offset    = "extensions:ray_query.get_commited_intersection_instance_sbt_offset",
+
+	.Get_Candidate_Intersection_Geometry_Index        = "extensions:ray_query.get_candidate_intersection_geometry_index",
+	.Get_Commited_Intersection_Geometry_Index         = "extensions:ray_query.get_commited_intersection_geometry_index",
+
+	.Get_Candidate_Intersection_Primitive_Index       = "extensions:ray_query.get_candidate_intersection_primitive_index",
+	.Get_Commited_Intersection_Primitive_Index        = "extensions:ray_query.get_commited_intersection_primitive_index",
+
+	.Get_Candidate_Intersection_Barycentrics          = "extensions:ray_query.get_candidate_intersection_barycentrics",
+	.Get_Commited_Intersection_Barycentrics           = "extensions:ray_query.get_commited_intersection_barycentrics",
+
+	.Get_Candidate_Intersection_Front_Face            = "extensions:ray_query.get_candidate_intersection_front_face",
+	.Get_Commited_Intersection_Front_Face             = "extensions:ray_query.get_commited_intersection_front_face",
+
+	.Get_Candidate_Intersection_Object_Ray_Direction  = "extensions:ray_query.get_candidate_intersection_object_ray_direction",
+	.Get_Commited_Intersection_Object_Ray_Direction   = "extensions:ray_query.get_commited_intersection_object_ray_direction",
+
+	.Get_Candidate_Intersection_Object_Ray_Origin     = "extensions:ray_query.get_candidate_intersection_object_ray_origin",
+	.Get_Commited_Intersection_Object_Ray_Origin      = "extensions:ray_query.get_commited_intersection_object_ray_origin",
+
+	.Get_Candidate_Intersection_Object_To_World       = "extensions:ray_query.get_candidate_intersection_object_to_world",
+	.Get_Commited_Intersection_Object_To_World        = "extensions:ray_query.get_commited_intersection_object_to_world",
+
+	.Get_Candidate_Intersection_World_To_Object       = "extensions:ray_query.get_candidate_intersection_world_to_object",
+	.Get_Commited_Intersection_World_To_Object        = "extensions:ray_query.get_commited_intersection_world_to_object",
 }
 
 check_builtin :: proc(checker: ^Checker, v: ^ast.Expr_Call, fn: Operand) -> (operand: Operand) {
 	operand.type = types.t_invalid
 	operand.mode = .Invalid
+	operand.expr = v
 
 	v.builtin          = fn.builtin_id
 	operand.builtin_id = fn.builtin_id
@@ -128,6 +180,17 @@ check_builtin :: proc(checker: ^Checker, v: ^ast.Expr_Call, fn: Operand) -> (ope
 		type_hints = { nil, types.t_Hit_Kind, }
 	case .Trace_Ray:
 		type_hints = { nil, types.t_Ray_Flags, }
+	case .Ray_Query_Initialize:
+		type_hints = {
+			types.t_Ray_Query,              // Ray Query
+			types.t_Acceleration_Structure, // Acceleration Structure
+			types.t_Ray_Flags,              // Ray Flags
+			types.t_i32,                    // Cull Mask
+			types.t_vec3,                   // Ray Origin
+			types.t_f32,                    // Ray Tmin
+			types.t_vec3,                   // Ray Direction
+			types.t_f32,                    // Ray Tmax
+		}
 	}
 
 	args := make([]Operand, len(v.args), context.temp_allocator)
@@ -651,6 +714,112 @@ check_builtin :: proc(checker: ^Checker, v: ^ast.Expr_Call, fn: Operand) -> (ope
 
 		operand.type = types.t_bool
 		operand.mode = .RValue
+
+	case .Ray_Query_Initialize:
+		arg_types: [8]^types.Type = {
+			types.t_Ray_Query,              // Ray Query
+			types.t_Acceleration_Structure, // Acceleration Structure
+			types.t_Ray_Flags,              // Ray Flags
+			types.t_i32,                    // Cull Mask
+			types.t_vec3,                   // Ray Origin
+			types.t_f32,                    // Ray Tmin
+			types.t_vec3,                   // Ray Direction
+			types.t_f32,                    // Ray Tmax
+		}
+
+		if len(args) != len(arg_types) {
+			error(checker, v, "builtin '%s' expects 8 argument, got %d", builtin_names[v.builtin], len(v.args))
+			return
+		}
+
+		for arg, i in args {
+			if !types.implicitly_castable(arg.type, arg_types[i]) {
+				error(checker, arg, "expected an expression of type %v, got %v", arg_types[i], arg.type)
+			}
+			arg.expr.type = arg_types[i]
+		}
+
+		if args[0].mode != .LValue {
+			error(checker, args[0], "expected an addressable ray query variable")
+		}
+
+		operand.mode    = .No_Value
+		operand.is_call = true
+
+	case .Generate_Intersection:
+		if len(args) != 2 {
+			error(checker, v, "builtin '%s' expects two argument, got %d", builtin_names[v.builtin], len(v.args))
+			return
+		}
+		if !types.implicitly_castable(args[0].type, types.t_Ray_Query) {
+			error(checker, args[0], "expected an expression of type %v, got %v", types.t_Ray_Query, args[0].type)
+		}
+		if args[0].mode != .LValue {
+			error(checker, args[0], "expected an addressable ray query variable")
+		}
+
+		if !types.implicitly_castable(args[1].type, types.t_f32) {
+			error(checker, args[1], "expected an expression of type %v, got %v", types.t_f32, args[1].type)
+		}
+
+		operand.mode    = .No_Value
+		operand.is_call = true
+
+	case .Terminate ..= .Get_Commited_Intersection_World_To_Object:
+		if len(args) != 1 {
+			error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
+			return
+		}
+		if !types.implicitly_castable(args[0].type, types.t_Ray_Query) {
+			error(checker, args[0], "expected an expression of type %v, got %v", types.t_Ray_Query, args[0].type)
+		}
+		if args[0].mode != .LValue {
+			error(checker, args[0], "expected an addressable ray query variable")
+		}
+		operand.mode = .RValue
+		#partial switch v.builtin {
+		case .Terminate, .Confirm_Intersection:
+			operand.mode    = .No_Value
+			operand.is_call = true
+	    case .Proceed:
+			operand.type    = types.t_bool
+			operand.is_call = true
+	    case .Get_Ray_T_Min:
+			operand.type = types.t_f32
+	    case .Get_Ray_Flags:
+			operand.type = types.t_Ray_Flags
+	    case .Get_Intersection_Candidate_AABB_Opaque:
+			operand.type = types.t_bool
+	    case .Get_World_Ray_Direction, .Get_World_Ray_Origin:
+			operand.type = types.t_vec3
+
+	    case .Get_Candidate_Intersection_Type, .Get_Commited_Intersection_Type:
+			operand.type = types.t_Intersection_Type
+	    case .Get_Candidate_Intersection_T, .Get_Commited_Intersection_T:
+			operand.type = types.t_f32
+	    case .Get_Candidate_Intersection_Instance_Custom_Index, .Get_Commited_Intersection_Instance_Custom_Index:
+			operand.type = types.t_i32
+	    case .Get_Candidate_Intersection_Instance_Id, .Get_Commited_Intersection_Instance_Id:
+			operand.type = types.t_i32
+	    case .Get_Candidate_Intersection_Instance_Sbt_Offset, .Get_Commited_Intersection_Instance_Sbt_Offset:
+			operand.type = types.t_i32
+	    case .Get_Candidate_Intersection_Geometry_Index, .Get_Commited_Intersection_Geometry_Index:
+			operand.type = types.t_i32
+	    case .Get_Candidate_Intersection_Primitive_Index, .Get_Commited_Intersection_Primitive_Index:
+			operand.type = types.t_i32
+	    case .Get_Candidate_Intersection_Barycentrics, .Get_Commited_Intersection_Barycentrics:
+			operand.type = types.t_vec2
+	    case .Get_Candidate_Intersection_Front_Face, .Get_Commited_Intersection_Front_Face:
+			operand.type = types.t_bool
+	    case .Get_Candidate_Intersection_Object_Ray_Direction, .Get_Commited_Intersection_Object_Ray_Direction:
+			operand.type = types.t_vec3
+	    case .Get_Candidate_Intersection_Object_Ray_Origin, .Get_Commited_Intersection_Object_Ray_Origin:
+			operand.type = types.t_vec3
+		case .Get_Candidate_Intersection_Object_To_World, .Get_Commited_Intersection_Object_To_World:
+			operand.type = types.t_mat4x3
+		case .Get_Commited_Intersection_World_To_Object, .Get_Candidate_Intersection_World_To_Object:
+			operand.type = types.t_mat4x3
+		}
 	}
 
 	return

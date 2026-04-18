@@ -356,18 +356,21 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 		storage_class     = .Ray_Payload
 		spv_storage_class = .RayPayloadKHR
 		has_nil_value     = false
+		annotate          = true
 	case .Hit_Attribute:
 		value_builder     = nil
 		decl_builder      = &ctx.globals
 		storage_class     = .Hit_Attribute
 		spv_storage_class = .HitAttributeKHR
 		has_nil_value     = false
+		annotate          = true
 	case .Incoming_Ray_Payload:
 		value_builder     = nil
 		decl_builder      = &ctx.globals
 		storage_class     = .Incoming_Ray_Payload
 		spv_storage_class = .IncomingRayPayloadKHR
 		has_nil_value     = false
+		annotate          = true
 	}
 
 	prev_link_name := ctx.link_name
@@ -393,12 +396,17 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 					annotate          = true
 				}
 
-				if types.is_opaque(type) && types.opaque_kind(type) == .Acceleration_Structure {
-					assert(len(v.types) == 1)
-					storage_class     = .Uniform_Constant
-					spv_storage_class = .UniformConstant
-					has_nil_value     = false
-					annotate          = true
+				if types.is_opaque(type) {
+					switch types.opaque_kind(type) {
+					case .Acceleration_Structure:
+						assert(len(v.types) == 1)
+						storage_class     = .Uniform_Constant
+						spv_storage_class = .UniformConstant
+						has_nil_value     = false
+						annotate          = true
+					case .Ray_Query:
+						has_nil_value = false
+					}
 				}
 
 				type_info := cg_type(ctx, type, flags)
@@ -1151,6 +1159,8 @@ cg_type_internal :: proc(
 		switch type.opaque_kind {
 		case .Acceleration_Structure:
 			info.type = spv.OpTypeAccelerationStructureKHR(type_builder)
+		case .Ray_Query:
+			info.type = spv.OpTypeRayQueryKHR(type_builder)
 		}
 	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion, .Proc_Group:
 		unreachable()
@@ -1294,8 +1304,13 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 		execution_mode = .Fragment
 	case .Geometry:
 		execution_mode = .Geometry
-	case .Tesselation:
+		ctx.capabilities[.Geometry] = {}
+	case .Tesselation_Control:
 		execution_mode = .TessellationControl
+		ctx.capabilities[.Tessellation] = {}
+	case .Tesselation_Evaluation:
+		execution_mode = .TessellationEvaluation
+		ctx.capabilities[.Tessellation] = {}
 	case .Compute:
 		execution_mode = .GLCompute
 	case .Ray_Generation:
@@ -1424,10 +1439,10 @@ cg_expr_binary :: proc(
 
 		t: ^types.Type
 		if lhs_type.kind == .Float {
-			t   = lhs_type
+			t   = types.base_type(lhs_type)
 			rhs = cg_cast(ctx, builder, { id = rhs, type = rhs_type, }, t)
 		} else {
-			t   = rhs_type
+			t   = types.base_type(rhs_type)
 			lhs = cg_cast(ctx, builder, { id = lhs, type = lhs_type, }, t)
 		}
 		#partial switch t.kind {
@@ -1811,6 +1826,8 @@ cg_cast :: proc(
 			switch to.opaque_kind {
 			case .Acceleration_Structure:
 				return spv.OpConvertUToAccelerationStructureKHR
+			case .Ray_Query:
+				return nil
 			}
 		}
 		return nil
@@ -2352,6 +2369,102 @@ cg_expr_internal :: proc(
 				hit      := cg_expr(ctx, builder, v.args[0].value).id
 				hit_kind := cg_expr(ctx, builder, v.args[1].value).id
 				return { id = spv.OpReportIntersectionKHR(builder, cg_type(ctx, types.t_bool).type, hit, hit_kind), }
+	        case .Ray_Query_Initialize:
+				args := make([]spv.Id, 8, context.temp_allocator)
+				types: [8]^types.Type = {
+					types.t_Ray_Query,              // Ray Query
+					types.t_Acceleration_Structure, // Acceleration Structure
+					types.t_Ray_Flags,              // Ray Flags
+					types.t_i32,                    // Cull Mask
+					types.t_vec3,                   // Ray Origin
+					types.t_f32,                    // Ray Tmin
+					types.t_vec3,                   // Ray Direction
+					types.t_f32,                    // Ray Tmax
+				}
+				for &arg, i in args {
+					type := types[i]
+					val  := cg_expr(ctx, builder, v.args[i].value, i != 0)
+					if i == 0 {
+						arg = val.id
+					} else {
+						arg = cg_cast(ctx, builder, val, type)
+					}
+				}
+				spv.OpRayQueryInitializeKHR(builder, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7])
+				return
+	        case .Terminate:
+				query := cg_expr(ctx, builder, v.args[0].value, false).id
+				spv.OpRayQueryTerminateKHR(builder, query)
+				return
+	        case .Generate_Intersection:
+				query := cg_expr(ctx, builder, v.args[0].value, false).id
+				hit_t := cg_expr(ctx, builder, v.args[1].value).id
+				spv.OpRayQueryGenerateIntersectionKHR(builder, query, hit_t)
+				return
+	        case .Confirm_Intersection:
+				query := cg_expr(ctx, builder, v.args[0].value, false).id
+				spv.OpRayQueryConfirmIntersectionKHR(builder, query)
+				return
+	        case .Proceed:
+				query := cg_expr(ctx, builder, v.args[0].value, false).id
+				return { id = spv.OpRayQueryProceedKHR(builder, ti.type, query), }
+	        case .Get_Ray_T_Min:
+				query := cg_expr(ctx, builder, v.args[0].value, false).id
+				return { id = spv.OpRayQueryGetRayTMinKHR(builder, ti.type, query), }
+	        case .Get_Ray_Flags:
+				query := cg_expr(ctx, builder, v.args[0].value, false).id
+				return { id = spv.OpRayQueryGetRayFlagsKHR(builder, ti.type, query), }
+	        case .Get_Intersection_Candidate_AABB_Opaque:
+				query := cg_expr(ctx, builder, v.args[0].value, false).id
+				return { id = spv.OpRayQueryGetIntersectionCandidateAABBOpaqueKHR(builder, ti.type, query), }
+	        case .Get_World_Ray_Direction:
+				query := cg_expr(ctx, builder, v.args[0].value, false).id
+				return { id = spv.OpRayQueryGetWorldRayDirectionKHR(builder, ti.type, query), }
+	        case .Get_World_Ray_Origin:
+				query := cg_expr(ctx, builder, v.args[0].value, false).id
+				return { id = spv.OpRayQueryGetWorldRayOriginKHR(builder, ti.type, query), }
+			case .Get_Candidate_Intersection_Type ..= .Get_Commited_Intersection_World_To_Object:
+				query := cg_expr(ctx, builder, v.args[0].value, false).id
+
+				commited     := i64(v.builtin - .Get_Candidate_Intersection_Type) % 2
+				intersection := cg_constant(ctx, commited, nil).id
+
+				b := v.builtin
+				#partial switch b + ast.Builtin_Id(1 - commited) {
+				case .Get_Commited_Intersection_Type:
+					value.id = spv.OpRayQueryGetIntersectionTypeKHR(builder, ti.type, query, intersection)
+					if commited == 0 {
+						// Convert the enum the unified representation
+						value.id = spv.OpIAdd(builder, ti.type, value.id, value.id)
+						one     := cg_constant(ctx, i64(1), v.type)
+						value.id = spv.OpIAdd(builder, ti.type, value.id, one.id)
+					}
+				case .Get_Commited_Intersection_T:
+					value.id = spv.OpRayQueryGetIntersectionTKHR(builder, ti.type, query, intersection)
+				case .Get_Commited_Intersection_Instance_Custom_Index:
+					value.id = spv.OpRayQueryGetIntersectionInstanceCustomIndexKHR(builder, ti.type, query, intersection)
+				case .Get_Commited_Intersection_Instance_Id:
+					value.id = spv.OpRayQueryGetIntersectionInstanceIdKHR(builder, ti.type, query, intersection)
+				case .Get_Commited_Intersection_Instance_Sbt_Offset:
+					value.id = spv.OpRayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetKHR(builder, ti.type, query, intersection)
+				case .Get_Commited_Intersection_Geometry_Index:
+					value.id = spv.OpRayQueryGetIntersectionGeometryIndexKHR(builder, ti.type, query, intersection)
+				case .Get_Commited_Intersection_Primitive_Index:
+					value.id = spv.OpRayQueryGetIntersectionPrimitiveIndexKHR(builder, ti.type, query, intersection)
+				case .Get_Commited_Intersection_Barycentrics:
+					value.id = spv.OpRayQueryGetIntersectionBarycentricsKHR(builder, ti.type, query, intersection)
+				case .Get_Commited_Intersection_Front_Face:
+					value.id = spv.OpRayQueryGetIntersectionFrontFaceKHR(builder, ti.type, query, intersection)
+				case .Get_Commited_Intersection_Object_Ray_Direction:
+					value.id = spv.OpRayQueryGetIntersectionObjectRayDirectionKHR(builder, ti.type, query, intersection)
+				case .Get_Commited_Intersection_Object_Ray_Origin:
+					value.id = spv.OpRayQueryGetIntersectionObjectRayOriginKHR(builder, ti.type, query, intersection)
+				case .Get_Commited_Intersection_Object_To_World:
+					value.id = spv.OpRayQueryGetIntersectionObjectToWorldKHR(builder, ti.type, query, intersection)
+				case .Get_Commited_Intersection_World_To_Object:
+					value.id = spv.OpRayQueryGetIntersectionWorldToObjectKHR(builder, ti.type, query, intersection)
+				}
+				return
 			}
 
 			unreachable()
@@ -3126,12 +3239,20 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 	case ^ast.Decl_Value:
 		cg_value_decl(ctx, builder, v, global)
 	case ^ast.Decl_Import:
-		text := v.library.text[1:len(v.library.text) - 1]
-		switch text {
-		case "extensions:raytracing":
+		text      := v.library.text[1:len(v.library.text) - 1]
+		extension := strings.trim_prefix(text, "extensions:")
+		if extension == text {
+			break
+		}
+
+		switch extension {
+		case "raytracing":
 			ctx.extensions["SPV_KHR_ray_tracing"] = {}
 			ctx.capabilities[.RayTracingKHR]      = {}
-		case "extensions:clock":
+		case "ray_query":
+			ctx.extensions["SPV_KHR_ray_query"] = {}
+			ctx.capabilities[.RayQueryKHR]      = {}
+		case "clock":
 			ctx.extensions["SPV_KHR_shader_clock"] = {}
 			ctx.capabilities[.ShaderClockKHR]      = {}
 		}

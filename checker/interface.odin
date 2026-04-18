@@ -24,18 +24,20 @@ interface_infos: map[string]Interface_Info
 _interface_infos_init :: proc "contextless" () {
 	context = runtime.default_context()
 
-	interface_infos["Position"          ] = { type = types.t_vec4,  usage = #partial { .Vertex   = .Out, }, id = .Position,           }
-	interface_infos["PointSize"         ] = { type = types.t_f32,   usage = #partial { .Vertex   = .Out, }, id = .PointSize,          }
-	interface_infos["VertexIndex"       ] = { type = types.t_i32,   usage = #partial { .Vertex   = .In,  }, id = .VertexIndex,        }
-	interface_infos["InstanceId"        ] = { type = types.t_i32,   usage = #partial { .Geometry = .In,  }, id = .InstanceId,         }
-	interface_infos["PrimitiveId"       ] = { type = types.t_i32,   usage = #partial { .Geometry = .In,  }, id = .PrimitiveId,        }
-	interface_infos["InvocationId"      ] = { type = types.t_i32,   usage = #partial { .Geometry = .In,  }, id = .InvocationId,       }
-	interface_infos["Layer"             ] = { type = types.t_i32,   usage = #partial { .Geometry = .Out, }, id = .Layer,              }
-	interface_infos["ViewportIndex"     ] = { type = types.t_i32,   usage = #partial { .Geometry = .Out, }, id = .ViewportIndex,      }
-	interface_infos["FragCoord"         ] = { type = types.t_vec4,  usage = #partial { .Fragment = .In,  }, id = .FragCoord,          }
-	interface_infos["FragDepth"         ] = { type = types.t_f32,   usage = #partial { .Fragment = .In,  }, id = .FragDepth,          }
-	interface_infos["GlobalInvocationId"] = { type = types.t_ivec3, usage = #partial { .Compute  = .In,  }, id = .GlobalInvocationId, }
-	interface_infos["NumWorkgroups"     ] = { type = types.t_ivec3, usage = #partial { .Compute  = .In,  }, id = .NumWorkgroups,      }
+	interface_infos["Position"          ] = { type = types.t_vec4,  usage = #partial { .Vertex   = .Out, .Tesselation_Control = .Out, .Tesselation_Evaluation = .Out, .Geometry = .Out, }, id = .Position,           }
+	interface_infos["PointSize"         ] = { type = types.t_f32,   usage = #partial { .Vertex   = .Out, .Tesselation_Control = .Out, .Tesselation_Evaluation = .Out, .Geometry = .Out, }, id = .PointSize,          }
+	interface_infos["VertexIndex"       ] = { type = types.t_i32,   usage = #partial { .Vertex   = .In,                                                                                 }, id = .VertexIndex,        }
+	interface_infos["VertexID"          ] = { type = types.t_i32,   usage = #partial { .Vertex   = .In,                                                                                 }, id = .VertexId,           }
+	interface_infos["InstanceId"        ] = { type = types.t_i32,   usage = #partial { .Geometry = .In,                                                                                 }, id = .InstanceId,         }
+	interface_infos["InstanceIndex"     ] = { type = types.t_i32,   usage = #partial { .Geometry = .In,                                                                                 }, id = .InstanceId,         }
+	interface_infos["PrimitiveId"       ] = { type = types.t_i32,   usage = #partial { .Geometry = .In,                                                                                 }, id = .PrimitiveId,        }
+	interface_infos["InvocationId"      ] = { type = types.t_i32,   usage = #partial { .Geometry = .In, .Tesselation_Control  = .In,                                                    }, id = .InvocationId,       }
+	interface_infos["Layer"             ] = { type = types.t_i32,   usage = #partial { .Geometry = .Out,                                                                                }, id = .Layer,              }
+	interface_infos["ViewportIndex"     ] = { type = types.t_i32,   usage = #partial { .Geometry = .Out,                                                                                }, id = .ViewportIndex,      }
+	interface_infos["FragCoord"         ] = { type = types.t_vec4,  usage = #partial { .Fragment = .In,                                                                                 }, id = .FragCoord,          }
+	interface_infos["FragDepth"         ] = { type = types.t_f32,   usage = #partial { .Fragment = .In,                                                                                 }, id = .FragDepth,          }
+	interface_infos["GlobalInvocationId"] = { type = types.t_ivec3, usage = #partial { .Compute  = .In,                                                                                 }, id = .GlobalInvocationId, }
+	interface_infos["NumWorkgroups"     ] = { type = types.t_ivec3, usage = #partial { .Compute  = .In,                                                                                 }, id = .NumWorkgroups,      }
 
 	interface_infos["LaunchId"           ] = { type = types.t_ivec3,     usage = #partial { .Ray_Generation = .In, .Intersection = .In, .Any_Hit = .In, .Closest_Hit = .In, .Miss = .In, }, id = .LaunchIdKHR,            }
 	interface_infos["LaunchSize"         ] = { type = types.t_ivec3,     usage = #partial { .Ray_Generation = .In, .Intersection = .In, .Any_Hit = .In, .Closest_Hit = .In, .Miss = .In, }, id = .LaunchSizeKHR,          }

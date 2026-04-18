@@ -1,0 +1,75 @@
+// This is purely for documentation
+
+Acceleration_Structure :: distinct u64
+Query                  :: distinct u64
+
+// Note that this enum differs slightly from the definition in the extension
+// as it merges the candidate and commited variants.
+// This conversion is automatically handled by get_*_intersection_type()
+Intersection_Type :: enum i32 {
+	None      = 0,
+	Triangle  = 1,
+	Generated = 2,
+	AABB      = 3,
+}
+
+initialize :: proc(
+	ray_query:              Query,
+	acceleration_structure: Acceleration_Structure,
+	ray_flags:              Ray_Flags,
+	cull_mask:              i32,
+	ray_origin:             [3]f32,
+	ray_tmin:               f32,
+	ray_direction:          [3]f32,
+	ray_tmax:               f32,
+) ---
+
+terminate                                        :: proc(query: Query) ---
+generate_intersection                            :: proc(query: Query, hit_t: f32) ---
+confirm_intersection                             :: proc(query: Query) ---
+proceed                                          :: proc(query: Query) -> bool ---
+
+get_ray_t_min                                    :: proc(query: Query) -> f32 ---
+get_ray_flags                                    :: proc(query: Query) -> Ray_Flags ---
+get_intersection_candidate_AABB_opaque           :: proc(query: Query) -> bool ---
+get_world_ray_direction                          :: proc(query: Query) -> [3]f32 ---
+get_world_ray_origin                             :: proc(query: Query) -> [3]f32 ---
+
+get_candidate_intersection_type                  :: proc(query: Query) -> Intersection_Type ---
+get_commited_intersection_type                   :: proc(query: Query) -> Intersection_Type ---
+
+get_candidate_intersection_t                     :: proc(query: Query) -> f32 ---
+get_commited_intersection_t                      :: proc(query: Query) -> f32 ---
+
+get_candidate_intersection_instance_custom_index :: proc(query: Query) -> i32 ---
+get_commited_intersection_instance_custom_index  :: proc(query: Query) -> i32 ---
+
+get_candidate_intersection_instance_id           :: proc(query: Query) -> i32 ---
+get_commited_intersection_instance_id            :: proc(query: Query) -> i32 ---
+
+get_candidate_intersection_instance_sbt_offset   :: proc(query: Query) -> i32 ---
+get_commited_intersection_instance_sbt_offset    :: proc(query: Query) -> i32 ---
+
+get_candidate_intersection_geometry_index        :: proc(query: Query) -> i32 ---
+get_commited_intersection_geometry_index         :: proc(query: Query) -> i32 ---
+
+get_candidate_intersection_primitive_index       :: proc(query: Query) -> i32 ---
+get_commited_intersection_primitive_index        :: proc(query: Query) -> i32 ---
+
+get_candidate_intersection_barycentrics          :: proc(query: Query) -> [2]f32 ---
+get_commited_intersection_barycentrics           :: proc(query: Query) -> [2]f32 ---
+
+get_candidate_intersection_front_face            :: proc(query: Query) -> bool ---
+get_commited_intersection_front_face             :: proc(query: Query) -> bool ---
+
+get_candidate_intersection_object_ray_direction  :: proc(query: Query) -> [3]f32 ---
+get_commited_intersection_object_ray_direction   :: proc(query: Query) -> [3]f32 ---
+
+get_candidate_intersection_object_ray_origin     :: proc(query: Query) -> [3]f32 ---
+get_commited_intersection_object_ray_origin      :: proc(query: Query) -> [3]f32 ---
+
+get_candidate_intersection_object_to_world       :: proc(query: Query) -> matrix[4, 3]f32 ---
+get_commited_intersection_object_to_world        :: proc(query: Query) -> matrix[4, 3]f32 ---
+
+get_candidate_intersection_world_to_object       :: proc(query: Query) -> matrix[4, 3]f32 ---
+get_commited_intersection_world_to_object        :: proc(query: Query) -> matrix[4, 3]f32 ---

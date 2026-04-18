@@ -674,8 +674,9 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 }
 
 check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant: bool) {
-	decl.location = -1
-	decl.binding  = -1
+	decl.location       = -1
+	decl.binding        = -1
+	decl.descriptor_set = -1
 	seen := make(map[string]struct{}, context.temp_allocator)
 
 	for a in decl.attributes {
@@ -810,7 +811,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 		if decl.binding != -1 {
 			error(checker, decl, "attribute 'binding' can only be applied to interface variables")
 		}
-		if decl.descriptor_set != 0 {
+		if decl.descriptor_set != -1 {
 			error(checker, decl, "attribute 'descriptor_set' can only be applied to interface variables")
 		}
 	} else {
@@ -829,6 +830,14 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 				ast.interface_kind_names[decl.interface],
 			)
 		}
+	}
+
+	if decl.descriptor_set != -1 {
+		return
+	}
+	#partial switch decl.interface {
+	case .Uniform, .Uniform_Buffer, .Storage_Buffer:
+		decl.descriptor_set = 0
 	}
 }
 
@@ -1158,7 +1167,7 @@ checker_init :: proc(
 	}
 
 	create_library_type :: proc(checker: ^Checker, library: ^Library, type: ^types.Type, type_expr := #caller_expression(type)) {
-		name := type_expr[len("types.t_"):]
+		name := strings.trim_prefix(type_expr, "types.t_")
 		library.entities[name] = entity_new(.Type, { text = name, }, type, flags = { .Resolved, }, allocator = checker.allocator)
 	}
 
@@ -1166,6 +1175,12 @@ checker_init :: proc(
 	create_library_type(checker, raytracing_extension, types.t_Acceleration_Structure)
 	create_library_type(checker, raytracing_extension, types.t_Ray_Flags)
 	create_library_type(checker, raytracing_extension, types.t_Hit_Kind)
+
+	ray_query_extension := find_or_create_lib(checker, "extensions:ray_query")
+	create_library_type(checker, ray_query_extension, types.t_Acceleration_Structure)
+	create_library_type(checker, ray_query_extension, types.t_Ray_Flags)
+	create_library_type(checker, ray_query_extension, types.t_Hit_Kind)
+	create_library_type(checker, ray_query_extension, types.t_Ray_Query, "Query")
 
 	for name, builtin in builtin_names {
 		create_builtin_proc :: proc(checker: ^Checker, name: string, builtin: ast.Builtin_Id) -> ^Entity {

@@ -875,7 +875,7 @@ main :: proc() {
 	}
 	vk.CmdPushConstants(ctx.command_buffer, pipeline.layout, { .COMPUTE, }, 0, size_of(Compute_Constants), &compute_constants)
 
-	vk.CmdDispatch(ctx.command_buffer, u32(w), u32(h), 1)
+	vk.CmdDispatch(ctx.command_buffer, u32(w) / 8, u32(h) / 8, 1)
 
 	image_memory_barrier(
 		ctx,

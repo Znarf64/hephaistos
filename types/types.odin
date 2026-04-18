@@ -91,6 +91,7 @@ Bit_Set :: struct {
 
 Opaque_Kind :: enum {
 	Acceleration_Structure,
+	Ray_Query,
 }
 
 // A deliberately opaque type such as OpTypeAccelerationStructureKHR
@@ -194,10 +195,13 @@ t_ivec2, t_ivec3, t_ivec4: ^Type
 t_complex64,     t_complex128:    ^Type
 t_quaternion128, t_quaternion256: ^Type
 
-t_mat4x3:    ^Type
-t_Hit_Kind:  ^Type
-t_Ray_Flags: ^Type
+t_mat4x3:            ^Type
+t_Hit_Kind:          ^Type
+t_Ray_Flags:         ^Type
+t_Intersection_Type: ^Type
+t_Geometry_Mode:     ^Type
 
+t_Ray_Query:              ^Type
 t_Acceleration_Structure: ^Type
 
 _base_type_arena_mem: [1 << 12]byte
@@ -237,16 +241,17 @@ _base_types_init :: proc "contextless" () {
 	ray_flags_bits := new(.Enum, Enum, allocator)
 	ray_flags_bits.backing = t_i32
 	ray_flags_bits.values  = slice.clone([]Enum_Value {
-		{ { text = "NoOpaque",                   }, 0 },
-		{ { text = "TerminateOnFirstHit",        }, 1 },
-		{ { text = "SkipClosestHitShader",       }, 2 },
-		{ { text = "CullBackFacingTriangles",    }, 3 },
-		{ { text = "CullFrontFacingTriangles",   }, 4 },
-		{ { text = "CullOpaque",                 }, 5 },
-		{ { text = "CullNoOpaque",               }, 6 },
-		{ { text = "SkipTriangles",              }, 7 },
-		{ { text = "SkipAABBs",                  }, 8 },
-		{ { text = "ForceOpacityMicromap2State", }, 9 },
+		{ { text = "Opaque",                     },  0, },
+		{ { text = "NoOpaque",                   },  1, },
+		{ { text = "TerminateOnFirstHit",        },  2, },
+		{ { text = "SkipClosestHitShader",       },  3, },
+		{ { text = "CullBackFacingTriangles",    },  4, },
+		{ { text = "CullFrontFacingTriangles",   },  5, },
+		{ { text = "CullOpaque",                 },  6, },
+		{ { text = "CullNoOpaque",               },  7, },
+		{ { text = "SkipTriangles",              },  8, },
+		{ { text = "SkipAABBs",                  },  9, },
+		{ { text = "ForceOpacityMicromap2State", }, 10, },
 	}, allocator)
 
 	set          := new(.Bit_Set, Bit_Set, allocator)
@@ -254,7 +259,18 @@ _base_types_init :: proc "contextless" () {
 	set.backing   = t_i32
 	t_Ray_Flags   = set
 
-	t_Acceleration_Structure = opaque_new(.Acceleration_Structure, t_u64, allocator)
+	t_Acceleration_Structure = opaque_new(.Acceleration_Structure, t_u64,     allocator)
+	t_Ray_Query              = opaque_new(.Ray_Query,              t_invalid, allocator)
+
+	intersection_type := new(.Enum, Enum, allocator)
+	intersection_type.backing = t_i32
+	intersection_type.values  = slice.clone([]Enum_Value {
+		{ { text = "None",      }, 0, },
+		{ { text = "Triangle",  }, 1, },
+		{ { text = "Generated", }, 2, },
+		{ { text = "AABB",      }, 3, },
+	}, allocator)
+	t_Intersection_Type = intersection_type
 }
 
 print_writer :: proc(w: io.Writer, type: ^Type) {
