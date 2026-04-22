@@ -2041,18 +2041,20 @@ cg_expr_internal :: proc(
 				t := types.op_result_type(v.args[0].value.type, v.args[1].value.type)
 				a := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), t)
 				b := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), t)
+				elem := types.array_elem(t)
+				elem_ti := cg_type(ctx, elem)
 				id: spv.Id
-				#partial switch types.array_elem(t).kind {
+				#partial switch elem.kind {
 				case .Float:
-					id = spv.OpDot (builder, ti.type, a, b)
+					id = spv.OpDot (builder, elem_ti.type, a, b)
 				case .Int:
-					id = spv.OpSDot(builder, ti.type, a, b)
+					id = spv.OpSDot(builder, elem_ti.type, a, b)
 				case .Uint:
-					id = spv.OpUDot(builder, ti.type, a, b)
+					id = spv.OpUDot(builder, elem_ti.type, a, b)
 				case:
 					unreachable()
 				}
-				return { id = id, }
+				return { id = id, type = elem }
 			case .Cross:
 				a   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
 				b   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
