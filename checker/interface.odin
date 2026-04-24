@@ -30,7 +30,7 @@ _interface_infos_init :: proc "contextless" () {
 	interface_infos["VertexID"          ] = { type = types.t_i32,   usage = #partial { .Vertex   = .In,                                                                                 }, id = .VertexId,           }
 	interface_infos["InstanceId"        ] = { type = types.t_i32,   usage = #partial { .Geometry = .In,                                                                                 }, id = .InstanceId,         }
 	interface_infos["InstanceIndex"     ] = { type = types.t_i32,   usage = #partial { .Geometry = .In,                                                                                 }, id = .InstanceId,         }
-	interface_infos["PrimitiveId"       ] = { type = types.t_i32,   usage = #partial { .Geometry = .In,                                                                                 }, id = .PrimitiveId,        }
+	interface_infos["PrimitiveId"       ] = { type = types.t_i32,   usage = #partial { .Fragment = .In, .Geometry = .In,                                                                }, id = .PrimitiveId,        }
 	interface_infos["InvocationId"      ] = { type = types.t_i32,   usage = #partial { .Geometry = .In, .Tesselation_Control  = .In,                                                    }, id = .InvocationId,       }
 	interface_infos["Layer"             ] = { type = types.t_i32,   usage = #partial { .Geometry = .Out,                                                                                }, id = .Layer,              }
 	interface_infos["ViewportIndex"     ] = { type = types.t_i32,   usage = #partial { .Geometry = .Out,                                                                                }, id = .ViewportIndex,      }

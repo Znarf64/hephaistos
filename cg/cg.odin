@@ -1731,6 +1731,15 @@ cg_interface :: proc(
 	value.id            = spv.OpVariable(&ctx.globals, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class)
 	spv.OpDecorate(&ctx.annotations, value.id, .BuiltIn, u32(info.id))
 
+	if ctx.shader_stage == .Fragment {
+		if types.is_integer(value.type) || (types.is_array(value.type) && types.is_integer(types.array_elem(value.type))) {
+			spv.OpDecorate(&ctx.annotations, value.id, .Flat)
+		}
+		if info.id == .PrimitiveId {
+			ctx.capabilities[.Geometry] = {}
+		}
+	}
+
 	ctx.interface_variables[info.id] = value
 
 	return
