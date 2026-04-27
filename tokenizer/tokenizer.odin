@@ -161,6 +161,18 @@ tokenize :: proc(
 	tokens := make([dynamic]Token,       allocator)
 	errors := make([dynamic]Error, error_allocator)
 
+	error :: proc(errors: ^[dynamic]Error, token: Token, current: int, message: string, args: ..any) {
+		append(errors, Error {
+			location = token.location,
+			end      = {
+				line   = token.location.line,
+				column = token.location.column + (1 + current - token.location.offset),
+				offset = current + 1,
+			},
+			message = fmt.aprintf(message, ..args, allocator = errors.allocator),
+		})
+	}
+
 	line   := 1
 	column := 1
 
@@ -273,10 +285,7 @@ tokenize :: proc(
 				}
 
 				if current >= len(source) - 1 {
-					append(&errors, Error {
-						location = token.location,
-						message  = "unterminated multi-line comment",
-					})
+					error(&errors, token, current, "unterminated multi-line comment")
 				}
 
 				token.kind = .Comment
@@ -331,10 +340,7 @@ tokenize :: proc(
 			if current <= len(source) && source[current] == '"' {
 				current += 1
 			} else {
-				append(&errors, Error {
-					location = token.location,
-					message  = fmt.aprintf("unterminated string literal", error_allocator),
-				})
+				error(&errors, token, current, "unterminated string literal")
 			}
 
 			token.kind       = .Literal
@@ -384,10 +390,7 @@ tokenize :: proc(
 					}
 					fallthrough
 				case 'g' ..= 'z', 'G' ..= 'Z':
-					append(&errors, Error {
-						location = token.location,
-						message  = fmt.aprintf("unexpected character in number", source[current], allocator = error_allocator),
-					})
+					error(&errors, token, current, "unexpected character in number: '%c'", source[current])
 				case '_', '0' ..= '9':
 					current += 1
 					continue
@@ -415,10 +418,7 @@ tokenize :: proc(
 					token.value.float = float_value
 					token.value_kind  = .Float
 				} else {
-					append(&errors, Error {
-						location = token.location,
-						message  = fmt.aprintf("failed to parse float literal: '%s'", source[start:current], allocator = error_allocator),
-					})
+					error(&errors, token, current, "failed to parse float literal: '%s'", source[start:current])
 				}
 			} else {
 				int_value, ok := strconv.parse_i64(source[start:current])
@@ -426,10 +426,7 @@ tokenize :: proc(
 					token.value.int = int_value
 					token.value_kind = .Int
 				} else {
-					append(&errors, Error {
-						location = token.location,
-						message  = fmt.aprintf("failed to parse integer literal: '%s'", source[start:current], allocator = error_allocator),
-					})
+					error(&errors, token, current, "failed to parse integer literal: '%s'", source[start:current])
 				}
 			}
 
@@ -460,10 +457,7 @@ tokenize :: proc(
 			last_token_kind = nil
 			continue
 		case:
-			append(&errors, Error {
-				location = token.location,
-				message  = fmt.aprintf("unexecpected character: '%c'", char, error_allocator),
-			})
+			error(&errors, token, current, "unexecpected character: '%c'", char)
 			continue
 		}
 

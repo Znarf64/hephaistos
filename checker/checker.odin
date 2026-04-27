@@ -1761,6 +1761,7 @@ check_expr_internal :: proc(
 			switch info.usage[checker.shader_stage] {
 			case nil:
 				error(checker, v.ident, "builtin %s can not be used in %s", v.ident.text, ast.shader_stage_names[checker.shader_stage])
+				operand.mode = .LValue
 			case .In:
 				operand.mode = .RValue
 			case .Out:

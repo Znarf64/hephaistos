@@ -618,6 +618,9 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 		case .Assign:
 			assign_token := token_advance(parser)
 			rhs          := parse_expr_list(parser) or_return
+			if len(rhs) == 0 {
+				error(parser, token, "Expected at least one value in assignment")
+			}
 			assign       := ast.new(ast.Stmt_Assign, token.location, parser.end_location, parser.allocator)
 			assign.lhs    = lhs[:]
 			assign.rhs    = rhs
@@ -626,9 +629,12 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 		case .Colon:
 			token_advance(parser)
 			if token_peek(parser).kind == .Assign || token_peek(parser).kind == .Colon {
-				mutable     := token_advance(parser).kind == .Assign
-				values      := parse_expr_list(parser) or_return
-				decl        := ast.new(ast.Decl_Value, token.location, parser.end_location, parser.allocator)
+				mutable        := token_advance(parser).kind == .Assign
+				values         := parse_expr_list(parser) or_return
+				if len(values) == 0 {
+					error(parser, token, "Expected at least one value in declaration")
+				}
+				decl           := ast.new(ast.Decl_Value, token.location, parser.end_location, parser.allocator)
 				decl.lhs        = lhs
 				decl.values     = values
 				decl.mutable    = mutable
@@ -639,6 +645,9 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 				if token_peek(parser).kind == .Assign || token_peek(parser).kind == .Colon {
 					mutable       := token_advance(parser).kind == .Assign
 					values        := parse_expr_list(parser) or_return
+					if len(values) == 0 {
+						error(parser, token, "Expected at least one value in declaration")
+					}
 					decl          := ast.new(ast.Decl_Value, token.location, parser.end_location, parser.allocator)
 					decl.lhs        = lhs
 					decl.values     = values
