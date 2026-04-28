@@ -65,6 +65,8 @@ entity_new :: proc(
 	flags:      Entity_Flags   = {},
 	allocator:  mem.Allocator,
 ) -> ^Entity {
+	assert(type != nil)
+
 	e := new(Entity, allocator)
 	e.kind       = kind
 	e.type       = type

@@ -1735,8 +1735,12 @@ cg_interface :: proc(
 		if types.is_integer(value.type) || (types.is_array(value.type) && types.is_integer(types.array_elem(value.type))) {
 			spv.OpDecorate(&ctx.annotations, value.id, .Flat)
 		}
-		if info.id == .PrimitiveId {
+		#partial switch info.id {
+		case .PrimitiveId:
 			ctx.capabilities[.Geometry] = {}
+		case .BaryCoordKHR, .BaryCoordNoPerspKHR:
+			ctx.capabilities[.FragmentBarycentricKHR]             = {}
+			ctx.extensions["SPV_KHR_fragment_shader_barycentric"] = {}
 		}
 	}
 

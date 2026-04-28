@@ -53,4 +53,7 @@ _interface_infos_init :: proc "contextless" () {
 	interface_infos["HitKind"            ] = { type = types.t_Hit_Kind,  usage = #partial {                                             .Any_Hit = .In, .Closest_Hit = .In,              }, id = .HitKindKHR,             }
 	interface_infos["IncomingRayFlags"   ] = { type = types.t_Ray_Flags, usage = #partial {                        .Intersection = .In, .Any_Hit = .In, .Closest_Hit = .In, .Miss = .In, }, id = .IncomingRayFlagsKHR,    }
 	interface_infos["RayGeometryIndex"   ] = { type = types.t_i32,       usage = #partial {                        .Intersection = .In, .Any_Hit = .In, .Closest_Hit = .In,              }, id = .RayGeometryIndexKHR,    }
+
+	interface_infos["BaryCoord"       ] = { type = types.t_vec3,  usage = #partial { .Fragment = .In, }, id = .BaryCoordKHR,        }
+	interface_infos["BaryCoordNoPersp"] = { type = types.t_vec3,  usage = #partial { .Fragment = .In, }, id = .BaryCoordNoPerspKHR, }
 }
