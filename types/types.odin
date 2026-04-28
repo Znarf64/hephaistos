@@ -401,7 +401,7 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 }
 
 @(require_results)
-print_string :: proc(type: ^Type, allocator := context.allocator) -> string {
+to_string :: proc(type: ^Type, allocator := context.allocator) -> string {
 	b := strings.builder_make(allocator)
 	print_writer(strings.to_writer(&b), type)
 	return strings.to_string(b)

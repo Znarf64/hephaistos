@@ -387,9 +387,11 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 
 	if v.mutable {
 		if len(v.values) == 0 {
-			for type, i in v.types {
+			for lhs, i in v.lhs {
+				type := lhs.type
+
 				if types.is_sampler(type) || types.is_image(type) && v.interface == .Uniform {
-					assert(len(v.types) == 1)
+					assert(len(v.lhs) == 1)
 					storage_class     = .Uniform_Constant
 					spv_storage_class = .UniformConstant
 					has_nil_value     = false
@@ -399,7 +401,7 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 				if types.is_opaque(type) {
 					switch types.opaque_kind(type) {
 					case .Acceleration_Structure:
-						assert(len(v.types) == 1)
+						assert(len(v.lhs) == 1)
 						storage_class     = .Uniform_Constant
 						spv_storage_class = .UniformConstant
 						has_nil_value     = false
@@ -433,7 +435,7 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 		} else {
 			if global {
 				for value, i in v.values {
-					type      := v.types[i]
+					type      := v.lhs[i].type
 					type_info := cg_type(ctx, type, flags)
 					init      := cg_expr(ctx, nil, value).id
 					id        := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)

@@ -199,7 +199,7 @@ scope_push :: proc(checker: ^Checker, kind: Scope_Kind, label: tokenizer.Token =
 	checker.scope = scope_new(checker.scope, kind, checker.allocator)
 
 	if label.text != "" {
-		e      := entity_new(.Label, label, nil, flags = { .Resolved, }, allocator = checker.allocator)
+		e      := entity_new(.Label, label.text, nil, flags = { .Resolved, }, allocator = checker.allocator)
 		e.scope = checker.scope
 		scope_insert_entity(checker, e)
 	}
@@ -314,7 +314,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			error(checker, v.end, "mismatched types in range stmt: %v vs %v", start.type, end.type)
 		}
 		if var, ok := v.variable.derived_expr.(^ast.Expr_Ident); ok {
-			e := entity_new(.Var, var.ident, iter_type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator)
+			e := entity_new(.Var, var, iter_type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator)
 			scope_insert_entity(checker, e)
 			v.variable.type = iter_type
 		} else {
@@ -440,8 +440,6 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			}
 		}
 
-		v.types = make([]^types.Type, len(lhs), checker.allocator)
-
 		lhs_i := 0
 		check_assignment_types: for &r_expr in v.rhs {
 			type_hint: ^types.Type
@@ -453,19 +451,18 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			deconstruct_tuple(checker, &rhs_types)
 
 			for type in rhs_types {
+				defer lhs_i += 1
 				if lhs_i >= len(lhs) {
-					lhs_i += 1
 					continue
 				}
 				result_type := types.op_result_type(lhs[lhs_i].type, type)
 				if !types.implicitly_castable(type, lhs[lhs_i].type) {
 					error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, type)
+					continue
 				}
 				if len(rhs_types) == 1 {
 					r_expr.type = result_type
 				}
-				v.types[lhs_i] = result_type
-				lhs_i         += 1
 			}
 		}
 		if lhs_i != len(lhs) {
@@ -488,16 +485,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		check_decl_attributes(checker, v, false)
 
-		names  := make([]tokenizer.Token, len(v.lhs),    checker.allocator)
 		values := make([]Operand,         len(v.values), checker.allocator)
-
-		for &name, i in names {
-			if ident, ok := v.lhs[i].derived_expr.(^ast.Expr_Ident); ok {
-				name = ident.ident
-			} else {
-				error(checker, v.lhs[i], "variable declaration must be an identifier")
-			}
-		}
 
 		explicit_type: ^types.Type
 		if v.type_expr != nil {
@@ -508,8 +496,6 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			values = check_expr(checker, v.values[i], stmt.attributes, explicit_type)
 		}
 
-		v.types = make([]^types.Type, len(v.lhs), checker.allocator)
-
 		flags: Entity_Flags = { .Resolved, }
 		if v.readonly {
 			flags += { .Readonly, }
@@ -519,26 +505,33 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				explicit_type = types.t_invalid
 			}
 			check_decl_interface_type(checker, v, explicit_type)
-			for name in names {
+			for lhs in v.lhs {
+				ident: ^ast.Expr_Ident
+				ok:    bool
+				if ident, ok = lhs.derived_expr.?; !ok {
+					error(checker, lhs, "variable declaration must be an identifier")
+					continue
+				}
+
 				entity_kind := Entity_Kind.Var
-				scope_insert_entity(checker, entity_new(entity_kind, name, explicit_type, decl = v, flags = flags, allocator = checker.allocator))
-			}
-			for &t in v.types {
-				t = explicit_type
+				scope_insert_entity(checker, entity_new(entity_kind, ident, explicit_type, decl = v, flags = flags, allocator = checker.allocator))
+
+				lhs.type = explicit_type
 			}
 			return
 		}
 
-		name_i := 0
+		lhs_i := 0
 		check_decl_types: for &rhs in values {
 			rhs_types := []^types.Type{ rhs.type, }
 			tuple     := deconstruct_tuple(checker, &rhs_types)
 			for rhs_type in rhs_types {
-				if name_i >= len(names) {
-					name_i += 1
+				defer lhs_i += 1
+				if lhs_i >= len(v.lhs) {
 					continue
 				}
-				name        := names[name_i]
+
+				lhs         := v.lhs[lhs_i]
 				entity_kind := Entity_Kind.Var
 
 				type := explicit_type
@@ -552,24 +545,29 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 						error(checker, stmt, "mismatched types in value declaration: %v vs %v", explicit_type, rhs_type)
 					}
 				}
-				v.types[name_i] = type
+				v.lhs[lhs_i].type = type
 				if !tuple {
-					v.values[name_i].type = type
+					v.values[lhs_i].type = type
+				}
+
+				ident: ^ast.Expr_Ident
+				ok:    bool
+				if ident, ok = lhs.derived_expr.?; !ok {
+					continue
 				}
 
 				scope_insert_entity(checker, entity_new(
 					entity_kind,
-					name,
+					ident,
 					type,
 					decl      = v,
 					flags     = flags,
 					allocator = checker.allocator,
 				))
-				name_i += 1
 			}
 		}
-		if name_i != len(names) {
-			error(checker, v, "assignment count mismatch: %v vs %v", len(names), name_i)
+		if lhs_i != len(v.lhs) {
+			error(checker, v, "assignment count mismatch: %v vs %v", len(v.lhs), lhs_i)
 		}
 	case ^ast.Decl_Import:
 	}
@@ -850,13 +848,13 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 			return
 		}
 
-		library_name := v.library.text[1:len(v.library.text) - 1]
+		library_name := v.library.text
+		library_name  = library_name[1:len(library_name) - 1]
 		if library_name not_in checker.libraries {
 			error(checker, v.library, "Imported library does not exist: \"%v\"", library_name)
 		} else {
 			t        := v.library
-			t.text    = v.name
-			e        := entity_new(.Library, t, types.t_invalid, allocator = checker.allocator)
+			e        := entity_new(.Library, t.text, types.t_invalid, allocator = checker.allocator)
 			e.library = library_name
 			e.flags   = { .Resolved, }
 			scope_insert_entity(checker, e)
@@ -871,28 +869,33 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 
 		check_decl_attributes(checker, d, true)
 
-		d.types = make([]^types.Type, len(d.lhs), checker.allocator)
-
-		names := make([]tokenizer.Token, len(d.lhs), checker.allocator)
-		for &name, i in names {
-			if ident, ok := d.lhs[i].derived_expr.(^ast.Expr_Ident); ok {
-				name = ident.ident
-			} else {
-				error(checker, d.lhs[i], "variable declaration must be an identifier")
-			}
-		}
-
 		flags: Entity_Flags
 		if d.readonly {
 			flags += { .Readonly, }
 		}
 		entity_kind := Entity_Kind.Invalid
-		for name in names {
+		for lhs in d.lhs {
+			ident: ^ast.Expr_Ident
+			ok:    bool
+			if ident, ok = lhs.derived_expr.?; !ok {
+				error(checker, lhs, "variable declaration must be an identifier")
+				continue
+			}
+
 			type       := types.new_any(checker.allocator)
-			e          := entity_new(entity_kind, name, type, decl = d, flags = flags, allocator = checker.allocator)
+			e          := entity_new(entity_kind, ident, type, decl = d, flags = flags, allocator = checker.allocator)
 			e.interface = d.interface
 			scope_insert_entity(checker, e)
 			append(entities, e)
+		}
+
+		if len(d.values) != 0 {
+			if len(d.values) > len(d.lhs) {
+				error(checker, d, "too many values in multi value declaration, expected %d, got %d", len(d.lhs), len(d.values))
+			}
+			if len(d.values) < len(d.lhs) {
+				error(checker, d, "not enough values in multi value declaration, expected %d, got %d", len(d.lhs), len(d.values))
+			}
 		}
 	}
 
@@ -974,9 +977,13 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 
 	if len(d.values) == 0 {
 		check_decl_interface_type(checker, e.decl.derived_decl.(^ast.Decl_Value), type)
-		e.kind               = .Var
-		d.types[value_index] = type
+		e.kind                  = .Var
+		d.lhs[value_index].type = type
 		assign_type(e.type, type)
+		return
+	}
+
+	if value_index >= len(d.values) {
 		return
 	}
 
@@ -989,6 +996,8 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 	)
 
 	#partial switch v.mode {
+	case .Invalid:
+		e.kind = .Invalid
 	case .Type:
 		e.kind = .Type
 	case .Proc:
@@ -1066,14 +1075,14 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 			}
 		}
 
-		checker.reflection.entry_points[e.ident.text] = {
+		checker.reflection.entry_points[e.ident.ident.text] = {
 			inputs  = inputs,
 			outputs = outputs,
 			stage   = d.shader_stage,
 		}
 	}
 
-	d.types[value_index]       = type
+	d.lhs[value_index].type    = type
 	d.values[value_index].type = type
 }
 
@@ -1127,7 +1136,7 @@ checker_init :: proc(
 
 	create_builtin_type :: proc(checker: ^Checker, type: ^types.Type, type_expr := #caller_expression(type)) {
 		name := type_expr[len("types.t_"):]
-		scope_insert_entity(checker, entity_new(.Type, { text = name, }, type, flags = { .Resolved, }, allocator = checker.allocator))
+		scope_insert_entity(checker, entity_new(.Type, name, type, flags = { .Resolved, }, allocator = checker.allocator))
 	}
 
 	create_builtin_type(checker, types.t_bool)
@@ -1168,7 +1177,7 @@ checker_init :: proc(
 
 	create_library_type :: proc(checker: ^Checker, library: ^Library, type: ^types.Type, type_expr := #caller_expression(type)) {
 		name := strings.trim_prefix(type_expr, "types.t_")
-		library.entities[name] = entity_new(.Type, { text = name, }, type, flags = { .Resolved, }, allocator = checker.allocator)
+		library.entities[name] = entity_new(.Type, name, type, flags = { .Resolved, }, allocator = checker.allocator)
 	}
 
 	raytracing_extension := find_or_create_lib(checker, "extensions:raytracing")
@@ -1186,7 +1195,7 @@ checker_init :: proc(
 		create_builtin_proc :: proc(checker: ^Checker, name: string, builtin: ast.Builtin_Id) -> ^Entity {
 			return entity_new(
 				.Builtin,
-				{ text = name, },
+				name,
 				types.t_invalid,
 				builtin_id = builtin,
 				flags      = { .Resolved, },
@@ -1788,13 +1797,13 @@ check_expr_internal :: proc(
 
 		for arg in type.args {
 			if arg.name.text != "" {
-				scope_insert_entity(checker, entity_new(.Var, arg.name, arg.type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(.Var, arg.name.text, arg.type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator))
 			}
 		}
 
 		for ret in type.returns {
 			if ret.name.text != "" {
-				scope_insert_entity(checker, entity_new(.Var, ret.name, ret.type, flags = { .Resolved, }, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(.Var, ret.name.text, ret.type, flags = { .Resolved, }, allocator = checker.allocator))
 			}
 		}
 

@@ -622,7 +622,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}) -> (stm
 				error(parser, token, "Expected at least one value in assignment")
 			}
 			assign       := ast.new(ast.Stmt_Assign, token.location, parser.end_location, parser.allocator)
-			assign.lhs    = lhs[:]
+			assign.lhs    = lhs
 			assign.rhs    = rhs
 			assign.op     = assign_token.value.op
 			return assign, true

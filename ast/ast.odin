@@ -124,8 +124,8 @@ shader_stage_names: [Shader_Stage]string = {
 }
 
 Expr_Proc_Lit :: struct {
-	using sig:    Expr_Proc_Sig,
-	body:         []^Stmt,
+	using sig: Expr_Proc_Sig,
+	body:      []^Stmt,
 }
 
 Expr_Proc_Sig :: struct {
@@ -414,7 +414,6 @@ Decl_Value :: struct {
 	type_expr:      ^Expr,
 	values:         []^Expr,
 	mutable:        bool,
-	types:          []^types.Type,
 	readonly:       bool,
 	binding:        int,
 	location:       int,
@@ -433,7 +432,6 @@ Decl_Import :: struct {
 
 Stmt_Return :: struct {
 	using node: Stmt,
-	label:      tokenizer.Token,
 	values:  []^Expr,
 }
 
@@ -508,7 +506,6 @@ Stmt_Assign :: struct {
 	using node: Stmt,
 	lhs, rhs:   []^Expr,
 	op:         tokenizer.Token_Kind,
-	types:      []^types.Type,
 }
 
 Stmt_Expr :: struct {
