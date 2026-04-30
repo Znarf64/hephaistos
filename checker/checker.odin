@@ -293,12 +293,9 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		if iter_type.kind == .Invalid {
 			error(checker, v.end, "mismatched types in range stmt: %v vs %v", start.type, end.type)
 		}
-		if var, ok := v.variable.derived_expr.(^ast.Expr_Ident); ok {
-			scope_insert_entity(checker, entity_new(.Var, var, iter_type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator))
-			v.variable.type = iter_type
-		} else {
-			error(checker, v.variable, "iterator variable expression has to be an identifier")
-		}
+
+		scope_insert_entity(checker, entity_new(.Var, v.variable, iter_type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator))
+		v.variable.type = iter_type
 
 		scope_push(checker, .Block)
 		defer scope_pop(checker)
@@ -639,8 +636,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 	}
 
 	for lhs in decl.lhs {
-		ident := lhs.derived_expr.(^ast.Expr_Ident).text
-		checker.reflection.interface[ident] = {
+		checker.reflection.interface[lhs.text] = {
 			type      = type,
 			interface = decl.interface,
 			binding   = decl.binding,
@@ -673,9 +669,9 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 		name, library: string
 		if selector, ok := a.name.derived_expr.(^ast.Expr_Selector); ok {
 			library = check_ident(checker, selector.lhs) or_continue
-			name    = check_ident(checker, selector.selector) or_continue
+			name    = selector.selector.text
 		} else {
-			name = check_ident(checker, a.name) or_continue
+			name = a.name.text
 		}
 
 		if name in seen {
@@ -857,9 +853,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 
 		name := path
 		if v.alias != nil {
-			if alias, ok := check_ident(checker, v.alias); ok {
-				name = alias
-			}
+			name = v.alias.text
 		} else {
 			cut := strings.last_index_any(name, ":/")
 			if cut != -1 && cut != len(name) - 1 {
@@ -1610,7 +1604,7 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 				field := fields[i]
 				ident: string
 				if field.name != nil {
-					ident = check_ident(checker, field.name) or_continue
+					ident = field.name.text
 					if ident in names_seen {
 						error(checker, field.name, "duplicate name: '%s'", ident)
 						return
@@ -1892,7 +1886,7 @@ check_expr_internal :: proc(
 		return operand
 
 	case ^ast.Expr_Selector:
-		selector := check_ident(checker, v.selector, "selector expression") or_break
+		selector := v.selector.text
 
 		if v.lhs == nil {
 			if type_hint == nil {
@@ -1977,7 +1971,7 @@ check_expr_internal :: proc(
 		}
 
 		if type.kind == .Array {
-			indices := make([dynamic]u32, 0, len(selector))
+			indices := make([dynamic]u32, 0, len(selector), checker.allocator)
 
 			duplicates := false
 			seen: [4]bool
@@ -2355,7 +2349,7 @@ check_expr_internal :: proc(
 			if named {
 				seen := make(map[string]struct{}, context.temp_allocator)
 				for &field in v.fields {
-					name := check_ident(checker, field.name, "compound literal") or_continue
+					name := field.name.text
 
 					if name in seen {
 						error(checker, field.name, "duplicate values in compound literal: %v", name)
@@ -2414,8 +2408,8 @@ check_expr_internal :: proc(
 				}
 				seen: [4]bool
 				for &field in v.fields {
-					name    := check_ident(checker, field.name, "compound literal") or_continue
-					indices := make([dynamic]u32, 0, len(name))
+					name    := field.name.text
+					indices := make([dynamic]u32, 0, len(name), checker.allocator)
 
 					coords: [4]int
 					n := len(name)
@@ -2757,7 +2751,7 @@ check_expr_internal :: proc(
 			type: ^types.Type
 			for ; i < len(v.fields); i += 1 {
 				field := v.fields[i]
-				name  := check_ident(checker, field.name, "struct member") or_continue
+				name  := field.name.text
 
 				if name in fields_seen {
 					error(checker, field.name, "duplicate field name: '%s'", name)
@@ -2787,7 +2781,7 @@ check_expr_internal :: proc(
 
 			align = max(align, type.align)
 			for i in start ..< i {
-				name := check_ident(checker, v.fields[i].name, "struct member") or_continue
+				name := v.fields[i].name.text
 				append(&fields, types.Field {
 					name   = name,
 					type   = type,
@@ -2817,7 +2811,7 @@ check_expr_internal :: proc(
 		min_value     := 0
 		current_value := 0
 		for value in v.values {
-			name := check_ident(checker, value.name, "struct member") or_continue
+			name := value.name.text
 
 			if name in values_seen {
 				error(checker, value.name, "duplicate enum value name: '%s'", name)
@@ -3121,6 +3115,7 @@ deconstruct_tuple :: proc(checker: ^Checker, ts: ^[]^types.Type) -> bool {
 	return true
 }
 
+@(require_results)
 check_attribute_matches :: proc(checker: ^Checker, a: ast.Field, name: string) -> bool {
 	name := name
 	extension: string
@@ -3129,30 +3124,18 @@ check_attribute_matches :: proc(checker: ^Checker, a: ast.Field, name: string) -
 		name      = name[dot + 1:]
 	}
 
-	ident, library: string
-	if selector, ok := a.name.derived_expr.(^ast.Expr_Selector); ok {
-		library = check_ident(checker, selector.lhs)      or_return
-		ident   = check_ident(checker, selector.selector) or_return
+	return name == a.name.text
 
-		if name != ident {
-			return false
-		}
-
-		e, ok := scope_lookup(checker, { text = library, location = selector.lhs.start, })
-		if ok && e.kind != .Library {
-			error(checker, selector.lhs, "expected a library")
-		}
-	} else {
-		ident = check_ident(checker, a.name) or_return
-
-		if name != ident {
-			return false
-		}
-
-		if extension != "" {
-			error(checker, a.name, "attribute '%v' is part of the '%s' extension, use `@(%s.%s)`", name, extension, extension, name)
-		}
-	}
-
-	return true
+	// if a.location != nil {
+	// 	library := check_ident(checker, a.location) or_else panic("")
+	// 	e, ok := scope_lookup(checker, { text = library, location = a.location.start, })
+	// 	if ok && e.kind != .Library {
+	// 		error(checker, a.location, "expected a library")
+	// 	}
+	// } else {
+	// 	if extension != "" {
+	// 		error(checker, a.name, "attribute '%v' is part of the '%s' extension, use `@(%s.%s)`", name, extension, extension, name)
+	// 	}
+	// }
+	// return true
 }

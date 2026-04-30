@@ -32,10 +32,10 @@ Decl :: struct {
 }
 
 Field :: struct {
-	name:       ^Expr,
+	name:       ^Expr_Ident,
 	type:       ^Expr,
 	value:      ^Expr,
-	location:   ^Expr,
+	location:   ^Expr, // location for proc params, libraries for attributes
 	member_index: int,
 	swizzle:    []u32,
 }
@@ -323,7 +323,7 @@ Expr_Selector :: struct {
 	using node:  Expr,
 	lhs:        ^Expr,
 	entity:     ^Entity,
-	selector:   ^Expr,
+	selector:   ^Expr_Ident,
 	field_index: int,
 	swizzle:     []u32,
 }
@@ -422,7 +422,7 @@ interface_kind_names := [Interface_Kind]string {
 
 Decl_Value :: struct {
 	using node:     Decl,
-	lhs:         []^Expr,
+	lhs:         []^Expr_Ident,
 	type_expr:     ^Expr,
 	values:      []^Expr,
 	mutable:        bool,
@@ -439,7 +439,7 @@ Decl_Value :: struct {
 Decl_Import :: struct {
 	using node: Decl,
 	path:      ^Expr,
-	alias:     ^Expr,
+	alias:     ^Expr_Ident,
 	name:       string,
 }
 
@@ -463,7 +463,7 @@ Stmt_For_Range :: struct {
 	label:       tokenizer.Token,
 	start_expr: ^Expr,
 	end_expr:   ^Expr,
-	variable:   ^Expr,
+	variable:   ^Expr_Ident,
 	body:     []^Stmt,
 	inclusive:   bool,
 }

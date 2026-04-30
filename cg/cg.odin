@@ -414,7 +414,7 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 					init = cg_nil_value(ctx, type_info)
 				}
 				id     := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
-				entity := v.lhs[i].derived_expr.(^ast.Expr_Ident).entity
+				entity := v.lhs[i].entity
 				cg_insert_entity(ctx, entity, storage_class, type, id)
 
 				if annotate {
@@ -436,7 +436,7 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 					type_info := cg_type(ctx, type, flags)
 					init      := cg_expr(ctx, nil, value).id
 					id        := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
-					entity    := v.lhs[i].derived_expr.(^ast.Expr_Ident).entity
+					entity    := v.lhs[i].entity
 					cg_insert_entity(ctx, entity, storage_class, type, id)
 				}
 			} else {
@@ -451,7 +451,7 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 						ptr       := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class)
 						spv.OpStore(value_builder, ptr, value.id)
 
-						entity := v.lhs[lhs_i].derived_expr.(^ast.Expr_Ident).entity
+						entity := v.lhs[lhs_i].entity
 						cg_insert_entity(ctx, entity, storage_class, value.type, ptr)
 
 						lhs_i += 1
@@ -461,7 +461,7 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 		}
 	} else {
 		for value, i in v.values {
-			entity := v.lhs[i].derived_expr.(^ast.Expr_Ident).entity
+			entity := v.lhs[i].entity
 
 			#partial switch value.type.kind {
 			case .Proc:
@@ -1208,7 +1208,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 	if shader_stage != nil {
 		for arg, i in type.args {
 			id     := spv.OpVariable(&ctx.globals, cg_type_ptr(ctx, arg.type, .Input), .Input, nil)
-			entity := p.args[i].name.derived_expr.(^ast.Expr_Ident).entity
+			entity := p.args[i].name.entity
 			cg_insert_entity(ctx, entity, .Input, arg.type, id)
 			ctx.referenced_globals[id] = {}
 			location := u32(i)
@@ -1230,7 +1230,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 					init := cg_constant(ctx, ret.value, ret.type)
 					spv.OpStore(&body, id, init.id)
 				}
-				entity := p.returns[i].name.derived_expr.(^ast.Expr_Ident).entity
+				entity := p.returns[i].name.entity
 				cg_insert_entity(ctx, entity, .Output, ret.type, id)
 				ctx.referenced_globals[id] = {}
 				append(&outputs, id)
@@ -1247,7 +1247,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 	} else {
 		for arg, i in type.args {
 			id := spv.OpFunctionParameter(&ctx.functions, cg_type(ctx, arg.type).type)
-			entity := p.args[i].name.derived_expr.(^ast.Expr_Ident).entity
+			entity := p.args[i].name.entity
 			cg_insert_entity(ctx, entity, nil, arg.type, id)
 		}
 		label := spv.OpLabel(&ctx.functions)
@@ -1258,8 +1258,10 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 		case 1:
 			return_value = spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function, cg_nil_value(ctx, return_type_info))
 			spv.OpName(&ctx.debug_b, return_value, "$return_value")
-			entity := p.returns[0].name.derived_expr.(^ast.Expr_Ident).entity
-			cg_insert_entity(ctx, entity, .Function, type.return_type, return_value)
+			if p.returns[0].name != nil {
+				entity := p.returns[0].name.entity
+				cg_insert_entity(ctx, entity, .Function, type.return_type, return_value)
+			}
 		case:
 			return_value = spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function, cg_nil_value(ctx, return_type_info))
 			spv.OpName(&ctx.debug_b, return_value, "$return_tuple")
@@ -1270,8 +1272,10 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 					init := cg_constant(ctx, ret.value, ret.type)
 					spv.OpStore(&body, id, init.id)
 				}
-				entity := p.returns[i].name.derived_expr.(^ast.Expr_Ident).entity
-				cg_insert_entity(ctx, entity, .Function, ret.type, id)
+				if p.returns[i].name != nil {
+					entity := p.returns[i].name.entity
+					cg_insert_entity(ctx, entity, .Function, ret.type, id)
+				}
 			}
 		}
 	}
@@ -2901,7 +2905,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		iter_init := cg_expr(ctx, builder, v.start_expr).id
 		spv.OpStore(builder, iter_var, iter_init)
 
-		cg_insert_entity(ctx, v.variable.derived_expr.(^ast.Expr_Ident).entity, .Function, v.variable.type, iter_var)
+		cg_insert_entity(ctx, v.variable.entity, .Function, v.variable.type, iter_var)
 
 		body_builder   := &spv.Builder{ current_id = &ctx.current_id, }
 		header_builder := &spv.Builder{ current_id = &ctx.current_id, }
