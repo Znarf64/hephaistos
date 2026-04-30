@@ -5,21 +5,15 @@ import "core:mem"
 import "../ast"
 import "../types"
 
-Entity_Kind :: enum u32 {
-	Invalid = 0,
-
-	Const,
-	Type,
-	Var,
-	Proc,
-	Proc_Group,
-	Builtin,
-	Library,
-	Label,
-}
+Entity       :: ast.Entity
+Entity_Kind  :: ast.Entity_Kind
+Entity_Flag  :: ast.Entity_Flag
+Entity_Flags :: ast.Entity_Flags
+Scope        :: ast.Scope
+Scope_Kind   :: ast.Scope_Kind
 
 @(rodata)
-entity_kind_strings := [Entity_Kind]string{
+entity_kind_strings := [ast.Entity_Kind]string{
 	.Invalid    = "invalid",
 	.Const      = "const",
 	.Type       = "type",
@@ -31,29 +25,6 @@ entity_kind_strings := [Entity_Kind]string{
 	.Label      = "Label",
 }
 
-Entity_Flag :: enum {
-	Readonly,
-
-	In_Progress,
-	Resolved,
-}
-
-Entity_Flags :: bit_set[Entity_Flag]
-
-Entity :: struct {
-	kind:       Entity_Kind,
-	ident:      ^ast.Expr_Ident,
-	name:       string,
-	type:       ^types.Type,
-	decl:       ^ast.Decl,
-	library:    string,
-	value:      types.Const_Value,
-	builtin_id: ast.Builtin_Id,
-	interface:  ast.Interface_Kind,
-	flags:      Entity_Flags,
-	scope:      ^Scope,
-}
-
 entity_new :: proc {
 	entity_new_ident,
 	entity_new_name,
@@ -61,21 +32,21 @@ entity_new :: proc {
 
 @(require_results)
 entity_new_ident :: proc(
-	kind:       Entity_Kind,
-	ident:      ^ast.Expr_Ident,
-	type:       ^types.Type,
-	decl:       ^ast.Decl      = nil,
-	builtin_id: ast.Builtin_Id = nil,
-	flags:      Entity_Flags   = {},
+	kind:       ast.Entity_Kind,
+	ident:     ^ast.Expr_Ident,
+	type:      ^types.Type,
+	decl:      ^ast.Decl         = nil,
+	builtin_id: ast.Builtin_Id   = nil,
+	flags:      ast.Entity_Flags = {},
 	allocator:  mem.Allocator,
-) -> ^Entity {
+) -> ^ast.Entity {
 	assert(type != nil)
 
-	e           := new(Entity, allocator)
+	e           := new(ast.Entity, allocator)
 	e.kind       = kind
 	e.type       = type
 	e.ident      = ident
-	e.name       = ident.ident.text
+	e.name       = ident.text
 	e.decl       = decl
 	e.builtin_id = builtin_id
 	e.flags      = flags
@@ -84,15 +55,15 @@ entity_new_ident :: proc(
 
 @(require_results)
 entity_new_name :: proc(
-	kind:       Entity_Kind,
+	kind:       ast.Entity_Kind,
 	name:       string,
-	type:       ^types.Type,
-	decl:       ^ast.Decl      = nil,
-	builtin_id: ast.Builtin_Id = nil,
-	flags:      Entity_Flags   = {},
+	type:      ^types.Type,
+	decl:      ^ast.Decl         = nil,
+	builtin_id: ast.Builtin_Id   = nil,
+	flags:      ast.Entity_Flags = {},
 	allocator:  mem.Allocator,
-) -> ^Entity {
-	e           := new(Entity, allocator)
+) -> ^ast.Entity {
+	e           := new(ast.Entity, allocator)
 	e.kind       = kind
 	e.type       = type
 	e.ident      = nil

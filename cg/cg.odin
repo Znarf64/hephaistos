@@ -150,7 +150,8 @@ Context :: struct {
 	current_id:          spv.Id,
 	checker:             ^checker.Checker,
 	scopes:              [dynamic]Scope,
-	libraries:           map[string]Library,
+	entities:            map[^ast.Entity]Value,
+	// libraries:           map[string]Library,
 	name_prefix:         string,
 
 	extensions:          map[string]struct{},
@@ -188,11 +189,10 @@ Scope_Kind :: enum {
 }
 
 Library :: struct {
-	entities: map[string]Value,
+	entities: map[^ast.Entity]Value,
 }
 
 Scope :: struct {
-	entities:     map[string]Value,
 	label:        string,
 	label_id:     spv.Id,
 	end_id:       spv.Id,
@@ -203,29 +203,26 @@ Scope :: struct {
 	kind:         Scope_Kind,
 }
 
-cg_lookup_entity :: proc(ctx: ^Context, name: string, library: string = "") -> Value {
-	if library != "" {
-		return ctx.libraries[library].entities[name] or_else panic("cg_lookup_entity failed (library)")
-	}
-	#reverse for scope in ctx.scopes {
-		return scope.entities[name] or_continue
-	}
-	panic("cg_lookup_entity failed")
+cg_lookup_entity :: proc(ctx: ^Context, entity: ^ast.Entity) -> Value {
+	assert(entity != nil)
+	return ctx.entities[entity]
 }
 
-cg_insert_entity :: proc(ctx: ^Context, name: string, storage_class: Storage_Class, type: ^types.Type, id: spv.Id) {
-	cg_insert_entity_value(ctx, name, {
+cg_insert_entity :: proc(ctx: ^Context, entity: ^ast.Entity, storage_class: Storage_Class, type: ^types.Type, id: spv.Id) {
+	assert(entity != nil)
+	cg_insert_entity_value(ctx, entity, {
 		type          = type,
 		id            = id,
 		storage_class = storage_class,
 	})
 }
 
-cg_insert_entity_value :: proc(ctx: ^Context, name: string, value: Value) {
+cg_insert_entity_value :: proc(ctx: ^Context, entity: ^ast.Entity, value: Value) {
+	assert(entity != nil)
 	if value.id != 0 {
-		spv.OpName(&ctx.debug_b, value.id, strings.concatenate({ ctx.name_prefix, name, }))
+		spv.OpName(&ctx.debug_b, value.id, strings.concatenate({ ctx.name_prefix, entity.name, }))
 	}
-	ctx.scopes[len(ctx.scopes) - 1].entities[name] = value
+	ctx.entities[entity] = value
 }
 
 scope_push :: proc(ctx: ^Context, label: string = "", kind: Scope_Kind = .Block) -> ^Scope {
@@ -416,9 +413,9 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 				if has_nil_value {
 					init = cg_nil_value(ctx, type_info)
 				}
-				id   := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
-				name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
-				cg_insert_entity(ctx, name, storage_class, type, id)
+				id     := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
+				entity := v.lhs[i].derived_expr.(^ast.Expr_Ident).entity
+				cg_insert_entity(ctx, entity, storage_class, type, id)
 
 				if annotate {
 					if v.binding != -1 {
@@ -439,8 +436,8 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 					type_info := cg_type(ctx, type, flags)
 					init      := cg_expr(ctx, nil, value).id
 					id        := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
-					name      := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
-					cg_insert_entity(ctx, name, storage_class, type, id)
+					entity    := v.lhs[i].derived_expr.(^ast.Expr_Ident).entity
+					cg_insert_entity(ctx, entity, storage_class, type, id)
 				}
 			} else {
 				lhs_i: int
@@ -454,8 +451,8 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 						ptr       := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class)
 						spv.OpStore(value_builder, ptr, value.id)
 
-						name := v.lhs[lhs_i].derived_expr.(^ast.Expr_Ident).ident.text
-						cg_insert_entity(ctx, name, storage_class, value.type, ptr)
+						entity := v.lhs[lhs_i].derived_expr.(^ast.Expr_Ident).entity
+						cg_insert_entity(ctx, entity, storage_class, value.type, ptr)
 
 						lhs_i += 1
 					}
@@ -464,23 +461,23 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 		}
 	} else {
 		for value, i in v.values {
-			name := v.lhs[i].derived_expr.(^ast.Expr_Ident).ident.text
+			entity := v.lhs[i].derived_expr.(^ast.Expr_Ident).entity
 
 			#partial switch value.type.kind {
 			case .Proc:
 				prev_link_name := ctx.link_name
 				if v.link_name == "" {
-					ctx.link_name = name
+					ctx.link_name = entity.name
 				}
 				defer if v.link_name == "" {
 					ctx.link_name = prev_link_name
 				}
 
 				val := cg_expr(ctx, nil, value, shader_stage = v.shader_stage)
-				cg_insert_entity_value(ctx, name, val)
+				cg_insert_entity_value(ctx, entity, val)
 			case .Proc_Group:
 				val := cg_expr(ctx, nil, value)
-				cg_insert_entity_value(ctx, name, val)
+				cg_insert_entity_value(ctx, entity, val)
 			}
 		}
 	}
@@ -537,7 +534,7 @@ generate :: proc(
 	b: spv.Builder = { current_id = &ctx.current_id }
 
 	for name, lib in checker.libraries {
-		scope := scope_push(&ctx, kind = .Block)
+		scope_push(&ctx, kind = .Block)
 		defer scope_pop(&ctx)
 
 		ctx.name_prefix = strings.concatenate({ name, "::", })
@@ -550,10 +547,6 @@ generate :: proc(
 			cg_proc_internal(&ctx, p.expr, p.id, strings.concatenate({ ctx.name_prefix, p.link_name, }), p.shader_stage)
 		}
 		clear(&ctx.procs)
-
-		ctx.libraries[name] = {
-			entities = scope.entities,
-		}
 	}
 	ctx.name_prefix = ""
 
@@ -680,15 +673,17 @@ generate :: proc(
 				elem_type = cg_type(&ctx, types.t_f64).type
 			}
 
-			// q0, q1, q2, q3 := real(q), imag(q), jmag(q), kmag(q)
-			// r0, r1, r2, r3 := real(r), imag(r), jmag(r), kmag(r)
+			/*
+				q0, q1, q2, q3 := real(q), imag(q), jmag(q), kmag(q)
+				r0, r1, r2, r3 := real(r), imag(r), jmag(r), kmag(r)
 
-			// t0 := r0*q0 - r1*q1 - r2*q2 - r3*q3
-			// t1 := r0*q1 + r1*q0 - r2*q3 + r3*q2
-			// t2 := r0*q2 + r1*q3 + r2*q0 - r3*q1
-			// t3 := r0*q3 - r1*q2 + r2*q1 + r3*q0
+				t0 := r0*q0 - r1*q1 - r2*q2 - r3*q3
+				t1 := r0*q1 + r1*q0 - r2*q3 + r3*q2
+				t2 := r0*q2 + r1*q3 + r2*q0 - r3*q1
+				t3 := r0*q3 - r1*q2 + r2*q1 + r3*q0
 
-			// return quaternion(w=t0, x=t1, y=t2, z=t3)
+				return quaternion(w=t0, x=t1, y=t2, z=t3)
+			*/
 
 			q := args[0]
 			r := args[0]
@@ -1212,8 +1207,9 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 	outputs: [dynamic]spv.Id
 	if shader_stage != nil {
 		for arg, i in type.args {
-			id := spv.OpVariable(&ctx.globals, cg_type_ptr(ctx, arg.type, .Input), .Input, nil)
-			cg_insert_entity(ctx, p.args[i].ident.text, .Input, arg.type, id)
+			id     := spv.OpVariable(&ctx.globals, cg_type_ptr(ctx, arg.type, .Input), .Input, nil)
+			entity := p.args[i].name.derived_expr.(^ast.Expr_Ident).entity
+			cg_insert_entity(ctx, entity, .Input, arg.type, id)
 			ctx.referenced_globals[id] = {}
 			location := u32(i)
 			if arg.location != -1 {
@@ -1230,12 +1226,12 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 			for ret, i in type.returns {
 				type_info := cg_type(ctx, ret.type)
 				id        := spv.OpVariable(&ctx.globals, cg_type_ptr(ctx, type_info, .Output), .Output, nil)
-				name      := ret.name.text
 				if ret.value != nil {
 					init := cg_constant(ctx, ret.value, ret.type)
 					spv.OpStore(&body, id, init.id)
 				}
-				cg_insert_entity(ctx, name, .Output, ret.type, id)
+				entity := p.returns[i].name.derived_expr.(^ast.Expr_Ident).entity
+				cg_insert_entity(ctx, entity, .Output, ret.type, id)
 				ctx.referenced_globals[id] = {}
 				append(&outputs, id)
 				location := u32(i)
@@ -1251,7 +1247,8 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 	} else {
 		for arg, i in type.args {
 			id := spv.OpFunctionParameter(&ctx.functions, cg_type(ctx, arg.type).type)
-			cg_insert_entity(ctx, p.args[i].ident.text, nil, arg.type, id)
+			entity := p.args[i].name.derived_expr.(^ast.Expr_Ident).entity
+			cg_insert_entity(ctx, entity, nil, arg.type, id)
 		}
 		label := spv.OpLabel(&ctx.functions)
 		spv.OpName(&ctx.debug_b, label, "$FN_SETUP")
@@ -1261,19 +1258,20 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 		case 1:
 			return_value = spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function, cg_nil_value(ctx, return_type_info))
 			spv.OpName(&ctx.debug_b, return_value, "$return_value")
-			cg_insert_entity(ctx, type.returns[0].name.text, .Function, type.return_type, return_value)
+			entity := p.returns[0].name.derived_expr.(^ast.Expr_Ident).entity
+			cg_insert_entity(ctx, entity, .Function, type.return_type, return_value)
 		case:
 			return_value = spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, return_type_info, .Function), .Function, cg_nil_value(ctx, return_type_info))
 			spv.OpName(&ctx.debug_b, return_value, "$return_tuple")
 			for ret, i in type.returns {
 				type_info := cg_type(ctx, ret.type)
 				id        := spv.OpAccessChain(&body, cg_type_ptr(ctx, type_info, .Function), return_value, cg_constant(ctx, i64(i), nil).id)
-				name      := ret.name.text
 				if ret.value != nil {
 					init := cg_constant(ctx, ret.value, ret.type)
 					spv.OpStore(&body, id, init.id)
 				}
-				cg_insert_entity(ctx, name, .Function, ret.type, id)
+				entity := p.returns[i].name.derived_expr.(^ast.Expr_Ident).entity
+				cg_insert_entity(ctx, entity, .Function, ret.type, id)
 			}
 		}
 	}
@@ -1928,8 +1926,8 @@ cg_expr_internal :: proc(
 		return cg_constant(ctx, expr.const_value, expr.type)
 	}
 
-	cg_ident :: proc(ctx: ^Context, builder: ^spv.Builder, name: string, library: string = "") -> (value: Value) {
-		value = cg_lookup_entity(ctx, name, library)
+	cg_ident :: proc(ctx: ^Context, builder: ^spv.Builder, entity: ^ast.Entity) -> (value: Value) {
+		value = cg_lookup_entity(ctx, entity)
 		#partial switch value.storage_class {
 		case .Push_Constant, .Storage_Buffer, .Uniform, .Uniform_Constant:
 			value.explicit_layout = true
@@ -1952,7 +1950,7 @@ cg_expr_internal :: proc(
 		value.id  = cg_expr_binary(ctx, builder, v.op, lhs, rhs, &value.type)
 		return
 	case ^ast.Expr_Ident:
-		return cg_ident(ctx, builder, v.ident.text)
+		return cg_ident(ctx, builder, v.entity)
 	case ^ast.Expr_Proc_Lit:
 		return cg_proc_lit(ctx, v, shader_stage)
 	case ^ast.Expr_Proc_Sig:
@@ -1968,63 +1966,39 @@ cg_expr_internal :: proc(
 	case ^ast.Expr_Ellipsis:
 		return cg_expr(ctx, builder, v.expr)
 	case ^ast.Expr_Selector:
-		if v.library != "" {
-			return cg_ident(ctx, builder, v.selector.text, v.library)
+		if v.entity != nil {
+			return cg_ident(ctx, builder, v.entity)
 		}
 		lhs := cg_expr(ctx, builder, v.lhs, false)
 
 		lhs_type := v.lhs.type
 		if lhs.type.kind == .Struct {
-			field_index: int = -1
-			type_info:   ^Type_Info
-			field_type:  ^types.Type
-			for field, i in lhs_type.variant.(^types.Struct).fields {
-				if field.name.text == v.selector.text {
-					field_index = i
-					type_info   = cg_type(ctx, field.type)
-					field_type  = field.type
-					break
-				}
-			}
-			assert(field_index != -1)
+			field_type := lhs_type.variant.(^types.Struct).fields[v.field_index].type
+			type_info  := cg_type(ctx, field_type)
 
-			ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, lhs.storage_class), lhs.id, cg_constant(ctx, i64(field_index), nil).id)
+			ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, lhs.storage_class), lhs.id, cg_constant(ctx, i64(v.field_index), nil).id)
 
 			return { id = ptr, storage_class = lhs.storage_class, type = field_type, }
 		}
 
 		assert(lhs.type.kind == .Array)
 
-		indices := make([dynamic]u32, 0, len(v.selector.text))
-		for char in v.selector.text {
-			switch char {
-			case 'x', 'r':
-				append(&indices, 0)
-			case 'y', 'g':
-				append(&indices, 1)
-			case 'z', 'b':
-				append(&indices, 2)
-			case 'w', 'a':
-				append(&indices, 3)
-			}
-		}
-
-		if len(indices) == 1 && lhs.storage_class != .Image {
+		if len(v.swizzle) == 1 && lhs.storage_class != .Image {
 			t := types.array_elem(lhs.type)
 			if lhs.storage_class != nil {
-				id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, t, lhs.storage_class), lhs.id, cg_constant(ctx, i64(indices[0]), nil).id)
+				id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, t, lhs.storage_class), lhs.id, cg_constant(ctx, i64(v.swizzle[0]), nil).id)
 				value := Value { id = id, storage_class = lhs.storage_class, type = t, }
 				return value
 			}
 
-			return { id = spv.OpCompositeExtract(builder, cg_type(ctx, t).type, lhs.id, indices[0]), type = t, }
+			return { id = spv.OpCompositeExtract(builder, cg_type(ctx, t).type, lhs.id, v.swizzle[0]), type = t, }
 		}
 
 		return {
 			id            = lhs.id,
 			type          = v.type,
 			real_type     = lhs.type,
-			swizzle       = indices[:],
+			swizzle       = v.swizzle,
 			storage_class = lhs.storage_class,
 			coord         = lhs.coord,
 		}
@@ -2594,31 +2568,14 @@ cg_expr_internal :: proc(
 			elem_type_id := cg_type(ctx, vector.elem).type
 			values       := make([]spv.Id, vector.count, context.temp_allocator)
 			for field in v.fields {
-				coords: [4]int
-				n := len(field.ident.text)
-				for char, i in field.ident.text {
-					index: int = -1
-					switch char {
-					case 'r', 'x':
-						index = 0
-					case 'g', 'y':
-						index = 1
-					case 'b', 'z':
-						index = 2
-					case 'a', 'w':
-						index = 3
-					}
-					coords[i] = index
-				}
-
 				val := cg_expr(ctx, builder, field.value)
-				if n == 1 {
-					values[coords[0]] = cg_cast(ctx, builder, val, vector.elem)
+				if len(field.swizzle) == 1 {
+					values[field.swizzle[0]] = cg_cast(ctx, builder, val, vector.elem)
 				} else {
-					vec := types.array_new(vector.elem, n, context.temp_allocator)
+					vec := types.array_new(vector.elem, len(field.swizzle), context.temp_allocator)
 					val := cg_cast(ctx, builder, val, vec)
 
-					for dst_coord, src_coord in coords[:n] {
+					for dst_coord, src_coord in field.swizzle {
 						values[dst_coord] = spv.OpCompositeExtract(builder, elem_type_id, val, u32(src_coord))
 					}
 				}
@@ -2636,16 +2593,7 @@ cg_expr_internal :: proc(
 		fields := v.type.variant.(^types.Struct).fields
 		values := make([]spv.Id, len(fields), context.temp_allocator)
 		for field in v.fields {
-			find_struct_field_index :: proc(fields: []types.Field, name: string) -> int {
-				for field, i in fields {
-					if field.name.text == name {
-						return i
-					}
-				}
-				return -1
-			}
-
-			index        := find_struct_field_index(fields, field.ident.text)
+			index        := field.member_index
 			value        := cg_expr(ctx, builder, field.value)
 			values[index] = cg_cast(ctx, builder, value, fields[index].type)
 		}
@@ -2953,7 +2901,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		iter_init := cg_expr(ctx, builder, v.start_expr).id
 		spv.OpStore(builder, iter_var, iter_init)
 
-		cg_insert_entity(ctx, v.variable.derived_expr.(^ast.Expr_Ident).ident.text, .Function, v.variable.type, iter_var)
+		cg_insert_entity(ctx, v.variable.derived_expr.(^ast.Expr_Ident).entity, .Function, v.variable.type, iter_var)
 
 		body_builder   := &spv.Builder{ current_id = &ctx.current_id, }
 		header_builder := &spv.Builder{ current_id = &ctx.current_id, }
@@ -3256,7 +3204,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 	case ^ast.Decl_Value:
 		cg_value_decl(ctx, builder, v, global)
 	case ^ast.Decl_Import:
-		text      := v.library.text[1:len(v.library.text) - 1]
+		text      := v.path.const_value.(string)
 		extension := strings.trim_prefix(text, "extensions:")
 		if extension == text {
 			break

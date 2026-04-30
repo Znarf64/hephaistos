@@ -11,7 +11,7 @@ import "core:slice"
 import "../tokenizer"
 
 Field :: struct {
-	name:     tokenizer.Token,
+	name:     string,
 	type:     ^Type,
 	value:    Const_Value,
 	offset:   int,
@@ -19,7 +19,7 @@ Field :: struct {
 }
 
 Enum_Value :: struct {
-	name:  tokenizer.Token,
+	name:  string,
 	value: int,
 }
 
@@ -233,25 +233,25 @@ _base_types_init :: proc "contextless" () {
 	e := new(.Enum, Enum, allocator)
 	e.backing = t_u32
 	e.values  = slice.clone([]Enum_Value {
-		{ { text = "Front", }, 0xFE, },
-		{ { text = "Back",  }, 0xFF, },
+		{ "Front", 0xFE, },
+		{ "Back",  0xFF, },
 	}, allocator)
 	t_Hit_Kind = e
 
 	ray_flags_bits := new(.Enum, Enum, allocator)
 	ray_flags_bits.backing = t_i32
 	ray_flags_bits.values  = slice.clone([]Enum_Value {
-		{ { text = "Opaque",                     },  0, },
-		{ { text = "NoOpaque",                   },  1, },
-		{ { text = "TerminateOnFirstHit",        },  2, },
-		{ { text = "SkipClosestHitShader",       },  3, },
-		{ { text = "CullBackFacingTriangles",    },  4, },
-		{ { text = "CullFrontFacingTriangles",   },  5, },
-		{ { text = "CullOpaque",                 },  6, },
-		{ { text = "CullNoOpaque",               },  7, },
-		{ { text = "SkipTriangles",              },  8, },
-		{ { text = "SkipAABBs",                  },  9, },
-		{ { text = "ForceOpacityMicromap2State", }, 10, },
+		{ "Opaque",                      0, },
+		{ "NoOpaque",                    1, },
+		{ "TerminateOnFirstHit",         2, },
+		{ "SkipClosestHitShader",        3, },
+		{ "CullBackFacingTriangles",     4, },
+		{ "CullFrontFacingTriangles",    5, },
+		{ "CullOpaque",                  6, },
+		{ "CullNoOpaque",                7, },
+		{ "SkipTriangles",               8, },
+		{ "SkipAABBs",                   9, },
+		{ "ForceOpacityMicromap2State", 10, },
 	}, allocator)
 
 	set          := new(.Bit_Set, Bit_Set, allocator)
@@ -265,10 +265,10 @@ _base_types_init :: proc "contextless" () {
 	intersection_type := new(.Enum, Enum, allocator)
 	intersection_type.backing = t_i32
 	intersection_type.values  = slice.clone([]Enum_Value {
-		{ { text = "None",      }, 0, },
-		{ { text = "Triangle",  }, 1, },
-		{ { text = "Generated", }, 2, },
-		{ { text = "AABB",      }, 3, },
+		{ "None",      0, },
+		{ "Triangle",  1, },
+		{ "Generated", 2, },
+		{ "AABB",      3, },
 	}, allocator)
 	t_Intersection_Type = intersection_type
 }
@@ -289,7 +289,7 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 			if i > 0 {
 				fmt.wprint(w, ", ")
 			}
-			fmt.wprint(w, field.name.text)
+			fmt.wprint(w, field.name)
 			fmt.wprint(w, ": ")
 			print_writer(w, field.type)
 		}
@@ -301,7 +301,7 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 			if i > 0 {
 				fmt.wprint(w, ", ")
 			}
-			fmt.wprint(w, field.name.text)
+			fmt.wprint(w, field.name)
 			fmt.wprint(w, " = ")
 			fmt.wprint(w, field.value)
 		}
@@ -326,7 +326,7 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 			if i > 0 {
 				fmt.wprint(w, ", ")
 			}
-			fmt.wprint(w, arg.name.text)
+			fmt.wprint(w, arg.name)
 			fmt.wprint(w, ": ")
 			print_writer(w, arg.type)
 		}
@@ -335,8 +335,8 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 			if i > 0 {
 				fmt.wprint(w, ", ")
 			}
-			if len(ret.name.text) != 0 {
-				fmt.wprint(w, ret.name.text)
+			if len(ret.name) != 0 {
+				fmt.wprint(w, ret.name)
 				fmt.wprint(w, ": ")
 			}
 			print_writer(w, ret.type)

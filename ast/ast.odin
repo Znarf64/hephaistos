@@ -22,13 +22,22 @@ Expr :: struct {
 
 Stmt :: struct {
 	using stmt_base: Node,
-	attributes:      []Field,
+	attributes:    []Field,
 	derived_stmt:    Any_Stmt,
 }
 
 Decl :: struct {
 	using decl_base: Stmt,
 	derived_decl:    Any_Decl,
+}
+
+Field :: struct {
+	name:       ^Expr,
+	type:       ^Expr,
+	value:      ^Expr,
+	location:   ^Expr,
+	member_index: int,
+	swizzle:    []u32,
 }
 
 
@@ -59,7 +68,8 @@ Expr_Constant :: struct {
 
 Expr_Ident :: struct {
 	using node: Expr,
-	ident:      tokenizer.Token,
+	text:       string,
+	entity:    ^Entity,
 }
 
 Expr_Interface :: struct {
@@ -125,18 +135,18 @@ shader_stage_names: [Shader_Stage]string = {
 
 Expr_Proc_Lit :: struct {
 	using sig: Expr_Proc_Sig,
-	body:      []^Stmt,
+	body:   []^Stmt,
 }
 
 Expr_Proc_Sig :: struct {
 	using node: Expr,
-	args:       []Field,
-	returns:    []Field,
+	args:     []Field,
+	returns:  []Field,
 }
 
 Expr_Proc_Group :: struct {
 	using node: Expr,
-	members:    []^Expr,
+	members: []^Expr,
 }
 
 Builtin_Id :: enum {
@@ -310,10 +320,12 @@ Expr_Paren :: struct {
 }
 
 Expr_Selector :: struct {
-	using node: Expr,
-	lhs:       ^Expr,
-	selector:   tokenizer.Token,
-	library:    string,
+	using node:  Expr,
+	lhs:        ^Expr,
+	entity:     ^Entity,
+	selector:   ^Expr,
+	field_index: int,
+	swizzle:     []u32,
 }
 
 Expr_Compound :: struct {
@@ -343,7 +355,7 @@ Expr_Ellipsis :: struct {
 
 Type_Struct :: struct {
 	using node: Expr,
-	fields:     []Field,
+	fields:   []Field,
 }
 
 Type_Array :: struct {
@@ -361,17 +373,17 @@ Type_Matrix :: struct {
 }
 
 Type_Image :: struct {
-	using node: Expr,
+	using node:  Expr,
 	dimensions: ^Expr,
 	texel_type: ^Expr,
-	is_sampler: bool,
-	format:     tokenizer.Token,
+	is_sampler:  bool,
+	format:      tokenizer.Token,
 }
 
 Type_Enum :: struct {
 	using node: Expr,
-	values:     []Field,
-	backing:    ^Expr,
+	values:   []Field,
+	backing:   ^Expr,
 }
 
 Type_Bit_Set :: struct {
@@ -410,23 +422,24 @@ interface_kind_names := [Interface_Kind]string {
 
 Decl_Value :: struct {
 	using node:     Decl,
-	lhs:            []^Expr,
-	type_expr:      ^Expr,
-	values:         []^Expr,
+	lhs:         []^Expr,
+	type_expr:     ^Expr,
+	values:      []^Expr,
 	mutable:        bool,
 	readonly:       bool,
 	binding:        int,
 	location:       int,
 	descriptor_set: int,
 	link_name:      string,
-	local_size:     [3]i32,
+	local_size:  [3]i32,
 	shader_stage:   Shader_Stage,
 	interface:      Interface_Kind,
 }
 
 Decl_Import :: struct {
 	using node: Decl,
-	library:    tokenizer.Token,
+	path:      ^Expr,
+	alias:     ^Expr,
 	name:       string,
 }
 
@@ -446,66 +459,66 @@ Stmt_Continue :: struct {
 }
 
 Stmt_For_Range :: struct {
-	using node: Stmt,
-	label:      tokenizer.Token,
+	using node:  Stmt,
+	label:       tokenizer.Token,
 	start_expr: ^Expr,
 	end_expr:   ^Expr,
 	variable:   ^Expr,
-	body:       []^Stmt,
-	inclusive:  bool,
+	body:     []^Stmt,
+	inclusive:   bool,
 }
 
 Stmt_For :: struct {
 	using node: Stmt,
 	label:      tokenizer.Token,
-	init:       ^Stmt,
-	cond:       ^Expr,
-	post:       ^Stmt,
-	body:       []^Stmt,
+	init:      ^Stmt,
+	cond:      ^Expr,
+	post:      ^Stmt,
+	body:    []^Stmt,
 }
 
 Stmt_Block :: struct {
 	using node: Stmt,
 	label:      tokenizer.Token,
-	body:       []^Stmt,
+	body:    []^Stmt,
 }
 
 Stmt_If :: struct {
-	using node: Stmt,
-	label:      tokenizer.Token,
-	init:       ^Stmt,
-	cond:       ^Expr,
+	using node:    Stmt,
+	label:         tokenizer.Token,
+	init:         ^Stmt,
+	cond:         ^Expr,
 	then_block: []^Stmt,
 	else_block: []^Stmt,
 }
 
 Stmt_When :: struct {
-	using node: Stmt,
-	label:      tokenizer.Token,
-	cond:       ^Expr,
+	using node:    Stmt,
+	label:         tokenizer.Token,
+	cond:         ^Expr,
 	then_block: []^Stmt,
 	else_block: []^Stmt,
 }
 
 Switch_Case :: struct {
-	token: tokenizer.Token,
-	value: ^Expr,
-	body:  []^Stmt,
+	token:   tokenizer.Token,
+	value:  ^Expr,
+	body: []^Stmt,
 }
 
 Stmt_Switch :: struct {
 	using node:     Stmt,
 	label:          tokenizer.Token,
-	init:           ^Stmt,
-	cond:           ^Expr,
-	cases:          []Switch_Case,
+	init:          ^Stmt,
+	cond:          ^Expr,
+	cases:        []Switch_Case,
 	constant_cases: bool,
 }
 
 Stmt_Assign :: struct {
-	using node: Stmt,
-	lhs, rhs:   []^Expr,
-	op:         tokenizer.Token_Kind,
+	using node:  Stmt,
+	lhs, rhs: []^Expr,
+	op:          tokenizer.Token_Kind,
 }
 
 Stmt_Expr :: struct {
@@ -624,10 +637,53 @@ new :: proc($T: typeid, start, end: tokenizer.Location, allocator: mem.Allocator
 	return n
 }
 
-Field :: struct {
-	ident:    tokenizer.Token,
-	library:  tokenizer.Token,
-	type:     ^Expr,
-	value:    ^Expr,
-	location: ^Expr,
+Entity :: struct {
+	kind:       Entity_Kind,
+	ident:     ^Expr_Ident,
+	name:       string,
+	type:      ^types.Type,
+	decl:      ^Decl,
+	library:    string,
+	value:      types.Const_Value,
+	builtin_id: Builtin_Id,
+	interface:  Interface_Kind,
+	flags:      Entity_Flags,
+	scope:     ^Scope,
+}
+
+Entity_Kind :: enum u32 {
+	Invalid = 0,
+
+	Const,
+	Type,
+	Var,
+	Proc,
+	Proc_Group,
+	Builtin,
+	Library,
+	Label,
+}
+
+Entity_Flag :: enum {
+	Readonly,
+
+	In_Progress,
+	Resolved,
+}
+
+Entity_Flags :: bit_set[Entity_Flag]
+
+Scope :: struct {
+	parent:    ^Scope,
+	entities:   map[string]^Entity,
+	proc_type: ^types.Proc,
+	kind:       Scope_Kind,
+}
+
+Scope_Kind :: enum {
+	Global,
+	Proc,
+	Block, // if or {}
+	Loop,
+	Switch,
 }

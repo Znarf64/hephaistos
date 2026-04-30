@@ -3,8 +3,6 @@ package hephaistos_parser
 import "base:runtime"
 
 import "core:fmt"
-import "core:reflect"
-import "core:strings"
 
 import "../ast"
 import "../tokenizer"
@@ -24,11 +22,11 @@ token_peek :: proc(parser: ^Parser, lookahead := 0) -> tokenizer.Token {
 }
 
 token_advance :: proc(parser: ^Parser) -> (t: tokenizer.Token) {
-	t = token_peek(parser)
-	parser.end_location = t.location
+	t                           = token_peek(parser)
+	parser.end_location         = t.location
 	parser.end_location.column += len(t.text)
 	parser.end_location.offset += len(t.text)
-	parser.current += 1
+	parser.current             += 1
 	return
 }
 
@@ -62,7 +60,7 @@ parse_field_list :: proc(
 		case terminator, .EOF:
 			break loop
 		}
-		ident := token_expect(parser, .Ident) or_return
+		name := parse_expr(parser) or_return
 		type: ^ast.Expr
 		if types {
 			if token_peek(parser).kind == .Colon {
@@ -84,15 +82,14 @@ parse_field_list :: proc(
 
 		location: ^ast.Expr
 		if allow_locations {
-			// TODO: make a decision
-			if token_peek(parser).kind == .Attribute || token_peek(parser).kind == .Arrow {
+			if token_peek(parser).kind == .Attribute {
 				token_advance(parser)
 				location = parse_expr(parser) or_return
 			}
 		}
 
 		append(&fields, ast.Field {
-			ident    = ident,
+			name     = name,
 			value    = value,
 			type     = type,
 			location = location,
@@ -119,16 +116,16 @@ parse_arg_list :: proc(parser: ^Parser, terminator: tokenizer.Token_Kind) -> (_f
 			break loop
 		}
 
-		ident: tokenizer.Token
+		name: ^ast.Expr
 		if token_peek(parser, 1).kind == .Assign {
-			ident = token_expect(parser, .Ident) or_return
+			name = parse_expr(parser) or_return
 			token_expect(parser, .Assign) or_return
 		}
 
 		value := parse_expr(parser) or_return
 
 		append(&fields, ast.Field {
-			ident = ident,
+			name  = name,
 			value = value,
 		})
 
@@ -202,8 +199,8 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 	#partial switch token.kind {
 	case .Ident:
 		token_advance(parser)
-		expr := ast.new(ast.Expr_Ident, token.location, parser.end_location, parser.allocator)
-		expr.ident = token
+		expr     := ast.new(ast.Expr_Ident, token.location, parser.end_location, parser.allocator)
+		expr.text = token.text
 
 		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
 			token_advance(parser)
@@ -469,10 +466,10 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 		}
 	case .Period:
 		token_advance(parser)
-		ident     := token_expect(parser, .Ident) or_return
+		selector  := parse_expr(parser) or_return
 		s         := ast.new(ast.Expr_Selector, token.location, parser.end_location, parser.allocator)
 		s.lhs      = nil
-		s.selector = ident
+		s.selector = selector
 		return s, true
 	case .Ellipsis:
 		token_advance(parser)
@@ -520,10 +517,10 @@ parse_expr :: proc(parser: ^Parser, min_power := 0, allow_compound_literals := t
 		#partial switch op.kind {
 		case .Period:
 			token_advance(parser)
-			ident    := token_expect(parser, .Ident) or_return
+			rhs      := parse_expr(parser) or_return
 			selector := ast.new(ast.Expr_Selector, lhs.start, parser.end_location, parser.allocator)
 			selector.lhs      = lhs
-			selector.selector = ident
+			selector.selector = rhs
 			lhs               = selector
 			continue
 
@@ -722,13 +719,7 @@ parse_attributes :: proc(parser: ^Parser) -> (_attributes: []ast.Field, ok: bool
 				break loop
 			}
 
-			ident := token_expect(parser, .Ident) or_return
-			library: tokenizer.Token
-			if token_peek(parser).kind == .Period {
-				token_advance(parser)
-				library = ident
-				ident   = token_expect(parser, .Ident) or_return
-			}
+			name := parse_expr(parser) or_return
 
 			value: ^ast.Expr
 			if token_peek(parser).kind == .Assign {
@@ -737,9 +728,8 @@ parse_attributes :: proc(parser: ^Parser) -> (_attributes: []ast.Field, ok: bool
 			}
 
 			append(attributes, ast.Field {
-				ident   = ident,
-				library = library,
-				value   = value,
+				name  = name,
+				value = value,
 			})
 
 			if token_peek(parser).kind == .Comma {
@@ -756,7 +746,7 @@ parse_attributes :: proc(parser: ^Parser) -> (_attributes: []ast.Field, ok: bool
 	#partial switch token := token_peek(parser); token.kind {
 	case .Ident:
 		append(&attributes, ast.Field {
-			ident = token,
+			name = parse_expr(parser) or_return,
 		})
 		return attributes[:], true
 	case .Open_Paren:
@@ -782,44 +772,14 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 		return parse_simple_stmt(parser, attributes)
 	case .Import:
 		token_advance(parser)
-		alias: tokenizer.Token
+		alias: ^ast.Expr
 		if token_peek(parser).kind == .Ident {
-			alias = token_advance(parser)
+			alias = parse_expr(parser) or_return
 		}
-		lit := token_expect(parser, .Literal, "import") or_return
-		if lit.value_kind != .String {
-			error(parser, token, "expected a string literal after `import` keyword")
-			return
-		}
-
-		name: string
-		if alias.text != "" {
-			name = alias.text
-		} else {
-			name = lit.text[1:len(lit.text) - 1]
-			cut := strings.last_index_any(name, ":/")
-			if cut != -1 && cut != len(name) - 1 {
-				name = name[cut + 1:]
-			}
-
-			valid := true
-			for char in name {
-				switch char {
-				case '0' ..= '9', 'a' ..= 'z', 'A' ..= 'Z', '_':
-					continue
-				}
-				valid = false
-				break
-			}
-
-			if !valid {
-				error(parser, lit, "'%s' is not a valid package name, consider renaming the imported package: `import foo %s`", name, lit.text)
-			}
-		}
-
-		import_decl        := ast.new(ast.Decl_Import, token.location, parser.end_location, parser.allocator)
-		import_decl.name    = name
-		import_decl.library = lit
+		path             := parse_expr(parser) or_return
+		import_decl      := ast.new(ast.Decl_Import, token.location, parser.end_location, parser.allocator)
+		import_decl.path  = path
+		import_decl.alias = alias
 		return import_decl, true
 	case .Ident:
 		if token_peek(parser, 1).kind == .Colon {
@@ -979,7 +939,7 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 		token_expect(parser, .Open_Brace) or_return
 
 		cases := make([dynamic]ast.Switch_Case, parser.allocator)
-		for token_peek(parser).kind != .Close_Brace && !parser_at_end(parser) {
+		for token_peek(parser).kind != .Close_Brace && token_peek(parser).kind != .EOF {
 			token_expect(parser, .Case) or_continue
 			value: ^ast.Expr
 			if token_peek(parser).kind != .Colon {
@@ -1015,81 +975,6 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 	return
 }
 
-print_expr :: proc(b: ^strings.Builder, expr: ^ast.Expr, indent := 0) {
-	if expr == nil {
-		return
-	}
-	for _ in 0 ..< indent {
-		fmt.sbprint(b, "\t")
-	}
-	fmt.sbprintln(b, expr.derived)
-	#partial switch v in expr.derived_expr {
-	case ^ast.Expr_Proc_Lit:
-		for s in v.body {
-			print_stmt(b, s, indent + 1)
-		}
-	case ^ast.Expr_Binary:
-		print_expr(b, v.lhs, indent + 1)
-		print_expr(b, v.rhs, indent + 1)
-	}
-}
-
-// only used for debugging
-print_stmt :: proc(b: ^strings.Builder, stmt: ^ast.Stmt, indent := 0) {
-	if stmt == nil {
-		return
-	}
-	for _ in 0 ..< indent {
-		fmt.sbprint(b, "\t")
-	}
-	fmt.sbprintfln(b, "%v", reflect.union_variant_typeid(stmt.derived))
-	switch v in stmt.derived_stmt {
-	case ^ast.Stmt_Return:
-		for v in v.values {
-			print_expr(b, v, indent + 1)
-		}
-	case ^ast.Stmt_Break:
-	case ^ast.Stmt_Continue:
-	case ^ast.Stmt_For_Range:
-		for s in v.body {
-			print_stmt(b, s, indent + 1)
-		}
-	case ^ast.Stmt_For:
-		for s in v.body {
-			print_stmt(b, s, indent + 1)
-		}
-	case ^ast.Stmt_Block:
-		for s in v.body {
-			print_stmt(b, s, indent + 1)
-		}
-	case ^ast.Stmt_If:
-		for s in v.then_block {
-			print_stmt(b, s, indent + 1)
-		}
-		fmt.println("ELSE")
-		for s in v.else_block {
-			print_stmt(b, s, indent + 1)
-		}
-	case ^ast.Stmt_When:
-		for s in v.then_block {
-			print_stmt(b, s, indent + 1)
-		}
-		fmt.println("ELSE")
-		for s in v.else_block {
-			print_stmt(b, s, indent + 1)
-		}
-	case ^ast.Stmt_Switch:
-	case ^ast.Stmt_Assign:
-	case ^ast.Stmt_Expr:
-
-	case ^ast.Decl_Value:
-		print_expr(b, v.type_expr,  indent + 1)
-		// print_expr(b, v.value, indent + 1)
-	case ^ast.Decl_Import:
-		fmt.println("IMPORT", v.library.text)
-	}
-}
-
 parse :: proc(
 	tokens: []tokenizer.Token,
 	allocator       := context.allocator,
@@ -1109,10 +994,6 @@ parse :: proc(
 	global_stmts, _ := parse_stmt_list(&parser, .EOF)
 
 	return global_stmts, parser.errors[:]
-}
-
-parser_at_end :: proc(parser: ^Parser) -> bool {
-	return token_peek(parser).kind == .EOF
 }
 
 error_start_end :: proc(parser: ^Parser, start, end: tokenizer.Location, format: string, args: ..any) {

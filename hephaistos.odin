@@ -21,6 +21,7 @@ import spv "spirv-odin"
 Token              :: tokenizer.Token
 Error              :: tokenizer.Error
 tokenize           :: tokenizer.tokenize
+Location           :: tokenizer.Location
 
 parse              :: parser.parse
 
@@ -125,7 +126,8 @@ check_library :: proc(
 		return
 	}
 
-	return checker.to_library(c), {}
+	library.entities = c.scope.entities
+	return
 }
 
 @(require_results)
