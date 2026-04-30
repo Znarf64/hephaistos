@@ -466,10 +466,12 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 		}
 	case .Period:
 		token_advance(parser)
-		selector  := parse_expr(parser) or_return
+		selector  := token_expect(parser, .Ident, "'.'") or_return
+		ident     := ast.new(ast.Expr_Ident, selector.location, parser.end_location, parser.allocator)
+		ident.text = selector.text
 		s         := ast.new(ast.Expr_Selector, token.location, parser.end_location, parser.allocator)
 		s.lhs      = nil
-		s.selector = selector
+		s.selector = ident
 		return s, true
 	case .Ellipsis:
 		token_advance(parser)

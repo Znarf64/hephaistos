@@ -294,8 +294,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			error(checker, v.end, "mismatched types in range stmt: %v vs %v", start.type, end.type)
 		}
 		if var, ok := v.variable.derived_expr.(^ast.Expr_Ident); ok {
-			e := entity_new(.Var, var, iter_type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator)
-			scope_insert_entity(checker, e)
+			scope_insert_entity(checker, entity_new(.Var, var, iter_type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator))
 			v.variable.type = iter_type
 		} else {
 			error(checker, v.variable, "iterator variable expression has to be an identifier")
@@ -493,8 +492,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					continue
 				}
 
-				entity_kind := Entity_Kind.Var
-				scope_insert_entity(checker, entity_new(entity_kind, ident, explicit_type, decl = v, flags = flags, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(.Var, ident, explicit_type, decl = v, flags = flags, allocator = checker.allocator))
 
 				lhs.type = explicit_type
 			}
@@ -1610,12 +1608,15 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 			for i < len(fields) {
 				defer i += 1
 				field := fields[i]
-				ident := check_ident(checker, field.name) or_continue
-				if ident in names_seen {
-					error(checker, field.name, "duplicate name: '%s'", ident)
-					return
+				ident: string
+				if field.name != nil {
+					ident = check_ident(checker, field.name) or_continue
+					if ident in names_seen {
+						error(checker, field.name, "duplicate name: '%s'", ident)
+						return
+					}
+					names_seen[ident] = {}
 				}
-				names_seen[ident] = {}
 
 				location := i
 				if field.location != nil {
@@ -1829,15 +1830,17 @@ check_expr_internal :: proc(
 		scope_push(checker, .Proc).proc_type = type
 		defer scope_pop(checker)
 
-		for arg in type.args {
+		for arg, i in type.args {
 			if arg.name != "" {
-				scope_insert_entity(checker, entity_new(.Var, arg.name, arg.type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator))
+				expr := v.args[i].name.derived_expr.(^ast.Expr_Ident)
+				scope_insert_entity(checker, entity_new(.Var, expr, arg.type, flags = { .Resolved, }, allocator = checker.allocator))
 			}
 		}
 
-		for ret in type.returns {
+		for ret, i in type.returns {
 			if ret.name != "" {
-				scope_insert_entity(checker, entity_new(.Var, ret.name, ret.type, flags = { .Resolved, }, allocator = checker.allocator))
+				expr := v.returns[i].name.derived_expr.(^ast.Expr_Ident)
+				scope_insert_entity(checker, entity_new(.Var, expr, ret.type, flags = { .Resolved, }, allocator = checker.allocator))
 			}
 		}
 
@@ -1929,7 +1932,9 @@ check_expr_internal :: proc(
 		if lhs.mode == .Library {
 			if e, ok := checker.libraries[lhs.library].entities[selector]; ok {
 				entity_to_operand(checker, e, &operand)
-				v.entity = e
+				ident       := v.selector.derived_expr.(^ast.Expr_Ident)
+				ident.entity = e
+				v.entity     = e
 				return
 			} else {
 				error(checker, v.selector, "'%s' is not declared by '%s'", selector, lhs.library)

@@ -13,7 +13,7 @@ Scope        :: ast.Scope
 Scope_Kind   :: ast.Scope_Kind
 
 @(rodata)
-entity_kind_strings := [ast.Entity_Kind]string{
+entity_kind_strings := [Entity_Kind]string{
 	.Invalid    = "invalid",
 	.Const      = "const",
 	.Type       = "type",
@@ -50,6 +50,9 @@ entity_new_ident :: proc(
 	e.decl       = decl
 	e.builtin_id = builtin_id
 	e.flags      = flags
+
+	ident.entity = e
+
 	return e
 }
 
