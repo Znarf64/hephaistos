@@ -1826,14 +1826,16 @@ check_expr_internal :: proc(
 
 		for arg, i in type.args {
 			if arg.name != "" {
-				expr := v.args[i].name.derived_expr.(^ast.Expr_Ident)
+				expr     := v.args[i].name
+				expr.type = arg.type
 				scope_insert_entity(checker, entity_new(.Var, expr, arg.type, flags = { .Resolved, }, allocator = checker.allocator))
 			}
 		}
 
 		for ret, i in type.returns {
 			if ret.name != "" {
-				expr := v.returns[i].name.derived_expr.(^ast.Expr_Ident)
+				expr     := v.returns[i].name
+				expr.type = ret.type
 				scope_insert_entity(checker, entity_new(.Var, expr, ret.type, flags = { .Resolved, }, allocator = checker.allocator))
 			}
 		}
