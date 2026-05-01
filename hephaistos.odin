@@ -27,11 +27,13 @@ parse              :: parser.parse
 
 check              :: checker.check
 Checker            :: checker.Checker
+Checker_Flag       :: checker.Flag
 Checker_Flags      :: checker.Flags
 Buffer_Address     :: checker.Buffer_Address
 Reflection_Info    :: checker.Reflection_Info
 Entry_Point_Info   :: checker.Entry_Point_Info
 Library            :: checker.Library
+type_info_to_type  :: checker.type_info_to_type
 
 Const_Value        :: types.Const_Value
 Type               :: types.Type

@@ -1138,7 +1138,7 @@ check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt, ignore_constants 
 checker_init :: proc(
 	checker:       ^Checker,
 	defines:       map[string]types.Const_Value,
-	shared_types:  []Shared_Type,
+	shared_types:  map[string]^types.Type,
 	libraries:     map[string]Library,
 	flags:         Flags,
 	allocator       := context.allocator,
@@ -1243,42 +1243,38 @@ checker_init :: proc(
 
 	scope_push(checker, .Global)
 
-	checker.shared_types.allocator = allocator
-	for s in shared_types {
-		checker.shared_types[s.name] = s.type
-	}
-
-	checker.config_vars = defines
+	checker.shared_types = shared_types
+	checker.config_vars  = defines
 }
 
 @(require_results)
-type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator) -> ^types.Type {
+type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator) -> (type: ^types.Type, ok: bool) {
 	switch v in ti.variant {
 	case reflect.Type_Info_Named:
 		return type_info_to_type(v.base, allocator)
 	case reflect.Type_Info_Integer:
 		switch ti.size {
 		case 1:
-			return types.t_i8  if v.signed else types.t_u8
+			return types.t_i8  if v.signed else types.t_u8, true
 		case 2:
-			return types.t_i16 if v.signed else types.t_u16
+			return types.t_i16 if v.signed else types.t_u16, true
 		case 4:
-			return types.t_i32 if v.signed else types.t_u32
+			return types.t_i32 if v.signed else types.t_u32, true
 		case 8:
-			return types.t_i64 if v.signed else types.t_u64
+			return types.t_i64 if v.signed else types.t_u64, true
 		case:
-			fmt.panicf("integer types have to be either 1, 2, 4 or 8 bytes wide, got %v", ti.size)
+			return
 		}
 	case reflect.Type_Info_Rune:
-		return types.t_i32
+		return types.t_i32, true
 	case reflect.Type_Info_Float:
 		switch ti.size {
 		case 4:
-			return types.t_f32
+			return types.t_f32, true
 		case 8:
-			return types.t_f64
+			return types.t_f64, true
 		case:
-			fmt.panicf("float types have to be either 4 or 8 bytes wide, got %v", ti.size)
+			return
 		}
 	case reflect.Type_Info_Complex:
 		elem: ^types.Type
@@ -1288,9 +1284,9 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 		case 16:
 			elem = types.t_f64
 		case:
-			fmt.panicf("complex types have to be either 8 or 16 bytes wide, got %v", ti.size)
+			return
 		}
-		return types.array_new(elem, 2, allocator)
+		return types.array_new(elem, 2, allocator), true
 	case reflect.Type_Info_Quaternion:
 		elem: ^types.Type
 		switch ti.size {
@@ -1299,76 +1295,76 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 		case 32:
 			elem = types.t_f64
 		case:
-			fmt.panicf("quaternion types have to be either 16 or 32 bytes wide, got %v", ti.size)
+			return
 		}
-		return types.array_new(elem, 4, allocator)
+		return types.array_new(elem, 4, allocator), true
 	case reflect.Type_Info_String:
-		panic("string types can not be shared")
+		return
 	case reflect.Type_Info_Boolean:
 		switch ti.size {
 		case 1:
-			return types.t_bool
+			return types.t_bool, true
 		case 2:
-			return types.t_i16
+			return types.t_i16, true
 		case 4:
-			return types.t_i32
+			return types.t_i32, true
 		case 8:
-			return types.t_i64
+			return types.t_i64, true
 		case:
-			fmt.panicf("boolean types have to be either 1, 2, 4 or 8 bytes wide, got %v", ti.size)
+			return
 		}
 	case reflect.Type_Info_Any:
-		panic("any types can not be shared")
+		return
 	case reflect.Type_Info_Type_Id:
-		panic("typeid types can not be shared")
+		return
 	case reflect.Type_Info_Pointer:
-		panic("pointer types can not be shared")
+		return
 	case reflect.Type_Info_Multi_Pointer:
-		panic("multi pointer types can not be shared")
+		return
 	case reflect.Type_Info_Procedure:
-		panic("procedure types can not be shared")
+		return
 	case reflect.Type_Info_Array:
-		return types.array_new(type_info_to_type(v.elem, allocator), v.count, allocator)
+		return types.array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
 	case reflect.Type_Info_Enumerated_Array:
 		unimplemented()
 	case reflect.Type_Info_Dynamic_Array, reflect.Type_Info_Fixed_Capacity_Dynamic_Array:
-		panic("dynamic array types can not be shared")
+		return
 	case reflect.Type_Info_Slice:
-		panic("slice types can not be shared")
+		return
 	case reflect.Type_Info_Parameters:
-		panic("???")
+		return
 	case reflect.Type_Info_Struct:
 		if .raw_union in v.flags {
 			if v.field_count != 2 {
-				panic("structs with the #raw_union can not be shared")
+					return
 			}
 			if ti.size != 8 {
-				panic("structs with the #raw_union can not be shared")
+					return
 			}
 			tag, ok := reflect.struct_tag_lookup(auto_cast v.tags[1], "hephaistos")
 			if !ok {
-				panic("structs with the #raw_union can not be shared")
+					return
 			}
 			if tag != "buffer_device_address" {
-				panic("structs with the #raw_union can not be shared")
+					return
 			}
 			ptr  := v.types[1].variant.(reflect.Type_Info_Pointer)
-			elem := type_info_to_type(ptr.elem, allocator)
-			return types.buffer_new(elem, true, allocator)
+			elem := type_info_to_type(ptr.elem, allocator) or_return
+			return types.buffer_new(elem, true, allocator), true
 		}
 		fields := make([]types.Field, v.field_count, allocator)
 		for &f, i in fields {
-			f.name    = v.names[i]
-			f.type    = type_info_to_type(v.types[i], allocator)
-			f.offset  = int(v.offsets[i])
+			f.name   = v.names[i]
+			f.type   = type_info_to_type(v.types[i], allocator) or_return
+			f.offset = int(v.offsets[i])
 		}
 		s       := types.new(.Struct, types.Struct, allocator)
 		s.size   = ti.size
 		s.align  = ti.align
 		s.fields = fields
-		return s
+		return s, true
 	case reflect.Type_Info_Union:
-		panic("union types can not be shared")
+		return
 	case reflect.Type_Info_Enum:
 		e      := types.new(.Enum, types.Enum, allocator)
 		values := make([]types.Enum_Value, len(v.values), allocator)
@@ -1378,48 +1374,43 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 				name  = v.names[i],
 			}
 		}
-		e.backing = type_info_to_type(v.base, allocator)
+		e.backing = type_info_to_type(v.base, allocator) or_return
 		e.size    = e.backing.size
 		e.align   = e.backing.align
 		e.values  = values
-		return e
+		return e, true
 	case reflect.Type_Info_Map:
-		panic("map types can not be shared")
+		return
 	case reflect.Type_Info_Bit_Set:
 		return type_info_to_type(v.underlying, allocator)
 	case reflect.Type_Info_Simd_Vector:
-		return types.array_new(type_info_to_type(v.elem, allocator), v.count, allocator)
+		return types.array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
 	case reflect.Type_Info_Matrix:
-		elem := type_info_to_type(v.elem, allocator)
+		elem := type_info_to_type(v.elem, allocator) or_return
 		col  := types.array_new(elem, v.row_count, allocator)
-		return types.matrix_new(col, v.column_count, allocator)
+		return types.matrix_new(col, v.column_count, allocator), true
 	case reflect.Type_Info_Soa_Pointer:
-		panic("soa pointer types can not be shared")
+		return
 	case reflect.Type_Info_Bit_Field:
 		return type_info_to_type(v.backing_type, allocator)
 	}
 	unreachable()
 }
 
-Shared_Type :: struct {
-	name: string,
-	type: ^types.Type,
-}
-
 @(require_results)
-shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.allocator) -> []Shared_Type {
-	output := make([]Shared_Type, len(typeids), allocator)
+shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.allocator) -> (ts: map[string]^types.Type) {
+	ts = make(map[string]^types.Type, allocator)
 	for t, i in typeids {
-		ti    := type_info_of(t)
-		named := ti.variant.(reflect.Type_Info_Named) or_else panic("only named types can be shared")
-		type  := type_info_to_type(named.base, allocator)
-		output[i] = { name = named.name, type = type}
+		ti            := type_info_of(t)
+		named         := ti.variant.(reflect.Type_Info_Named) or_else panic("only named types can be shared")
+		type          := type_info_to_type(named.base, allocator) or_else fmt.panicf("type can not be shared: %v", ti)
+		ts[named.name] = type
 	}
-	return output
+	return
 }
 
 @(require_results)
-check :: proc(
+check_with_typeids :: proc(
 	stmts:     []^ast.Stmt,
 	defines:   map[string]types.Const_Value = {},
 	types:     []typeid                     = {},
@@ -1429,12 +1420,30 @@ check :: proc(
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
 	shared_types := shared_types_from_typeids(types, allocator)
-	checker_init(&checker, defines, shared_types, libraries, flags, allocator, error_allocator)
+	return check_with_shared_types(stmts, defines, shared_types, libraries, flags, allocator, error_allocator)
+}
+
+@(require_results)
+check_with_shared_types :: proc(
+	stmts:     []^ast.Stmt,
+	defines:   map[string]types.Const_Value = {},
+	types:     map[string]^types.Type       = {},
+	libraries: map[string]Library           = {},
+	flags:     Flags                        = {},
+	allocator       := context.allocator,
+	error_allocator := context.allocator,
+) -> (checker: Checker, errors: []tokenizer.Error) {
+	checker_init(&checker, defines, types, libraries, flags, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
 	slice.sort_by(checker.errors[:], proc(a, b: tokenizer.Error) -> bool {
 		return a.offset < b.offset
 	})
 	return checker, checker.errors[:]
+}
+
+check :: proc {
+	check_with_shared_types,
+	check_with_typeids,
 }
 
 @(require_results)
@@ -1888,6 +1897,8 @@ check_expr_internal :: proc(
 		return operand
 
 	case ^ast.Expr_Selector:
+		defer v.selector.type = operand.type
+
 		selector := v.selector.text
 
 		if v.lhs == nil {
