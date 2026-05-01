@@ -273,7 +273,7 @@ _base_types_init :: proc "contextless" () {
 	t_Intersection_Type = intersection_type
 }
 
-print_writer :: proc(w: io.Writer, type: ^Type) {
+print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 	if type == nil {
 		fmt.wprint(w, "<nil>")
 		return
@@ -284,41 +284,85 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 		fmt.wprint(w, "invalid type")
 	case .Struct:
 		s := type.variant.(^Struct)
-		fmt.wprint(w, "struct{")
+		if len(s.fields) == 0 {
+			fmt.wprint(w, "struct {}")
+			return
+		}
+
+		fmt.wprint(w, "struct {")
+		if indent >= 0 {
+			fmt.wprint(w, "\n")
+		}
 		for field, i in s.fields {
-			if i > 0 {
+			for _ in 0 ..< indent + 1 {
+				fmt.wprint(w, "    ")
+			}
+
+			if indent < 0 && i > 0 {
 				fmt.wprint(w, ", ")
 			}
+
 			fmt.wprint(w, field.name)
 			fmt.wprint(w, ": ")
-			print_writer(w, field.type)
+			print_writer(w, field.type, indent + 1)
+
+			if indent >= 0 {
+				fmt.wprint(w, ",\n")
+			}
 		}
+
+		for _ in 0 ..< indent {
+			fmt.wprint(w, "    ")
+		}
+
 		fmt.wprint(w, "}")
 	case .Enum:
 		e := type.variant.(^Enum)
-		fmt.wprint(w, "enum{")
+		if len(e.values) == 0 {
+			fmt.wprint(w, "enum {}")
+			return
+		}
+
+		fmt.wprint(w, "enum {")
+		if indent >= 0 {
+			fmt.wprint(w, "\n")
+		}
 		for field, i in e.values {
-			if i > 0 {
+			for _ in 0 ..< indent + 1 {
+				fmt.wprint(w, "    ")
+			}
+
+			if indent < 0 && i > 0 {
 				fmt.wprint(w, ", ")
 			}
+
 			fmt.wprint(w, field.name)
 			fmt.wprint(w, " = ")
 			fmt.wprint(w, field.value)
+
+			if indent >= 0 {
+				fmt.wprint(w, ",\n")
+			}
 		}
+
+		for _ in 0 ..< indent {
+			fmt.wprint(w, "\t")
+		}
+
 		fmt.wprint(w, "}")
 	case .Matrix:
 		m := type.variant.(^Matrix)
 		c := m.col_type
 		fmt.wprintf(w, "matrix[%d, %d]", m.cols, c.count)
-		print_writer(w, c.elem)
+		print_writer(w, c.elem, indent)
 	case .Array:
 		v := type.variant.(^Array)
 		fmt.wprintf(w, "[%d]", v.count)
-		print_writer(w, v.elem)
+		print_writer(w, v.elem, indent)
 	case .Buffer:
 		v := type.variant.(^Buffer)
-		fmt.wprintf(w, "buffer[]")
-		print_writer(w, v.elem)
+		fmt.wprintf(w, "[^]")
+		print_writer(w, v.elem, indent)
 	case .Proc:
 		b := type.variant.(^Proc)
 		fmt.wprint(w, "proc(")
@@ -376,23 +420,23 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 			if i > 0 {
 				fmt.wprint(w, ", ")
 			}
-			print_writer(w, type.type)
+			print_writer(w, type.type, indent)
 		}
 		fmt.wprint(w, ")")
 	case .Sampler:
 		type := type.variant.(^Image)
 		fmt.wprintf(w, "sampler[%d]", type.dimensions)
-		print_writer(w, type.texel_type)
+		print_writer(w, type.texel_type, indent)
 	case .Image:
 		type := type.variant.(^Image)
 		fmt.wprintf(w, "image[%d]", type.dimensions)
-		print_writer(w, type.texel_type)
+		print_writer(w, type.texel_type, indent)
 	case .Bit_Set:
 		type := type.variant.(^Bit_Set)
 		fmt.wprintf(w, "bit_set[")
-		print_writer(w, type.enum_type)
+		print_writer(w, type.enum_type, indent + 1)
 		fmt.wprintf(w, ";")
-		print_writer(w, type.backing)
+		print_writer(w, type.backing, indent)
 		fmt.wprintf(w, "]")
 	case .Opaque:
 		type := type.variant.(^Opaque)
@@ -401,9 +445,9 @@ print_writer :: proc(w: io.Writer, type: ^Type) {
 }
 
 @(require_results)
-to_string :: proc(type: ^Type, allocator := context.allocator) -> string {
+to_string :: proc(type: ^Type, pretty := false, allocator := context.allocator) -> string {
 	b := strings.builder_make(allocator)
-	print_writer(strings.to_writer(&b), type)
+	print_writer(strings.to_writer(&b), type, pretty ? 0 : min(int))
 	return strings.to_string(b)
 }
 
