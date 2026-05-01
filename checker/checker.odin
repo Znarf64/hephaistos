@@ -2120,6 +2120,11 @@ check_expr_internal :: proc(
 					operand.type = types.t_invalid
 					return
 				}
+
+				// only for the lsp
+				v.args[0].value.type = type
+				v.lhs.type           = type
+
 				operand.type = type
 				operand.mode = .Type
 			case .Config:
