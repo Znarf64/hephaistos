@@ -280,14 +280,6 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 		fields := parse_field_list(parser, .Close_Brace, false) or_return
 		s      := ast.new(ast.Type_Struct, token.location, parser.end_location, parser.allocator)
 		s.fields = fields
-		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
-			token_advance(parser)
-			values := parse_arg_list(parser, .Close_Brace) or_return
-			comp   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
-			comp.fields    = values
-			comp.type_expr = s
-			return comp, true
-		}
 		return s, true
 
 	case .Enum:
@@ -327,15 +319,6 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 		m.cols = cols
 		m.elem = elem
 
-		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
-			token_advance(parser)
-			values := parse_arg_list(parser, .Close_Brace) or_return
-			comp   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
-			comp.fields    = values
-			comp.type_expr = m
-			return comp, true
-		}
-
 		return m, true
 
 	case .Open_Bracket:
@@ -355,15 +338,6 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 		a.count    = count
 		a.elem     = elem
 		a.physical = physical
-
-		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
-			token_advance(parser)
-			values := parse_arg_list(parser, .Close_Brace) or_return
-			comp   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
-			comp.fields    = values
-			comp.type_expr = a
-			return comp, true
-		}
 
 		return a, true
 
@@ -529,7 +503,7 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 			values        := parse_arg_list(parser, .Close_Brace) or_return
 			comp          := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
 			comp.fields    = values
-			comp.type_expr = expr
+			comp.type_expr = operand
 			operand        = comp
 		case:
 			break loop
@@ -539,295 +513,7 @@ parse_atom_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr
 	return operand, true
 }
 
-// 	token := token_peek(parser)
-// 	#partial switch token.kind {
-// 	case .Ident:
-// 		token_advance(parser)
-// 		expr     := ast.new(ast.Expr_Ident, token.location, parser.end_location, parser.allocator)
-// 		expr.text = token.text
-
-// 		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
-// 			token_advance(parser)
-// 			values := parse_arg_list(parser, .Close_Brace) or_return
-// 			comp   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
-// 			comp.fields    = values
-// 			comp.type_expr = expr
-// 			return comp, true
-// 		}
-
-// 		return expr, true
-
-// 	case .Dollar:
-// 		token_advance(parser)
-// 		ident := token_expect(parser, .Ident) or_return
-// 		expr := ast.new(ast.Expr_Interface, token.location, parser.end_location, parser.allocator)
-// 		expr.ident = ident
-// 		return expr, true
-
-// 	case .Literal:
-// 		token_advance(parser)
-// 		expr := ast.new(ast.Expr_Constant, token.location, parser.end_location, parser.allocator)
-// 		#partial switch token.value_kind {
-// 		case .Int:
-// 			expr.value = token.value.int
-// 		case .Float:
-// 			expr.value = token.value.float
-// 		case .Bool:
-// 			expr.value = token.value.bool
-// 		case .String:
-// 			expr.value = token.text[1:len(token.text) - 1]
-// 		case:
-// 			unreachable()
-// 		}
-// 		expr.imaginary = token.imaginary
-// 		return expr, true
-
-// 	case .Open_Brace:
-// 		token_advance(parser)
-// 		fields := parse_arg_list(parser, .Close_Brace) or_return
-// 		expr   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
-// 		expr.fields = fields
-// 		return expr, true
-
-// 	case .Proc:
-// 		if token_peek(parser, 1).kind == .Open_Brace {
-// 			token_expect(parser, .Proc)
-// 			token_expect(parser, .Open_Brace)
-
-// 			members := make([dynamic]^ast.Expr, parser.allocator)
-// 			for {
-// 				if token_peek(parser).kind == .Close_Brace {
-// 					break
-// 				}
-
-// 				append(&members, parse_expr(parser) or_break)
-// 				token_expect(parser, .Comma) or_break
-// 			}
-// 			token_expect(parser, .Close_Brace)
-
-// 			group        := ast.new(ast.Expr_Proc_Group, token.location, parser.end_location, parser.allocator)
-// 			group.members = members[:]
-// 			return group, true
-// 		}
-// 		args, returns := parse_proc_signature(parser) or_return
-// 		if token_peek(parser).kind == .Open_Brace {
-// 			token_advance(parser)
-// 			body := parse_stmt_list(parser) or_return
-// 			token_advance(parser)
-
-// 			lit := ast.new(ast.Expr_Proc_Lit, token.location, parser.end_location, parser.allocator)
-// 			lit.args    = args
-// 			lit.returns = returns
-// 			lit.body    = body
-// 			return lit, true
-// 		} else {
-// 			sig := ast.new(ast.Expr_Proc_Sig, token.location, parser.end_location, parser.allocator)
-// 			sig.args    = args
-// 			sig.returns = returns
-// 			return sig, true
-// 		}
-
-// 	case .Struct:
-// 		token_advance(parser)
-// 		token_expect(parser, .Open_Brace) or_return
-// 		fields := parse_field_list(parser, .Close_Brace, false) or_return
-// 		s      := ast.new(ast.Type_Struct, token.location, parser.end_location, parser.allocator)
-// 		s.fields = fields
-// 		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
-// 			token_advance(parser)
-// 			values := parse_arg_list(parser, .Close_Brace) or_return
-// 			comp   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
-// 			comp.fields    = values
-// 			comp.type_expr = s
-// 			return comp, true
-// 		}
-// 		return s, true
-
-// 	case .Enum:
-// 		token_advance(parser)
-// 		token_expect(parser, .Open_Brace) or_return
-// 		values := parse_field_list(parser, .Close_Brace, false, types = false) or_return
-// 		s      := ast.new(ast.Type_Enum, token.location, parser.end_location, parser.allocator)
-// 		s.values = values
-// 		return s, true
-
-// 	case .Bit_Set:
-// 		token_advance(parser)
-// 		token_expect(parser, .Open_Bracket) or_return
-// 		enum_type  := parse_expr(parser) or_return
-// 		token_expect(parser, .Semicolon) or_return
-// 		backing    := parse_expr(parser) or_return
-// 		token_expect(parser, .Close_Bracket) or_return
-// 		b          := ast.new(ast.Type_Bit_Set, token.location, parser.end_location, parser.allocator)
-// 		b.enum_type = enum_type
-// 		b.backing   = backing
-// 		return b, true
-
-// 	case .Matrix:
-// 		token_advance(parser)
-// 		token_expect(parser, .Open_Bracket) or_return
-// 		rows := parse_expr(parser) or_return
-// 		cols: ^ast.Expr
-// 		if token_peek(parser).kind == .Comma {
-// 			token_advance(parser)
-// 			cols = parse_expr(parser) or_return
-// 		}
-// 		token_expect(parser, .Close_Bracket) or_return
-// 		elem := parse_expr(parser, allow_compound_literals = false) or_return
-
-// 		m := ast.new(ast.Type_Matrix, token.location, parser.end_location, parser.allocator)
-// 		m.rows = rows
-// 		m.cols = cols
-// 		m.elem = elem
-
-// 		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
-// 			token_advance(parser)
-// 			values := parse_arg_list(parser, .Close_Brace) or_return
-// 			comp   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
-// 			comp.fields    = values
-// 			comp.type_expr = m
-// 			return comp, true
-// 		}
-
-// 		return m, true
-
-// 	case .Open_Bracket:
-// 		token_expect(parser, .Open_Bracket) or_return
-// 		count: ^ast.Expr
-// 		physical: bool
-// 		if token_peek(parser).kind == .Pointer {
-// 			physical = true
-// 			token_advance(parser)
-// 		} else if token_peek(parser).kind != .Close_Bracket {
-// 			count = parse_expr(parser) or_return
-// 		}
-// 		token_expect(parser, .Close_Bracket) or_return
-// 		elem := parse_expr(parser, allow_compound_literals = false) or_return
-
-// 		a := ast.new(ast.Type_Array, token.location, parser.end_location, parser.allocator)
-// 		a.count    = count
-// 		a.elem     = elem
-// 		a.physical = physical
-
-// 		if allow_compound_literals && token_peek(parser).kind == .Open_Brace {
-// 			token_advance(parser)
-// 			values := parse_arg_list(parser, .Close_Brace) or_return
-// 			comp   := ast.new(ast.Expr_Compound, token.location, parser.end_location, parser.allocator)
-// 			comp.fields    = values
-// 			comp.type_expr = a
-// 			return comp, true
-// 		}
-
-// 		return a, true
-
-// 	case .Sampler, .Image:
-// 		token_advance(parser)
-// 		token_expect(parser, .Open_Bracket) or_return
-// 		dim := parse_expr(parser) or_return
-// 		token_expect(parser, .Close_Bracket) or_return
-// 		texel := parse_expr(parser, allow_compound_literals = false) or_return
-
-// 		s := ast.new(ast.Type_Image, token.location, parser.end_location, parser.allocator)
-// 		s.dimensions = dim
-// 		s.texel_type = texel
-// 		s.is_sampler = token.kind == .Sampler
-// 		return s, true
-
-// 	case .Open_Paren:
-// 		token_advance(parser)
-// 		expr := parse_expr(parser) or_return
-// 		token_expect(parser, .Close_Paren) or_return
-// 		paren := ast.new(ast.Expr_Paren, token.location, parser.end_location, parser.allocator)
-// 		paren.expr = expr
-// 		return paren, true
-
-// 	case .Add, .Subtract, .Xor, .Not:
-// 		token_advance(parser)
-// 		expr      := parse_atom_expr(parser, allow_compound_literals = allow_compound_literals) or_return
-// 		unary     := ast.new(ast.Expr_Unary, token.location, parser.end_location, parser.allocator)
-// 		unary.expr = expr
-// 		unary.op   = token.kind
-// 		return unary, true
-
-// 	case .Cast:
-// 		token_advance(parser)
-// 		token_expect(parser, .Open_Paren, "cast") or_return
-// 		type := parse_expr(parser) or_return
-// 		token_expect(parser, .Close_Paren) or_return
-// 		value := parse_expr(parser) or_return
-// 		c     := ast.new(ast.Expr_Cast, token.location, parser.end_location, parser.allocator)
-// 		c.type_expr = type
-// 		c.value     = value
-// 		return c, true
-
-// 	case .Directive:
-// 		token_advance(parser)
-// 		directive_token: tokenizer.Token
-// 		if token_peek(parser).kind == .Import {
-// 			directive_token = token_advance(parser)
-// 		} else {
-// 			directive_token = token_expect(parser, .Ident, "directive") or_return
-// 		}
-
-// 		directive: ast.Directive
-// 		for name, d in ast.directive_names {
-// 			if name == directive_token.text {
-// 				directive = d
-// 				break
-// 			}
-// 		}
-
-// 		if directive != nil {
-// 			token_expect(parser, .Open_Paren, "directive") or_return
-// 			args       := parse_arg_list(parser, .Close_Paren) or_return
-// 			d          := ast.new(ast.Expr_Directive, token.location, parser.end_location, parser.allocator)
-// 			d.token     = directive_token
-// 			d.directive = directive
-
-// 			c     := ast.new(ast.Expr_Call, token.location, parser.end_location, parser.allocator)
-// 			c.lhs  = d
-// 			c.args = args
-
-// 			return c, true
-// 		}
-
-// 		switch directive_token.text {
-// 		case "format":
-// 			token_expect(parser, .Open_Paren, "#format") or_return
-// 			format := token_expect(parser, .Ident, "#format") or_return
-// 			token_expect(parser, .Close_Paren, "#format") or_return
-
-// 			image := parse_expr(parser) or_return
-// 			if image, ok := image.derived_expr.(^ast.Type_Image); ok {
-// 				image.format = format
-// 			} else {
-// 				error(parser, directive_token, "'#format' directive can only be applied to image types")
-// 			}
-
-// 			return image, true
-// 		case:
-// 			error(parser, directive_token, "unknown directive: '%s'", directive_token.text)
-// 		}
-// 	case .Period:
-// 		token_advance(parser)
-// 		selector  := token_expect(parser, .Ident, "'.'") or_return
-// 		ident     := ast.new(ast.Expr_Ident, selector.location, parser.end_location, parser.allocator)
-// 		ident.text = selector.text
-// 		s         := ast.new(ast.Expr_Selector, token.location, parser.end_location, parser.allocator)
-// 		s.lhs      = nil
-// 		s.selector = ident
-// 		return s, true
-// 	case .Ellipsis:
-// 		token_advance(parser)
-// 		e            := parse_expr(parser, allow_compound_literals = allow_compound_literals) or_return
-// 		ellipsis     := ast.new(ast.Expr_Ellipsis, token.location, parser.end_location, parser.allocator)
-// 		ellipsis.expr = e
-// 		return ellipsis, true
-// 	}
-
-// 	error(parser, token, "unexpected token")
-// 	return
-
+@(rodata)
 binding_powers: #sparse [tokenizer.Token_Kind]int = #partial {
 	.Question_Mark  = 2,
 	.If             = 2,
