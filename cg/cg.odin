@@ -151,7 +151,6 @@ Context :: struct {
 	checker:             ^checker.Checker,
 	scopes:              [dynamic]Scope,
 	entities:            map[^ast.Entity]Value,
-	// libraries:           map[string]Library,
 	name_prefix:         string,
 
 	extensions:          map[string]struct{},
@@ -186,10 +185,6 @@ Scope_Kind :: enum {
 	Block,
 	Loop,
 	Switch,
-}
-
-Library :: struct {
-	entities: map[^ast.Entity]Value,
 }
 
 Scope :: struct {

@@ -26,6 +26,7 @@ Location           :: tokenizer.Location
 parse              :: parser.parse
 
 check              :: checker.check
+check_with_types   :: checker.check_with_types
 Checker            :: checker.Checker
 Checker_Flag       :: checker.Flag
 Checker_Flags      :: checker.Flags
@@ -117,15 +118,21 @@ check_library :: proc(
 	}
 
 	stmts: []^Ast_Stmt
-	stmts, errors = parse(tokens, context.temp_allocator, error_allocator)
+	stmts, errors = parse(tokens, allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}
 
 	c: Checker
-	c, errors = check(stmts, defines, shared_types, libraries, {}, context.temp_allocator, error_allocator)
+	c, errors = check(stmts, defines, shared_types, libraries, {}, allocator, error_allocator)
 	if len(errors) != 0 {
 		return
+	}
+
+	for _, entity in c.scope.entities {
+		if entity.library == "" {
+			entity.library = path
+		}
 	}
 
 	library.entities = c.scope.entities

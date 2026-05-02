@@ -880,6 +880,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 		} else {
 			e        := entity_new(.Library, name, types.t_invalid, allocator = checker.allocator)
 			e.library = path
+			e.decl    = v
 			e.flags   = { .Resolved, }
 			scope_insert_entity(checker, e)
 		}
@@ -1150,11 +1151,7 @@ checker_init :: proc(
 	checker.error_allocator                   = error_allocator
 	checker.errors                            = make([dynamic]tokenizer.Error, error_allocator)
 	checker.flags                             = flags
-	checker.libraries                         = libraries
-
-	if checker.libraries.allocator == {} {
-		checker.libraries.allocator = allocator
-	}
+	checker.libraries                         = make(map[string]Library, allocator)
 
 	scope_push(checker, .Global)
 
@@ -1239,6 +1236,11 @@ checker_init :: proc(
 			lib.entities[name]           = e
 			checker.scope.entities[name] = e
 		}
+	}
+
+	for name, lib in libraries {
+		assert(name not_in checker.libraries, "extension and base libraries can not be overwritten")
+		checker.libraries[name] = lib
 	}
 
 	scope_push(checker, .Global)
@@ -1410,7 +1412,7 @@ shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.alloca
 }
 
 @(require_results)
-check_with_typeids :: proc(
+check :: proc(
 	stmts:     []^ast.Stmt,
 	defines:   map[string]types.Const_Value = {},
 	types:     []typeid                     = {},
@@ -1420,11 +1422,11 @@ check_with_typeids :: proc(
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
 	shared_types := shared_types_from_typeids(types, allocator)
-	return check_with_shared_types(stmts, defines, shared_types, libraries, flags, allocator, error_allocator)
+	return check_with_types(stmts, defines, shared_types, libraries, flags, allocator, error_allocator)
 }
 
 @(require_results)
-check_with_shared_types :: proc(
+check_with_types :: proc(
 	stmts:     []^ast.Stmt,
 	defines:   map[string]types.Const_Value = {},
 	types:     map[string]^types.Type       = {},
@@ -1439,11 +1441,6 @@ check_with_shared_types :: proc(
 		return a.offset < b.offset
 	})
 	return checker, checker.errors[:]
-}
-
-check :: proc {
-	check_with_shared_types,
-	check_with_typeids,
 }
 
 @(require_results)

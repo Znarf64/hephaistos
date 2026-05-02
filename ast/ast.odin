@@ -70,6 +70,7 @@ Expr_Ident :: struct {
 	using node: Expr,
 	text:       string,
 	entity:    ^Entity,
+	library:    string,
 }
 
 Expr_Interface :: struct {

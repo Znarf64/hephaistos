@@ -69,11 +69,32 @@ main :: proc() {
 		check:      bool                       `usage:"Stop after type-checking and don't emit a SPIR-V file."`,
 		target_env: Target_Env                 `usage:"The target environment."`,
 		defines:    map[string]hep.Const_Value `args:"name=define" usage:"Define compile time constants."`,
+		libraries:  map[string]string          `args:"name=library" usage:"Path to a library."`,
 	}
 
 	options: Options
 	flags.register_type_setter(parse_const_value)
 	flags.parse_or_exit(&options, os.args)
+
+	libraries: map[string]hep.Library
+	for name, path in options.libraries {
+		source, err := os.read_entire_file(path, context.temp_allocator)
+		if err != nil {
+			fmt.eprintln("Failed to open library file:", path, err)
+		}
+		lib, errors := hep.check_library(string(source), path)
+
+		if len(errors) != 0 {
+			file_name := filepath.base(options.input)
+			lines     := strings.split_lines(string(source))
+			for error in errors {
+				hep.print_error(os.to_stream(os.stdout), file_name, lines, error)
+			}
+			continue
+		}
+
+		libraries[name] = lib
+	}
 
 	if options.output == "" {
 		options.output = "a.spv"
@@ -117,7 +138,7 @@ main :: proc() {
 	}
 
 	checker: hep.Checker
-	checker, errors = hep.check(stmts, options.defines, flags = flags, allocator = context.temp_allocator)
+	checker, errors = hep.check(stmts, options.defines, libraries = libraries, flags = flags, allocator = context.temp_allocator)
 	if len(errors) != 0 {
 		return
 	}
