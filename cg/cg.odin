@@ -149,7 +149,7 @@ Context :: struct {
 
 	current_id:          spv.Id,
 	checker:             ^checker.Checker,
-	scopes:              [dynamic]Scope,
+	scopes:              [dynamic]^Scope,
 	entities:            map[^ast.Entity]Value,
 	name_prefix:         string,
 
@@ -188,7 +188,7 @@ Scope_Kind :: enum {
 }
 
 Scope :: struct {
-	label:        string,
+	label:       ^ast.Entity,
 	label_id:     spv.Id,
 	end_id:       spv.Id,
 	continue_id:  spv.Id,
@@ -220,15 +220,17 @@ cg_insert_entity_value :: proc(ctx: ^Context, entity: ^ast.Entity, value: Value)
 	ctx.entities[entity] = value
 }
 
-scope_push :: proc(ctx: ^Context, label: string = "", kind: Scope_Kind = .Block) -> ^Scope {
-	append(&ctx.scopes, Scope {
-		label = label,
-		kind  = kind,
-	})
-	return &ctx.scopes[len(ctx.scopes) - 1]
+scope_push :: proc(ctx: ^Context, label: ^ast.Expr_Ident = nil, kind: Scope_Kind = .Block) -> (scope: ^Scope) {
+	scope      = new(Scope)
+	scope.kind = kind
+	if label != nil {
+		scope.label = label.entity
+	}
+	append(&ctx.scopes, scope)
+	return scope
 }
 
-scope_pop :: proc(ctx: ^Context) -> Scope {
+scope_pop :: proc(ctx: ^Context) -> ^Scope {
 	return pop(&ctx.scopes)
 }
 
@@ -236,9 +238,9 @@ cg_scope :: proc(
 	ctx:     ^Context,
 	builder: ^spv.Builder,
 	stmts:   []^ast.Stmt,
-	end:     spv.Id     = 0,
-	label:   string     = "",
-	kind:    Scope_Kind = .Block,
+	end:     spv.Id          = 0,
+	label:   ^ast.Expr_Ident = nil,
+	kind:    Scope_Kind      = .Block,
 ) -> (start_label: spv.Id, diverged: bool) {
 	scope := scope_push(ctx, label, kind)
 	defer scope_pop(ctx)
@@ -256,12 +258,12 @@ cg_scope :: proc(
 
 find_scope_by_label :: proc(
 	ctx:   ^Context,
-	label: string,
+	label: ^ast.Entity,
 ) -> ^Scope {
-	assert(label != {})
+	assert(label != nil)
 	#reverse for &scope in ctx.scopes {
 		if scope.label == label {
-			return &scope
+			return scope
 		}
 	}
 	return nil
@@ -273,7 +275,7 @@ find_scope_by_kind :: proc(
 ) -> ^Scope {
 	#reverse for &scope in ctx.scopes {
 		if scope.kind in kinds {
-			return &scope
+			return scope
 		}
 	}
 	return nil
@@ -2757,7 +2759,7 @@ cg_expr_internal :: proc(
 cg_lookup_proc_scope :: proc(ctx: ^Context) -> ^Scope {
 	#reverse for &scope in ctx.scopes {
 		if scope.return_type != nil {
-			return &scope
+			return scope
 		}
 	}
 	panic("")
@@ -2769,15 +2771,6 @@ cg_lookup_return_value :: proc(ctx: ^Context) -> spv.Id {
 
 cg_lookup_return_type :: proc(ctx: ^Context) -> ^types.Type {
 	return cg_lookup_proc_scope(ctx).return_type
-}
-
-cg_lookup_label :: proc(ctx: ^Context, label: string) -> ^Scope {
-	#reverse for &scope in ctx.scopes {
-		if scope.label == label {
-			return &scope
-		}
-	}
-	panic("")
 }
 
 stmt_requires_line_info :: proc(stmt: ^ast.Stmt) -> bool {
@@ -2874,8 +2867,8 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		return true
 	case ^ast.Stmt_Break:
 		target: spv.Id
-		if len(v.label.text) != 0 {
-			target = find_scope_by_label(ctx, v.label.text).end_id
+		if v.label != nil {
+			target = find_scope_by_label(ctx, v.label.entity).end_id
 		} else {
 			target = find_scope_by_kind(ctx, { .Loop, .Switch, }).end_id
 		}
@@ -2883,15 +2876,15 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		return true
 	case ^ast.Stmt_Continue:
 		target: spv.Id
-		if len(v.label.text) != 0 {
-			target = find_scope_by_label(ctx, v.label.text).continue_id
+		if v.label != nil {
+			target = find_scope_by_label(ctx, v.label.entity).continue_id
 		} else {
 			target = find_scope_by_kind(ctx, { .Loop, }).continue_id
 		}
 		spv.OpBranch(builder, target)
 		return true
 	case ^ast.Stmt_For_Range:
-		scope_push(ctx, v.label.text)
+		scope_push(ctx, v.label)
 		defer scope_pop(ctx)
 
 		iter_type := v.variable.type
@@ -2966,7 +2959,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		append(&builder.data, ..end_builder.data[:])
 
 	case ^ast.Stmt_For:
-		scope_push(ctx, v.label.text, .Loop)
+		scope_push(ctx, v.label, .Loop)
 		defer scope_pop(ctx)
 
 		cg_stmt(ctx, builder, v.init)
@@ -3014,7 +3007,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		spv.OpName(&ctx.debug_b, end, "$BLOCK_END")
 
 		label: spv.Id
-		label, diverged = cg_scope(ctx, &block_builder, v.body, end = end, label = v.label.text)
+		label, diverged = cg_scope(ctx, &block_builder, v.body, end = end, label = v.label)
 
 		spv.OpName(&ctx.debug_b, label, v.label.text)
 		spv.OpBranch(builder, label)
@@ -3023,7 +3016,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		append(&builder.data, ..end_builder.data[:])
 
 	case ^ast.Stmt_If:
-		scope_push(ctx, v.label.text)
+		scope_push(ctx, v.label)
 		defer scope_pop(ctx)
 
 		cg_stmt(ctx, builder, v.init)
@@ -3054,7 +3047,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 			return cg_stmt_list(ctx, builder, v.else_block, global = global)
 		}
 	case ^ast.Stmt_Switch:
-		scope_push(ctx, v.label.text)
+		scope_push(ctx, v.label)
 		defer scope_pop(ctx)
 
 		cg_stmt(ctx, builder, v.init)

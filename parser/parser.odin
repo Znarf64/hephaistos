@@ -219,8 +219,6 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 			expr.value = token.value.int
 		case .Float:
 			expr.value = token.value.float
-		case .Bool:
-			expr.value = token.value.bool
 		case .String:
 			expr.value = token.text[1:len(token.text) - 1]
 		case:
@@ -694,9 +692,9 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}, allow_c
 		return ret, true
 	case .Continue:
 		token_advance(parser)
-		label: tokenizer.Token
+		label: ^ast.Expr_Ident
 		if token_peek(parser).kind == .Ident {
-			label = token_advance(parser)
+			label = parse_ident(parser) or_return
 		}
 		cont := ast.new(ast.Stmt_Continue, token.location, parser.end_location, parser.allocator)
 		cont.label = label
@@ -704,9 +702,9 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}, allow_c
 		return cont, true
 	case .Break:
 		token_advance(parser)
-		label: tokenizer.Token
+		label: ^ast.Expr_Ident
 		if token_peek(parser).kind == .Ident {
-			label = token_advance(parser)
+			label = parse_ident(parser) or_return
 		}
 		brk := ast.new(ast.Stmt_Break, token.location, parser.end_location, parser.allocator)
 		brk.label = label
@@ -778,7 +776,7 @@ parse_attributes :: proc(parser: ^Parser) -> (_attributes: []ast.Field, ok: bool
 	return
 }
 
-parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []ast.Field = {}) -> (stmt: ^ast.Stmt, ok: bool) {
+parse_stmt :: proc(parser: ^Parser, label: ^ast.Expr_Ident = nil, attributes: []ast.Field = {}) -> (stmt: ^ast.Stmt, ok: bool) {
 	token := token_peek(parser)
 	#partial switch token.kind {
 	case .Attribute:
@@ -804,8 +802,10 @@ parse_stmt :: proc(parser: ^Parser, label: tokenizer.Token = {}, attributes: []a
 			#partial switch token_peek(parser, 2).kind {
 			case .For, .If, .Switch, .Open_Brace:
 				token_advance(parser)
+				label     := ast.new(ast.Expr_Ident, token.location, parser.end_location, parser.allocator)
+				label.text = token.text
 				token_advance(parser)
-				return parse_stmt(parser, token)
+				return parse_stmt(parser, label)
 			}
 		}
 		return parse_simple_stmt(parser, attributes)

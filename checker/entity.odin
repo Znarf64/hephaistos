@@ -25,19 +25,15 @@ entity_kind_strings := [Entity_Kind]string{
 	.Label      = "Label",
 }
 
-entity_new :: proc {
-	entity_new_ident,
-	entity_new_name,
-}
-
 @(require_results)
-entity_new_ident :: proc(
+entity_new :: proc(
 	kind:       ast.Entity_Kind,
 	ident:     ^ast.Expr_Ident,
 	type:      ^types.Type,
-	decl:      ^ast.Decl         = nil,
-	builtin_id: ast.Builtin_Id   = nil,
-	flags:      ast.Entity_Flags = {},
+	decl:      ^ast.Decl          = nil,
+	value:      types.Const_Value = nil,
+	builtin_id: ast.Builtin_Id    = nil,
+	flags:      ast.Entity_Flags  = {},
 	allocator:  mem.Allocator,
 ) -> ^ast.Entity {
 	assert(type != nil)
@@ -48,6 +44,7 @@ entity_new_ident :: proc(
 	e.ident      = ident
 	e.name       = ident.text
 	e.decl       = decl
+	e.value      = value
 	e.builtin_id = builtin_id
 	e.flags      = flags
 
@@ -57,13 +54,14 @@ entity_new_ident :: proc(
 }
 
 @(require_results)
-entity_new_name :: proc(
+entity_new_no_ident :: proc(
 	kind:       ast.Entity_Kind,
 	name:       string,
 	type:      ^types.Type,
-	decl:      ^ast.Decl         = nil,
-	builtin_id: ast.Builtin_Id   = nil,
-	flags:      ast.Entity_Flags = {},
+	decl:      ^ast.Decl          = nil,
+	builtin_id: ast.Builtin_Id    = nil,
+	value:      types.Const_Value = nil,
+	flags:      ast.Entity_Flags  = {},
 	allocator:  mem.Allocator,
 ) -> ^ast.Entity {
 	e           := new(ast.Entity, allocator)
@@ -72,6 +70,7 @@ entity_new_name :: proc(
 	e.ident      = nil
 	e.name       = name
 	e.decl       = decl
+	e.value      = value
 	e.builtin_id = builtin_id
 	e.flags      = flags
 	return e

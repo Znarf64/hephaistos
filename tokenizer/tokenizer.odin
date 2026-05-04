@@ -126,14 +126,12 @@ Token :: struct {
 	location: Location,
 	text:     string,
 	value:    struct #raw_union {
-		bool:  bool,
 		int:   i64,
 		float: f64,
 		op:    Token_Kind,
 	},
 	kind:       Token_Kind,
 	value_kind: enum u8 {
-		Bool,
 		Int,
 		Float,
 		Op,
@@ -359,14 +357,6 @@ tokenize :: proc(
 			token.kind = .Ident
 			if keyword, ok := keyword_strings[source[start:current]]; ok {
 				token.kind = keyword
-			} else if source[start:current] == "true" {
-				token.kind       = .Literal
-				token.value.bool = true
-				token.value_kind = .Bool
-			} else if source[start:current] == "false" {
-				token.kind       = .Literal
-				token.value.bool = false
-				token.value_kind = .Bool
 			}
 
 		case '0' ..= '9':

@@ -451,17 +451,17 @@ Stmt_Return :: struct {
 
 Stmt_Break :: struct {
 	using node: Stmt,
-	label:      tokenizer.Token,
+	label:     ^Expr_Ident,
 }
 
 Stmt_Continue :: struct {
 	using node: Stmt,
-	label:      tokenizer.Token,
+	label:     ^Expr_Ident,
 }
 
 Stmt_For_Range :: struct {
 	using node:  Stmt,
-	label:       tokenizer.Token,
+	label:      ^Expr_Ident,
 	start_expr: ^Expr,
 	end_expr:   ^Expr,
 	variable:   ^Expr_Ident,
@@ -471,7 +471,7 @@ Stmt_For_Range :: struct {
 
 Stmt_For :: struct {
 	using node: Stmt,
-	label:      tokenizer.Token,
+	label:     ^Expr_Ident,
 	init:      ^Stmt,
 	cond:      ^Expr,
 	post:      ^Stmt,
@@ -480,13 +480,13 @@ Stmt_For :: struct {
 
 Stmt_Block :: struct {
 	using node: Stmt,
-	label:      tokenizer.Token,
+	label:     ^Expr_Ident,
 	body:    []^Stmt,
 }
 
 Stmt_If :: struct {
 	using node:    Stmt,
-	label:         tokenizer.Token,
+	label:        ^Expr_Ident,
 	init:         ^Stmt,
 	cond:         ^Expr,
 	then_block: []^Stmt,
@@ -495,7 +495,7 @@ Stmt_If :: struct {
 
 Stmt_When :: struct {
 	using node:    Stmt,
-	label:         tokenizer.Token,
+	label:        ^Expr_Ident,
 	cond:         ^Expr,
 	then_block: []^Stmt,
 	else_block: []^Stmt,
@@ -509,7 +509,7 @@ Switch_Case :: struct {
 
 Stmt_Switch :: struct {
 	using node:     Stmt,
-	label:          tokenizer.Token,
+	label:         ^Expr_Ident,
 	init:          ^Stmt,
 	cond:          ^Expr,
 	cases:        []Switch_Case,

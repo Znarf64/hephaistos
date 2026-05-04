@@ -81,6 +81,7 @@ Addressing_Mode :: enum {
 	Builtin,
 	Library,
 	Ellipsis,
+	Label,
 }
 
 @(rodata)
@@ -96,6 +97,7 @@ addressing_mode_string := [Addressing_Mode]string {
 	.Builtin    = "builtin",
 	.Library    = "library",
 	.Ellipsis   = "ellipsis",
+	.Label      = "label",
 }
 
 Operand :: struct {
@@ -106,6 +108,7 @@ Operand :: struct {
 	builtin_id:        ast.Builtin_Id,
 	interface:         ast.Interface_Kind,
 	library:           string,
+	scope:            ^ast.Scope,
 	is_call:           bool,
 	diverges:          bool,
 	constant_compound: bool,
@@ -121,31 +124,17 @@ scope_new :: proc(parent: ^Scope, kind: Scope_Kind, allocator: mem.Allocator) ->
 }
 
 @(require_results)
-scope_lookup :: proc(checker: ^Checker, token: tokenizer.Token) -> (e: ^Entity, ok: bool) {
+scope_lookup :: proc(checker: ^Checker, name: ^ast.Expr_Ident) -> (e: ^Entity, ok: bool) {
 	s := checker.scope
 	for s != nil {
-		e, ok = s.entities[token.text]
+		e, ok = s.entities[name.text]
 		if ok {
 			decl_resolve(checker, e)
 			return
 		}
 		s = s.parent
 	}
-	error(checker, token, "unknown identifier: '%s'", token.text)
-	return
-}
-
-@(require_results)
-scope_lookup_label :: proc(checker: ^Checker, label: tokenizer.Token) -> (s: ^Scope, ok: bool) {
-	e := scope_lookup(checker, label) or_return
-	s  = e.scope
-
-
-	if e.kind != .Label {
-		error(checker, label, "expected a label, got %v", entity_kind_strings[e.kind])
-		ok = false
-	}
-
+	error(checker, name, "unknown identifier: '%s'", name.text)
 	return
 }
 
@@ -175,11 +164,11 @@ lookup_scope_by_kind :: proc(checker: ^Checker, mask: bit_set[Scope_Kind]) -> (s
 	return
 }
 
-scope_push :: proc(checker: ^Checker, kind: Scope_Kind, label: tokenizer.Token = {}) -> ^Scope {
+scope_push :: proc(checker: ^Checker, kind: Scope_Kind, label: ^ast.Expr_Ident = nil) -> ^Scope {
 	checker.scope = scope_new(checker.scope, kind, checker.allocator)
 
-	if label.text != "" {
-		e      := entity_new(.Label, label.text, nil, flags = { .Resolved, }, allocator = checker.allocator)
+	if label != nil {
+		e      := entity_new(.Label, label, types.t_invalid, flags = { .Resolved, }, allocator = checker.allocator)
 		e.scope = checker.scope
 		scope_insert_entity(checker, e)
 	}
@@ -253,8 +242,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		return true
 	case ^ast.Stmt_Break:
-		if v.label.text != "" {
-			_, _ = scope_lookup_label(checker, v.label)
+		if v.label != nil {
+			label := check_expr_internal(checker, v.label, {})
+			if label.mode != .Label {
+				error(checker, label, "expected a label")
+				return
+			}
 		} else {
 			_, ok := lookup_scope_by_kind(checker, { .Loop, .Switch, })
 			if !ok {
@@ -264,13 +257,17 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		return true
 	case ^ast.Stmt_Continue:
-		if v.label.text != "" {
-			scope := scope_lookup_label(checker, v.label) or_break
-			if scope.kind != .Loop {
-				error(checker, v, "continue can only be used in loops")
+		if v.label != nil {
+			label := check_expr_internal(checker, v.label, {})
+			if label.mode != .Label {
+				error(checker, label, "expected a label")
+				return
+			}
+			if label.scope.kind != .Loop {
+				error(checker, label, "continue can only be used in loops")
 			}
 		} else {
-			_, ok := lookup_scope_by_kind(checker, { .Loop, })
+			_, ok := lookup_scope_by_kind(checker, { .Loop, .Switch, })
 			if !ok {
 				error(checker, v, "continue can only be used in loops")
 			}
@@ -878,7 +875,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 		if path not_in checker.libraries {
 			error(checker, v.path, "Imported library does not exist: \"%v\"", path)
 		} else {
-			e        := entity_new(.Library, name, types.t_invalid, allocator = checker.allocator)
+			e        := entity_new_no_ident(.Library, name, types.t_invalid, allocator = checker.allocator)
 			e.library = path
 			e.decl    = v
 			e.flags   = { .Resolved, }
@@ -1157,10 +1154,12 @@ checker_init :: proc(
 
 	create_builtin_type :: proc(checker: ^Checker, type: ^types.Type, type_expr := #caller_expression(type)) {
 		name := type_expr[len("types.t_"):]
-		scope_insert_entity(checker, entity_new(.Type, name, type, flags = { .Resolved, }, allocator = checker.allocator))
+		scope_insert_entity(checker, entity_new_no_ident(.Type, name, type, flags = { .Resolved, }, allocator = checker.allocator))
 	}
 
 	create_builtin_type(checker, types.t_bool)
+	scope_insert_entity(checker, entity_new_no_ident(.Const, "true",  types.t_bool, value = true,  flags = { .Resolved, }, allocator = checker.allocator))
+	scope_insert_entity(checker, entity_new_no_ident(.Const, "false", types.t_bool, value = false, flags = { .Resolved, }, allocator = checker.allocator))
 
 	create_builtin_type(checker, types.t_i8)
 	create_builtin_type(checker, types.t_i16)
@@ -1198,7 +1197,7 @@ checker_init :: proc(
 
 	create_library_type :: proc(checker: ^Checker, library: ^Library, type: ^types.Type, type_expr := #caller_expression(type)) {
 		name := strings.trim_prefix(type_expr, "types.t_")
-		library.entities[name] = entity_new(.Type, name, type, flags = { .Resolved, }, allocator = checker.allocator)
+		library.entities[name] = entity_new_no_ident(.Type, name, type, flags = { .Resolved, }, allocator = checker.allocator)
 	}
 
 	raytracing_extension := find_or_create_lib(checker, "extensions:raytracing")
@@ -1214,7 +1213,7 @@ checker_init :: proc(
 
 	for name, builtin in builtin_names {
 		create_builtin_proc :: proc(checker: ^Checker, name: string, builtin: ast.Builtin_Id) -> ^Entity {
-			return entity_new(
+			return entity_new_no_ident(
 				.Builtin,
 				name,
 				types.t_invalid,
@@ -1402,7 +1401,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 @(require_results)
 shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.allocator) -> (ts: map[string]^types.Type) {
 	ts = make(map[string]^types.Type, allocator)
-	for t, i in typeids {
+	for t in typeids {
 		ti            := type_info_of(t)
 		named         := ti.variant.(reflect.Type_Info_Named) or_else panic("only named types can be shared")
 		type          := type_info_to_type(named.base, allocator) or_else fmt.panicf("type can not be shared: %v", ti)
@@ -1790,7 +1789,7 @@ check_expr_internal :: proc(
 		}
 
 	case ^ast.Expr_Ident:
-		e, ok := scope_lookup(checker, { text = v.text, location = v.start, })
+		e, ok := scope_lookup(checker, v)
 		if !ok {
 			operand.type = types.t_invalid
 			operand.mode = .Invalid
@@ -2964,6 +2963,8 @@ check_expr_or_type :: proc(
 			return
 		}
 		error(checker, operand, "illegal use of ellipsis ('..')")
+	case .Label:
+		error(checker, operand, "invalid use of label")
 	case .Invalid:
 	}
 
@@ -3003,6 +3004,8 @@ check_expr :: proc(
 			return
 		}
 		error(checker, operand, "illegal use of ellipsis ('..')")
+	case .Label:
+		error(checker, operand, "invalid use of label")
 	case .Invalid:
 	}
 
@@ -3026,6 +3029,8 @@ check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 		error(checker, operand, "expected a type, got no value")
 	case .Library:
 		error(checker, operand, "expected a type, got library")
+	case .Label:
+		error(checker, operand, "invalid use of label")
 	case .Invalid:
 	}
 
@@ -3109,9 +3114,8 @@ entity_to_operand :: proc(checker: ^Checker, e: ^Entity, operand: ^Operand) {
 		operand.mode    = .Library
 		operand.library = e.library
 	case .Label:
-		error(checker, operand^, "Invalid use of label")
-		operand.type = types.t_invalid
-		operand.mode = .Invalid
+		operand.mode  = .Label
+		operand.scope = e.scope
 	}
 }
 
