@@ -844,7 +844,12 @@ parse_stmt :: proc(parser: ^Parser, label: ^ast.Expr_Ident = nil, attributes: []
 							error(parser, ident.start, ident.end, "expected an identifier as iteration variable in `for x in ...` style loop")
 						}
 
-						range_stmt           := ast.new(ast.Stmt_For_Range, token.location, parser.end_location, parser.allocator)
+						start_location := token.location
+						if label != nil {
+							start_location = label.start
+						}
+
+						range_stmt           := ast.new(ast.Stmt_For_Range, start_location, parser.end_location, parser.allocator)
 						range_stmt.variable   = ident
 						range_stmt.label      = label
 						range_stmt.start_expr = start
@@ -876,7 +881,12 @@ parse_stmt :: proc(parser: ^Parser, label: ^ast.Expr_Ident = nil, attributes: []
 		body := parse_stmt_list(parser) or_return
 		token_advance(parser)
 
-		for_stmt := ast.new(ast.Stmt_For, token.location, parser.end_location, parser.allocator)
+		start_location := token.location
+		if label != nil {
+			start_location = label.start
+		}
+
+		for_stmt := ast.new(ast.Stmt_For, start_location, parser.end_location, parser.allocator)
 		for_stmt.label = label
 		for_stmt.init  = init
 		for_stmt.cond  = cond
@@ -916,7 +926,12 @@ parse_stmt :: proc(parser: ^Parser, label: ^ast.Expr_Ident = nil, attributes: []
 			}
 		}
 
-		if_stmt := ast.new(ast.Stmt_If, token.location, parser.end_location, parser.allocator)
+		start_location := token.location
+		if label != nil {
+			start_location = label.start
+		}
+
+		if_stmt := ast.new(ast.Stmt_If, start_location, parser.end_location, parser.allocator)
 		if_stmt.label      = label
 		if_stmt.init       = init
 		if_stmt.cond       = cond
@@ -976,7 +991,13 @@ parse_stmt :: proc(parser: ^Parser, label: ^ast.Expr_Ident = nil, attributes: []
 		}
 		token_expect(parser, .Close_Brace)
 
-		s := ast.new(ast.Stmt_Switch, token.location, parser.end_location, parser.allocator)
+		start_location := token.location
+		if label != nil {
+			start_location = label.start
+		}
+
+		s := ast.new(ast.Stmt_Switch, start_location, parser.end_location, parser.allocator)
+		s.label = label
 		s.init  = init
 		s.cond  = cond
 		s.cases = cases[:]
@@ -988,7 +1009,12 @@ parse_stmt :: proc(parser: ^Parser, label: ^ast.Expr_Ident = nil, attributes: []
 		stmts := parse_stmt_list(parser) or_return
 		token_advance(parser)
 
-		block := ast.new(ast.Stmt_Block, token.location, parser.end_location, parser.allocator)
+		start_location := token.location
+		if label != nil {
+			start_location = label.start
+		}
+
+		block := ast.new(ast.Stmt_Block, start_location, parser.end_location, parser.allocator)
 		block.label = label
 		block.body  = stmts
 		return block, true
