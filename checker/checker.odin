@@ -164,6 +164,7 @@ lookup_scope_by_kind :: proc(checker: ^Checker, mask: bit_set[Scope_Kind]) -> (s
 	return
 }
 
+@(require_results)
 scope_push :: proc(checker: ^Checker, kind: Scope_Kind, label: ^ast.Expr_Ident = nil) -> ^Scope {
 	checker.scope = scope_new(checker.scope, kind, checker.allocator)
 
@@ -275,7 +276,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		return true
 	case ^ast.Stmt_For_Range:
-		scope_push(checker, .Loop, v.label)
+		v.init_scope = scope_push(checker, .Loop, v.label)
 		defer scope_pop(checker)
 
 		start := check_expr(checker, v.start_expr)
@@ -294,12 +295,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		scope_insert_entity(checker, entity_new(.Var, v.variable, iter_type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator))
 		v.variable.type = iter_type
 
-		scope_push(checker, .Block)
+		v.scope = scope_push(checker, .Block)
 		defer scope_pop(checker)
 		check_stmt_list(checker, v.body)
 		return false
 	case ^ast.Stmt_For:
-		scope_push(checker, .Loop, v.label)
+		v.init_scope = scope_push(checker, .Loop, v.label)
 		defer scope_pop(checker)
 
 		if v.init != nil {
@@ -317,17 +318,17 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			check_stmt(checker, v.post)
 		}
 
-		scope_push(checker, .Block)
+		v.scope = scope_push(checker, .Block)
 		defer scope_pop(checker)
 		check_stmt_list(checker, v.body)
 		return false
 	case ^ast.Stmt_Block:
-		scope_push(checker, .Block, v.label)
+		v.scope = scope_push(checker, .Block, v.label)
 		defer scope_pop(checker)
 
 		return check_stmt_list(checker, v.body)
 	case ^ast.Stmt_If:
-		scope_push(checker, .Block, v.label)
+		v.init_scope = scope_push(checker, .Block, v.label)
 		defer scope_pop(checker)
 
 		if v.init != nil {
@@ -339,11 +340,11 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			error(checker, cond, "expected a boolean expression in if statement condition but got expression of type %v", cond.type)
 		}
 
-		scope_push(checker, .Block, v.label)
+		v.then_scope = scope_push(checker, .Block, v.label)
 		then_diverging := check_stmt_list(checker, v.then_block)
 		scope_pop(checker)
 
-		scope_push(checker, .Block, v.label)
+		v.else_scope = scope_push(checker, .Block, v.label)
 		else_diverging := check_stmt_list(checker, v.else_block)
 		scope_pop(checker)
 
@@ -362,7 +363,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		return false
 
 	case ^ast.Stmt_Switch:
-		scope_push(checker, .Block, v.label)
+		v.scope = scope_push(checker, .Block, v.label)
 		defer scope_pop(checker)
 
 		if v.init != nil {
@@ -373,21 +374,21 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		cond.type        = types.default_type(cond.type)
 		seen_default    := false
 		v.constant_cases = true
-		for c in v.cases {
+		for &c in v.cases {
 			if c.value == nil {
 				if seen_default {
 					error(checker, c.token, "switch statement can only have one default case")
 					seen_default = true
 				}
 
-				scope_push(checker, .Switch)
+				c.scope = scope_push(checker, .Switch)
 				defer scope_pop(checker)
 
 				check_stmt_list(checker, c.body)
 				continue
 			}
 
-			scope_push(checker, .Switch)
+			c.scope = scope_push(checker, .Switch)
 			defer scope_pop(checker)
 
 			value := check_expr(checker, c.value, type_hint = cond.type)
@@ -1155,7 +1156,7 @@ checker_init :: proc(
 	checker.flags                             = flags
 	checker.libraries                         = make(map[string]Library, allocator)
 
-	scope_push(checker, .Global)
+	_ = scope_push(checker, .Global)
 
 	create_builtin_type :: proc(checker: ^Checker, type: ^types.Type, type_expr := #caller_expression(type)) {
 		name := type_expr[len("types.t_"):]
@@ -1247,7 +1248,7 @@ checker_init :: proc(
 		checker.libraries[name] = lib
 	}
 
-	scope_push(checker, .Global)
+	_ = scope_push(checker, .Global)
 
 	checker.shared_types = shared_types
 	checker.config_vars  = defines
@@ -1850,7 +1851,7 @@ check_expr_internal :: proc(
 			}
 		}
 
-		scope_push(checker, .Block)
+		v.scope = scope_push(checker, .Block)
 		defer scope_pop(checker)
 
 		check_stmt_list(checker, v.body)

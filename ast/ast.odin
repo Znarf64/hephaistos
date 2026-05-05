@@ -137,6 +137,7 @@ shader_stage_names: [Shader_Stage]string = {
 Expr_Proc_Lit :: struct {
 	using sig: Expr_Proc_Sig,
 	body:   []^Stmt,
+	scope:    ^Scope,
 }
 
 Expr_Proc_Sig :: struct {
@@ -467,30 +468,38 @@ Stmt_For_Range :: struct {
 	variable:   ^Expr_Ident,
 	body:     []^Stmt,
 	inclusive:   bool,
+	init_scope: ^Scope,
+	scope:      ^Scope,
 }
 
 Stmt_For :: struct {
-	using node: Stmt,
-	label:     ^Expr_Ident,
-	init:      ^Stmt,
-	cond:      ^Expr,
-	post:      ^Stmt,
-	body:    []^Stmt,
+	using node:  Stmt,
+	label:      ^Expr_Ident,
+	init:       ^Stmt,
+	cond:       ^Expr,
+	post:       ^Stmt,
+	body:     []^Stmt,
+	init_scope: ^Scope,
+	scope:      ^Scope,
 }
 
 Stmt_Block :: struct {
 	using node: Stmt,
 	label:     ^Expr_Ident,
 	body:    []^Stmt,
+	scope:     ^Scope,
 }
 
 Stmt_If :: struct {
 	using node:    Stmt,
 	label:        ^Expr_Ident,
 	init:         ^Stmt,
+	init_scope:   ^Scope,
 	cond:         ^Expr,
 	then_block: []^Stmt,
+	then_scope:   ^Scope,
 	else_block: []^Stmt,
+	else_scope:   ^Scope,
 }
 
 Stmt_When :: struct {
@@ -499,12 +508,14 @@ Stmt_When :: struct {
 	cond:         ^Expr,
 	then_block: []^Stmt,
 	else_block: []^Stmt,
+	scope:        ^Scope,
 }
 
 Switch_Case :: struct {
 	token:   tokenizer.Token,
 	value:  ^Expr,
 	body: []^Stmt,
+	scope:  ^Scope,
 }
 
 Stmt_Switch :: struct {
@@ -514,6 +525,7 @@ Stmt_Switch :: struct {
 	cond:          ^Expr,
 	cases:        []Switch_Case,
 	constant_cases: bool,
+	scope:         ^Scope,
 }
 
 Stmt_Assign :: struct {
