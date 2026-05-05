@@ -875,7 +875,12 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 		if path not_in checker.libraries {
 			error(checker, v.path, "Imported library does not exist: \"%v\"", path)
 		} else {
-			e        := entity_new_no_ident(.Library, name, types.t_invalid, allocator = checker.allocator)
+			e: ^Entity
+			if v.alias != nil {
+				e = entity_new(.Library, v.alias, types.t_invalid, allocator = checker.allocator)
+			} else {
+				e = entity_new_no_ident(.Library, name, types.t_invalid, allocator = checker.allocator)
+			}
 			e.library = path
 			e.decl    = v
 			e.flags   = { .Resolved, }

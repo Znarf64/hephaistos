@@ -74,6 +74,7 @@ Ast_Type_Image     :: ast.Type_Image
 Ast_Type_Enum      :: ast.Type_Enum
 
 Ast_Decl_Value     :: ast.Decl_Value
+Ast_Decl_Import    :: ast.Decl_Import
 
 Ast_Stmt_Return    :: ast.Stmt_Return
 Ast_Stmt_Break     :: ast.Stmt_Break
