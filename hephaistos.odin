@@ -41,57 +41,70 @@ Type               :: types.Type
 
 cg_generate        :: cg.generate
 
-Ast_Node           :: ast.Node
-Ast_Expr           :: ast.Expr
-Ast_Stmt           :: ast.Stmt
-Ast_Decl           :: ast.Decl
+Ast_Node            :: ast.Node
+Ast_Expr            :: ast.Expr
+Ast_Stmt            :: ast.Stmt
+Ast_Decl            :: ast.Decl
 
-Ast_Field          :: ast.Field
-Ast_Switch_Case    :: ast.Switch_Case
+Ast_Field           :: ast.Field
+Ast_Switch_Case     :: ast.Switch_Case
+Ast_Directive       :: ast.Directive
+Ast_Shader_Stage    :: ast.Shader_Stage
+Ast_Builtin_Id      :: ast.Builtin_Id
+Ast_Interface_Kind  :: ast.Interface_Kind
 
-Ast_Shader_Stage   :: ast.Shader_Stage
-Ast_Builtin_Id     :: ast.Builtin_Id
+Ast_Expr_Binary     :: ast.Expr_Binary
+Ast_Expr_Unary      :: ast.Expr_Unary
+Ast_Expr_Ternary    :: ast.Expr_Ternary
+Ast_Expr_Constant   :: ast.Expr_Constant
+Ast_Expr_Ident      :: ast.Expr_Ident
+Ast_Expr_Interface  :: ast.Expr_Interface
+Ast_Expr_Directive  :: ast.Expr_Directive
+Ast_Expr_Proc_Lit   :: ast.Expr_Proc_Lit
+Ast_Expr_Proc_Sig   :: ast.Expr_Proc_Sig
+Ast_Expr_Proc_Group :: ast.Expr_Proc_Group
+Ast_Expr_Call       :: ast.Expr_Call
+Ast_Expr_Paren      :: ast.Expr_Paren
+Ast_Expr_Selector   :: ast.Expr_Selector
+Ast_Expr_Compound   :: ast.Expr_Compound
+Ast_Expr_Index      :: ast.Expr_Index
+Ast_Expr_Cast       :: ast.Expr_Cast
+Ast_Expr_Ellipsis   :: ast.Expr_Ellipsis
 
-Ast_Expr_Binary    :: ast.Expr_Binary
-Ast_Expr_Unary     :: ast.Expr_Unary
-Ast_Expr_Constant  :: ast.Expr_Constant
-Ast_Expr_Ident     :: ast.Expr_Ident
-Ast_Expr_Directive :: ast.Expr_Directive
-Ast_Expr_Interface :: ast.Expr_Interface
-Ast_Expr_Proc_Lit  :: ast.Expr_Proc_Lit
-Ast_Expr_Proc_Sig  :: ast.Expr_Proc_Sig
-Ast_Expr_Call      :: ast.Expr_Call
-Ast_Expr_Paren     :: ast.Expr_Paren
-Ast_Expr_Selector  :: ast.Expr_Selector
-Ast_Expr_Compound  :: ast.Expr_Compound
-Ast_Expr_Index     :: ast.Expr_Index
-Ast_Expr_Cast      :: ast.Expr_Cast
+Ast_Type_Struct     :: ast.Type_Struct
+Ast_Type_Array      :: ast.Type_Array
+Ast_Type_Matrix     :: ast.Type_Matrix
+Ast_Type_Image      :: ast.Type_Image
+Ast_Type_Enum       :: ast.Type_Enum
+Ast_Type_Bit_Set    :: ast.Type_Bit_Set
 
-Ast_Type_Struct    :: ast.Type_Struct
-Ast_Type_Array     :: ast.Type_Array
-Ast_Type_Matrix    :: ast.Type_Matrix
-Ast_Type_Image     :: ast.Type_Image
-Ast_Type_Enum      :: ast.Type_Enum
+Ast_Decl_Value      :: ast.Decl_Value
+Ast_Decl_Import     :: ast.Decl_Import
 
-Ast_Decl_Value     :: ast.Decl_Value
-Ast_Decl_Import    :: ast.Decl_Import
+Ast_Stmt_Return     :: ast.Stmt_Return
+Ast_Stmt_Break      :: ast.Stmt_Break
+Ast_Stmt_Continue   :: ast.Stmt_Continue
+Ast_Stmt_For_Range  :: ast.Stmt_For_Range
+Ast_Stmt_For        :: ast.Stmt_For
+Ast_Stmt_Block      :: ast.Stmt_Block
+Ast_Stmt_If         :: ast.Stmt_If
+Ast_Stmt_When       :: ast.Stmt_When
+Ast_Stmt_Switch     :: ast.Stmt_Switch
+Ast_Stmt_Assign     :: ast.Stmt_Assign
+Ast_Stmt_Expr       :: ast.Stmt_Expr
 
-Ast_Stmt_Return    :: ast.Stmt_Return
-Ast_Stmt_Break     :: ast.Stmt_Break
-Ast_Stmt_Continue  :: ast.Stmt_Continue
-Ast_Stmt_For_Range :: ast.Stmt_For_Range
-Ast_Stmt_For       :: ast.Stmt_For
-Ast_Stmt_Block     :: ast.Stmt_Block
-Ast_Stmt_If        :: ast.Stmt_If
-Ast_Stmt_When      :: ast.Stmt_When
-Ast_Stmt_Switch    :: ast.Stmt_Switch
-Ast_Stmt_Assign    :: ast.Stmt_Assign
-Ast_Stmt_Expr      :: ast.Stmt_Expr
+Ast_Any_Node        :: ast.Any_Node
+Ast_Any_Expr        :: ast.Any_Expr
+Ast_Any_Decl        :: ast.Any_Decl
+Ast_Any_Stmt        :: ast.Any_Stmt
 
-Ast_Any_Node       :: ast.Any_Node
-Ast_Any_Expr       :: ast.Any_Expr
-Ast_Any_Decl       :: ast.Any_Decl
-Ast_Any_Stmt       :: ast.Any_Stmt
+Ast_Entity          :: ast.Entity
+Ast_Entity_Kind     :: ast.Entity_Kind
+Ast_Entity_Flag     :: ast.Entity_Flag
+Ast_Entity_Flags    :: ast.Entity_Flags
+
+Ast_Scope           :: ast.Scope
+Ast_Scope_Kind      :: ast.Scope_Kind
 
 SPIR_V_VERSION_CURRENT :: spv.VERSION
 SPIR_V_VERSION_1_0     :: 0x00010000 // use with OpenGL
