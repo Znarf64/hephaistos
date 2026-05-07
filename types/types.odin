@@ -590,18 +590,22 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 		return true
 	}
 
-	if from.size == 0 {
+	if !is_numeric(from) {
+		return false
+	}
+
+	if from.size == 0 && is_numeric(to) {
 		if to.kind == .Int && from.kind == .Float {
 			return false
 		}
 		return true
 	}
 
-	if is_numeric(from) && to.kind == .Array {
+	if to.kind == .Array {
 		return implicitly_castable(from, array_elem(to))
 	}
 
-	if is_numeric(from) && to.kind == .Matrix {
+	if to.kind == .Matrix {
 		return implicitly_castable(from, matrix_elem(to))
 	}
 
