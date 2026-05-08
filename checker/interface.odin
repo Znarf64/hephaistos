@@ -35,7 +35,7 @@ _interface_infos_init :: proc "contextless" () {
 	interface_infos["Layer"             ] = { type = types.t_i32,   usage = #partial { .Geometry = .Out,                                                                                }, id = .Layer,              }
 	interface_infos["ViewportIndex"     ] = { type = types.t_i32,   usage = #partial { .Geometry = .Out,                                                                                }, id = .ViewportIndex,      }
 	interface_infos["FragCoord"         ] = { type = types.t_vec4,  usage = #partial { .Fragment = .In,                                                                                 }, id = .FragCoord,          }
-	interface_infos["FragDepth"         ] = { type = types.t_f32,   usage = #partial { .Fragment = .In,                                                                                 }, id = .FragDepth,          }
+	interface_infos["FragDepth"         ] = { type = types.t_f32,   usage = #partial { .Fragment = .Out,                                                                                }, id = .FragDepth,          }
 	interface_infos["GlobalInvocationId"] = { type = types.t_ivec3, usage = #partial { .Compute  = .In,                                                                                 }, id = .GlobalInvocationId, }
 	interface_infos["NumWorkgroups"     ] = { type = types.t_ivec3, usage = #partial { .Compute  = .In,                                                                                 }, id = .NumWorkgroups,      }
 

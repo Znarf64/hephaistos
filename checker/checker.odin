@@ -405,6 +405,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 	case ^ast.Stmt_Assign:
 		lhs := make([]Operand, len(v.lhs), checker.allocator)
 		for &lhs, i in lhs {
+			if ident, ok := v.lhs[i].derived.(^ast.Expr_Ident); ok && ident.text == "_" {
+				lhs.expr = v.lhs[i]
+				lhs.type = nil
+				lhs.mode = .LValue
+				continue
+			}
 			lhs = check_expr(checker, v.lhs[i])
 		}
 
@@ -428,6 +434,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				defer lhs_i += 1
 				if lhs_i >= len(lhs) {
 					continue
+				}
+				if lhs[lhs_i].type == nil {
+					lhs[lhs_i].type      = type
+					lhs[lhs_i].expr.type = type
 				}
 				result_type := types.op_result_type(lhs[lhs_i].type, type)
 				if !types.implicitly_castable(type, lhs[lhs_i].type) {
@@ -1442,9 +1452,6 @@ check_with_types :: proc(
 ) -> (checker: Checker, errors: []tokenizer.Error) {
 	checker_init(&checker, defines, types, libraries, flags, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
-	slice.sort_by(checker.errors[:], proc(a, b: tokenizer.Error) -> bool {
-		return a.offset < b.offset
-	})
 	return checker, checker.errors[:]
 }
 
@@ -1795,6 +1802,10 @@ check_expr_internal :: proc(
 		}
 
 	case ^ast.Expr_Ident:
+		if v.text == "_" {
+			error(checker, v, "invalid use of blank identifier ('_')")
+			return
+		}
 		e, ok := scope_lookup(checker, v)
 		if !ok {
 			operand.type = types.t_invalid

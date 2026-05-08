@@ -376,7 +376,14 @@ print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 			fmt.wprint(w, ": ")
 			print_writer(w, arg.type)
 		}
-		fmt.wprint(w, ") -> (")
+		fmt.wprint(w, ")")
+
+		if len(b.args) == 0 {
+			break
+		}
+
+		fmt.wprint(w, " -> (")
+
 		for ret, i in b.returns {
 			if i > 0 {
 				fmt.wprint(w, ", ")
