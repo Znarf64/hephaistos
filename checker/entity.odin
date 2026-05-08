@@ -14,15 +14,17 @@ Scope_Kind   :: ast.Scope_Kind
 
 @(rodata)
 entity_kind_strings := [Entity_Kind]string{
-	.Invalid    = "invalid",
-	.Const      = "const",
-	.Type       = "type",
-	.Var        = "variable",
-	.Proc       = "proc",
-	.Proc_Group = "proc group",
-	.Builtin    = "builtin",
-	.Library    = "library",
-	.Label      = "Label",
+	.Invalid      = "invalid",
+	.Const        = "const",
+	.Type         = "type",
+	.Var          = "variable",
+	.Proc         = "proc",
+	.Proc_Group   = "proc group",
+	.Builtin      = "builtin",
+	.Library      = "library",
+	.Label        = "label",
+	.Struct_Field = "struct field",
+	.Enum_Value   = "enum value",
 }
 
 @(require_results)

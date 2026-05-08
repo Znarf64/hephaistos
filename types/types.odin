@@ -16,11 +16,13 @@ Field :: struct {
 	value:    Const_Value,
 	offset:   int,
 	location: int,
+	entity:   rawptr,
 }
 
 Enum_Value :: struct {
-	name:  string,
-	value: int,
+	name:   string,
+	value:  i64,
+	entity: rawptr,
 }
 
 Const_Value :: union {
@@ -233,25 +235,25 @@ _base_types_init :: proc "contextless" () {
 	e := new(.Enum, Enum, allocator)
 	e.backing = t_u32
 	e.values  = slice.clone([]Enum_Value {
-		{ "Front", 0xFE, },
-		{ "Back",  0xFF, },
+		{ "Front", 0xFE, nil, },
+		{ "Back",  0xFF, nil, },
 	}, allocator)
 	t_Hit_Kind = e
 
 	ray_flags_bits := new(.Enum, Enum, allocator)
 	ray_flags_bits.backing = t_i32
 	ray_flags_bits.values  = slice.clone([]Enum_Value {
-		{ "Opaque",                      0, },
-		{ "NoOpaque",                    1, },
-		{ "TerminateOnFirstHit",         2, },
-		{ "SkipClosestHitShader",        3, },
-		{ "CullBackFacingTriangles",     4, },
-		{ "CullFrontFacingTriangles",    5, },
-		{ "CullOpaque",                  6, },
-		{ "CullNoOpaque",                7, },
-		{ "SkipTriangles",               8, },
-		{ "SkipAABBs",                   9, },
-		{ "ForceOpacityMicromap2State", 10, },
+		{ "Opaque",                      0, nil, },
+		{ "NoOpaque",                    1, nil, },
+		{ "TerminateOnFirstHit",         2, nil, },
+		{ "SkipClosestHitShader",        3, nil, },
+		{ "CullBackFacingTriangles",     4, nil, },
+		{ "CullFrontFacingTriangles",    5, nil, },
+		{ "CullOpaque",                  6, nil, },
+		{ "CullNoOpaque",                7, nil, },
+		{ "SkipTriangles",               8, nil, },
+		{ "SkipAABBs",                   9, nil, },
+		{ "ForceOpacityMicromap2State", 10, nil, },
 	}, allocator)
 
 	set          := new(.Bit_Set, Bit_Set, allocator)
@@ -265,10 +267,10 @@ _base_types_init :: proc "contextless" () {
 	intersection_type := new(.Enum, Enum, allocator)
 	intersection_type.backing = t_i32
 	intersection_type.values  = slice.clone([]Enum_Value {
-		{ "None",      0, },
-		{ "Triangle",  1, },
-		{ "Generated", 2, },
-		{ "AABB",      3, },
+		{ "None",      0, nil, },
+		{ "Triangle",  1, nil, },
+		{ "Generated", 2, nil, },
+		{ "AABB",      3, nil, },
 	}, allocator)
 	t_Intersection_Type = intersection_type
 }

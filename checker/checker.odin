@@ -1377,7 +1377,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 		values := make([]types.Enum_Value, len(v.values), allocator)
 		for value, i in v.values {
 			values[i] = {
-				value = int(value),
+				value = i64(value),
 				name  = v.names[i],
 			}
 		}
@@ -1899,7 +1899,10 @@ check_expr_internal :: proc(
 		return operand
 
 	case ^ast.Expr_Selector:
-		defer v.selector.type = operand.type
+		defer {
+			v.selector.type   = operand.type
+			v.selector.entity = v.entity
+		}
 
 		selector := v.selector.text
 
@@ -1919,6 +1922,7 @@ check_expr_internal :: proc(
 					operand.type  = type_hint
 					operand.value = i64(val.value)
 					operand.mode  = .Const
+					v.entity      = (^Entity)(val.entity)
 					return
 				}
 			}
@@ -1941,9 +1945,7 @@ check_expr_internal :: proc(
 		if lhs.mode == .Library {
 			if e, ok := checker.libraries[lhs.library].entities[selector]; ok {
 				entity_to_operand(checker, e, &operand)
-				ident       := v.selector.derived_expr.(^ast.Expr_Ident)
-				ident.entity = e
-				v.entity     = e
+				v.entity = e
 				return
 			} else {
 				error(checker, v.selector, "'%s' is not declared by '%s'", selector, lhs.library)
@@ -1962,6 +1964,7 @@ check_expr_internal :: proc(
 					operand.type  = lhs.type
 					operand.value = i64(val.value)
 					operand.mode  = .Const
+					v.entity      = (^Entity)(val.entity)
 					return
 				}
 			}
@@ -2037,6 +2040,7 @@ check_expr_internal :: proc(
 					operand.type  = field.type
 					operand.mode  = lhs.mode
 					v.field_index = i
+					v.entity      = (^Entity)(field.entity)
 					return
 				}
 			}
@@ -2369,6 +2373,9 @@ check_expr_internal :: proc(
 			if named {
 				seen := make(map[string]struct{}, context.temp_allocator)
 				for &field in v.fields {
+					if field.name == nil {
+						continue
+					}
 					name := field.name.text
 
 					if name in seen {
@@ -2398,6 +2405,7 @@ check_expr_internal :: proc(
 						return
 					}
 					field.value.type   = struct_field.type
+					field.name.entity  = (^Entity)(struct_field.entity)
 					field.member_index = field_index
 				}
 			} else {
@@ -2428,6 +2436,9 @@ check_expr_internal :: proc(
 				}
 				seen: [4]bool
 				for &field in v.fields {
+					if field.name == nil {
+						continue
+					}
 					name    := field.name.text
 					indices := make([dynamic]u32, 0, len(name), checker.allocator)
 
@@ -2801,11 +2812,13 @@ check_expr_internal :: proc(
 
 			align = max(align, type.align)
 			for i in start ..< i {
-				name := v.fields[i].name.text
+				name   := v.fields[i].name.text
+				entity := entity_new(.Struct_Field, v.fields[i].name, type, allocator = checker.allocator)
 				append(&fields, types.Field {
 					name   = name,
 					type   = type,
 					offset = offset,
+					entity = entity,
 				})
 
 				offset += type.size
@@ -2827,9 +2840,11 @@ check_expr_internal :: proc(
 		type          := types.new(.Enum, types.Enum, checker.allocator)
 		values        := make([dynamic]types.Enum_Value, 0, len(v.values), checker.allocator)
 		values_seen   := make(map[string]struct{}, context.temp_allocator)
-		max_value     := 0
-		min_value     := 0
-		current_value := 0
+
+		max_value: i64
+		min_value: i64
+		current_value: i64
+
 		for value in v.values {
 			name := value.name.text
 
@@ -2838,28 +2853,29 @@ check_expr_internal :: proc(
 			}
 			values_seen[name] = {}
 
+			val: i64
 			if value.value == nil {
-				append(&values, types.Enum_Value {
-					name  = name,
-					value = current_value,
-				})
+				val            = current_value
 				max_value      = max(max_value, current_value)
 				current_value += 1
-				continue
+			} else {
+				enum_value := check_expr(checker, value.value)
+
+				ok: bool
+				if val, ok = enum_value.value.(i64); ok {
+					max_value     = max(max_value, val)
+					min_value     = min(min_value, val)
+					current_value = val
+				} else {
+					error(checker, enum_value, "enum value has to be a constant integer")
+				}
 			}
 
-			enum_value := check_expr(checker, value.value)
-			if val, ok := enum_value.value.(i64); ok {
-				append(&values, types.Enum_Value {
-					name  = name,
-					value = int(val),
-				})
-				max_value     = max(max_value, int(val))
-				min_value     = min(min_value, int(val))
-				current_value = int(val)
-			} else {
-				error(checker, enum_value, "enum value has to be a constant integer")
-			}
+			append(&values, types.Enum_Value {
+				name   = name,
+				value  = val,
+				entity = entity_new(.Enum_Value, value.name, type, value = i64(current_value), allocator = checker.allocator),
+			})
 		}
 
 		backing: ^types.Type
@@ -3122,6 +3138,8 @@ entity_to_operand :: proc(checker: ^Checker, e: ^Entity, operand: ^Operand) {
 	case .Label:
 		operand.mode  = .Label
 		operand.scope = e.scope
+	case .Struct_Field, .Enum_Value:
+		unreachable()
 	}
 }
 

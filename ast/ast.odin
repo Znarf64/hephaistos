@@ -675,6 +675,9 @@ Entity_Kind :: enum u32 {
 	Builtin,
 	Library,
 	Label,
+
+	Struct_Field,
+	Enum_Value,
 }
 
 Entity_Flag :: enum {
