@@ -206,15 +206,15 @@ t_Geometry_Mode:     ^Type
 t_Ray_Query:              ^Type
 t_Acceleration_Structure: ^Type
 
-_base_type_arena_mem: [1 << 12]byte
-_base_type_arena: mem.Arena
-
 @(init)
 _base_types_init :: proc "contextless" () {
 	context = runtime.default_context()
 
-	mem.arena_init(&_base_type_arena, _base_type_arena_mem[:])
-	allocator := mem.arena_allocator(&_base_type_arena)
+	@(static)
+	arena_mem: [1 << 12]byte
+	arena: mem.Arena
+	mem.arena_init(&arena, arena_mem[:])
+	allocator := mem.arena_allocator(&arena)
 
 	t_vec2 = array_new(t_f32, 2, allocator)
 	t_vec3 = array_new(t_f32, 3, allocator)

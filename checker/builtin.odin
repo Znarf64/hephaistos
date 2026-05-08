@@ -716,6 +716,8 @@ check_builtin :: proc(checker: ^Checker, v: ^ast.Expr_Call, fn: Operand) -> (ope
 		operand.mode = .RValue
 
 	case .Ray_Query_Initialize:
+		operand.is_call = true
+
 		arg_types: [8]^types.Type = {
 			types.t_Ray_Query,              // Ray Query
 			types.t_Acceleration_Structure, // Acceleration Structure
@@ -743,10 +745,11 @@ check_builtin :: proc(checker: ^Checker, v: ^ast.Expr_Call, fn: Operand) -> (ope
 			error(checker, args[0], "expected an addressable ray query variable")
 		}
 
-		operand.mode    = .No_Value
-		operand.is_call = true
+		operand.mode = .No_Value
 
 	case .Generate_Intersection:
+		operand.is_call = true
+
 		if len(args) != 2 {
 			error(checker, v, "builtin '%s' expects two argument, got %d", builtin_names[v.builtin], len(v.args))
 			return
@@ -762,8 +765,7 @@ check_builtin :: proc(checker: ^Checker, v: ^ast.Expr_Call, fn: Operand) -> (ope
 			error(checker, args[1], "expected an expression of type %v, got %v", types.t_f32, args[1].type)
 		}
 
-		operand.mode    = .No_Value
-		operand.is_call = true
+		operand.mode = .No_Value
 
 	case .Terminate ..= .Get_Commited_Intersection_World_To_Object:
 		if len(args) != 1 {
