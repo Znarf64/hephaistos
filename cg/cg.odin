@@ -198,9 +198,10 @@ Scope :: struct {
 	kind:         Scope_Kind,
 }
 
+@(require_results)
 cg_lookup_entity :: proc(ctx: ^Context, entity: ^ast.Entity) -> Value {
 	assert(entity != nil)
-	return ctx.entities[entity]
+	return ctx.entities[entity] or_else panic("Backend: Failed to find entity value")
 }
 
 cg_insert_entity :: proc(ctx: ^Context, entity: ^ast.Entity, storage_class: Storage_Class, type: ^types.Type, id: spv.Id) {
@@ -380,8 +381,18 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 	}
 
 	if v.mutable {
+		@(require_results)
+		is_blank_ident :: proc(expr: ^ast.Expr) -> bool {
+			ident := expr.derived.(^ast.Expr_Ident) or_return
+			return ident.text == "_"
+		}
+
 		if len(v.values) == 0 {
 			for lhs, i in v.lhs {
+				if is_blank_ident(lhs) {
+					continue
+				}
+
 				type := lhs.type
 
 				if types.is_sampler(type) || types.is_image(type) && v.interface == .Uniform {
@@ -429,6 +440,9 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 		} else {
 			if global {
 				for value, i in v.values {
+					if is_blank_ident(v.lhs[i]) {
+						continue
+					}
 					type      := v.lhs[i].type
 					type_info := cg_type(ctx, type, flags)
 					init      := cg_expr(ctx, nil, value).id
@@ -444,14 +458,17 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 					deconstruct_tuple(ctx, value_builder, value.type, &values)
 
 					for value in values {
+						defer lhs_i += 1
+						if is_blank_ident(v.lhs[lhs_i]) {
+							continue
+						}
+
 						type_info := cg_type(ctx, value.type, flags)
 						ptr       := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class)
 						spv.OpStore(value_builder, ptr, value.id)
 
 						entity := v.lhs[lhs_i].entity
 						cg_insert_entity(ctx, entity, storage_class, value.type, ptr)
-
-						lhs_i += 1
 					}
 				}
 			}
@@ -1967,7 +1984,7 @@ cg_expr_internal :: proc(
 	case ^ast.Expr_Ellipsis:
 		return cg_expr(ctx, builder, v.expr)
 	case ^ast.Expr_Selector:
-		if v.entity != nil {
+		if v.entity != nil && v.entity.kind != .Enum_Value && v.entity.kind != .Struct_Field {
 			return cg_ident(ctx, builder, v.entity)
 		}
 		lhs := cg_expr(ctx, builder, v.lhs, false)
@@ -3101,8 +3118,12 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 			deconstruct_tuple(ctx, builder, value.type, &values)
 
 			for rhs in values {
-				lhs   := cg_expr(ctx, builder, v.lhs[lhs_i], deref = false)
-				lhs_i += 1
+				defer lhs_i += 1
+				if ident, ok := v.lhs[lhs_i].derived.(^ast.Expr_Ident); ok && ident.text == "_" {
+					continue
+				}
+
+				lhs := cg_expr(ctx, builder, v.lhs[lhs_i], deref = false)
 
 				if lhs.explicit_layout {
 					type := lhs.type.variant.(^types.Struct)
