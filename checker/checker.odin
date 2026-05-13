@@ -100,8 +100,8 @@ addressing_mode_string := [Addressing_Mode]string {
 }
 
 Operand :: struct {
-	expr:              ^ast.Expr,
-	type:              ^types.Type,
+	expr:             ^ast.Expr,
+	type:             ^types.Type,
 	mode:              Addressing_Mode,
 	value:             types.Const_Value,
 	builtin_id:        ast.Builtin_Id,
@@ -1697,7 +1697,12 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 			}
 
 			for i in start ..< i {
-				out_fields[i].type = type
+				if type == nil {
+					error(checker, fields[i].name, "field is missing a type")
+					out_fields[i].type = types.t_invalid
+				} else {
+					out_fields[i].type = type
+				}
 			}
 		}
 
@@ -1833,7 +1838,13 @@ check_expr_internal :: proc(
 		}
 
 	case ^ast.Expr_Proc_Lit:
-		type := check_proc_type(checker, v)
+		type: ^types.Proc
+		if v.type == nil {
+			type = check_proc_type(checker, v)
+		} else {
+			// the type may have already been checked to allow recursion and we don't want to error twice
+			type = v.type.variant.?
+		}
 
 		operand.type = type
 		operand.mode = .Proc
@@ -2299,7 +2310,6 @@ check_expr_internal :: proc(
 			}
 
 			proc_type := fn.type.variant.(^types.Proc)
-
 			arg_index := 0
 			for e in v.args {
 				type_hint: ^types.Type
