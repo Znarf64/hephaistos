@@ -604,7 +604,7 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 	}
 
 	if from.size == 0 && is_numeric(to) {
-		if to.kind == .Int && from.kind == .Float {
+		if is_integer(to) && from.kind == .Float {
 			return false
 		}
 		return true

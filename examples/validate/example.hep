@@ -411,3 +411,7 @@ ray_query_fragment :: proc() {
 		dist = rq.get_commited_intersection_t(q)
 	}
 }
+
+foobar :: proc() -> u8 {
+	return 1.5
+}
