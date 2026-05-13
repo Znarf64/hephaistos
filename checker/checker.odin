@@ -2418,15 +2418,16 @@ check_expr_internal :: proc(
 						continue
 					}
 
+					field.value.type   = struct_field.type
+					field.name.entity  = (^Entity)(struct_field.entity)
+					field.member_index = field_index
+
 					field_operand := check_expr(checker, field.value, type_hint = struct_field.type)
 					operand.constant_compound &&= field_operand.mode == .Const
 					if !types.implicitly_castable(field_operand.type, struct_field.type) {
 						error(checker, field.value, "expected value of type %v but got %v", struct_field.type, field_operand.type)
 						return
 					}
-					field.value.type   = struct_field.type
-					field.name.entity  = (^Entity)(struct_field.entity)
-					field.member_index = field_index
 				}
 			} else {
 				if len(v.fields) != len(type.fields) {

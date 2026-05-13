@@ -378,7 +378,7 @@ print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 		}
 		fmt.wprint(w, ")")
 
-		if len(b.args) == 0 {
+		if len(b.returns) == 0 {
 			break
 		}
 
