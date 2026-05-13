@@ -282,8 +282,12 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 
 	case .Enum:
 		token_advance(parser)
+		backing: ^ast.Expr
+		if token_peek(parser).kind != .Open_Brace {
+			backing = parse_expr(parser, allow_compound_literals = false) or_else nil
+		}
 		token_expect(parser, .Open_Brace) or_return
-		values := parse_field_list(parser, .Close_Brace, false, types = false) or_return
+		values := parse_field_list(parser, .Close_Brace, true, types = false) or_return
 		s      := ast.new(ast.Type_Enum, token.location, parser.end_location, parser.allocator)
 		s.values = values
 		return s, true
