@@ -179,6 +179,7 @@ Value :: struct {
 	explicit_layout: bool,
 	discard:         bool,
 	coord:           spv.Id, // texel reference for ImageStore
+	extension_op:    string,
 }
 
 Scope_Kind :: enum {
@@ -200,6 +201,11 @@ Scope :: struct {
 
 @(require_results)
 cg_lookup_entity :: proc(ctx: ^Context, entity: ^ast.Entity) -> Value {
+	if .Extension_Proc in entity.flags {
+		return {
+			extension_op = entity.name,
+		}
+	}
 	assert(entity != nil)
 	return ctx.entities[entity] or_else panic("Backend: Failed to find entity value")
 }
@@ -2505,9 +2511,23 @@ cg_expr_internal :: proc(
 		}
 
 		return_type_info := cg_type(ctx, proc_type.return_type)
-		ret              := spv.OpFunctionCall(builder, return_type_info.type, fn, ..args[:])
 
-		return { id = ret, }
+		if _fn.extension_op != {} {
+			opcode := reflect.enum_from_name(spv.Op, _fn.extension_op) or_else panic("fried")
+
+			for cap in spv.op_capabilties[opcode] {
+				ctx.capabilities[cap] = {}
+			}
+
+			append(&builder.data, u32(opcode) | u32((3 + len(args)) << 16))
+			append(&builder.data, u32(return_type_info.type))
+			ret := spv.next_id(builder)
+			append(&builder.data, ret)
+			append(&builder.data, ..slice.reinterpret([]u32, args[:]))
+			return { id = spv.Id(ret), }
+		} else {
+			return { id = spv.OpFunctionCall(builder, return_type_info.type, fn, ..args[:]), }
+		}
 	case ^ast.Expr_Compound:
 		if len(v.fields) == 0 {
 			return { id = cg_nil_value(ctx, cg_type(ctx, v.type)), }
@@ -3234,6 +3254,8 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 			ctx.extensions["SPV_KHR_shader_clock"] = {}
 			ctx.capabilities[.ShaderClockKHR]      = {}
 		}
+	case ^ast.Decl_Extension:
+		ctx.extensions[v.extension.const_value.(string)] = {}
 	}
 
 	return

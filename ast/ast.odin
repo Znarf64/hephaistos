@@ -445,6 +445,12 @@ Decl_Import :: struct {
 	name:       string,
 }
 
+Decl_Extension :: struct {
+	using node: Decl,
+	extension: ^Expr,
+	body:    []^Stmt,
+}
+
 Stmt_Return :: struct {
 	using node: Stmt,
 	values:  []^Expr,
@@ -580,6 +586,7 @@ Any_Node :: union {
 
 	^Decl_Value,
 	^Decl_Import,
+	^Decl_Extension,
 }
 
 Any_Expr :: union {
@@ -612,6 +619,7 @@ Any_Expr :: union {
 Any_Decl :: union {
 	^Decl_Value,
 	^Decl_Import,
+	^Decl_Extension,
 }
 
 Any_Stmt :: union {
@@ -629,6 +637,7 @@ Any_Stmt :: union {
 
 	^Decl_Value,
 	^Decl_Import,
+	^Decl_Extension,
 }
 
 new :: proc($T: typeid, start, end: tokenizer.Location, allocator: mem.Allocator) -> ^T {
@@ -682,6 +691,7 @@ Entity_Kind :: enum u32 {
 
 Entity_Flag :: enum {
 	Readonly,
+	Extension_Proc,
 
 	In_Progress,
 	Resolved,

@@ -46,6 +46,7 @@ token_expect :: proc(parser: ^Parser, kind: tokenizer.Token_Kind, after: string 
 	return
 }
 
+@(require_results)
 parse_field_list :: proc(
 	parser:               ^Parser,
 	terminator:           tokenizer.Token_Kind,
@@ -461,7 +462,7 @@ parse_unary_expr :: proc(parser: ^Parser, allow_compound_literals: bool) -> (exp
 
 @(require_results)
 parse_ident :: proc(parser: ^Parser) -> (ident: ^ast.Expr_Ident, ok: bool) {
-	start     := token_expect(parser, .Ident, "'.'") or_return
+	start     := token_expect(parser, .Ident) or_return
 	ident      = ast.new(ast.Expr_Ident, start.location, parser.end_location, parser.allocator)
 	ident.text = start.text
 	ok         = true
@@ -801,6 +802,16 @@ parse_stmt :: proc(parser: ^Parser, label: ^ast.Expr_Ident = nil, attributes: []
 		import_decl.path  = path
 		import_decl.alias = alias
 		return import_decl, true
+	case .Extension:
+		token_advance(parser)
+		extension := parse_expr(parser, allow_compound_literals = false) or_return
+		token_expect(parser, .Open_Brace) or_return
+		body          := parse_stmt_list(parser) or_return
+		token_advance(parser)
+		decl          := ast.new(ast.Decl_Extension, token.location, parser.end_location, parser.allocator)
+		decl.extension = extension
+		decl.body      = body
+		return decl, true
 	case .Ident:
 		if token_peek(parser, 1).kind == .Colon {
 			#partial switch token_peek(parser, 2).kind {

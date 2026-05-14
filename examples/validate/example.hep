@@ -415,3 +415,11 @@ ray_query_fragment :: proc() {
 foobar :: proc() -> u8 {
 	return 15
 }
+
+extension "SPV_KHR_shader_clock" {
+	ReadClockKHR :: proc(scope: u32) -> u64
+}
+
+read_device_clock :: proc() -> u64 {
+	return ReadClockKHR(1)
+}

@@ -77,6 +77,7 @@ Token_Kind :: enum u16 {
 	In,
 	When,
 	Import,
+	Extension,
 
 	Struct,
 	Enum,
@@ -474,6 +475,7 @@ tokenize :: proc(
 	return tokens[:], errors[:]
 }
 
+@(rodata)
 token_strings := #sparse[Token_Kind]string {
 	.Invalid        = "<invalid>",
 	.Bit_And        = "&",
@@ -519,10 +521,10 @@ token_strings := #sparse[Token_Kind]string {
 
 	.EOF            = "EOF",
 
-	.Equal          = "",
-	.Not_Equal      = "",
-	.Less_Equal     = "",
-	.Greater_Equal  = "",
+	.Equal          = "==",
+	.Not_Equal      = "!=",
+	.Less_Equal     = "<=",
+	.Greater_Equal  = ">=",
 
 	.And            = "&&",
 	.Or             = "||",
@@ -541,6 +543,7 @@ token_strings := #sparse[Token_Kind]string {
 	.In             = "in",
 	.When           = "when",
 	.Import         = "import",
+	.Extension      = "extension",
 
 	.Struct         = "struct",
 	.Enum           = "enum",

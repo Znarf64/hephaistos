@@ -552,6 +552,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			error(checker, v, "assignment count mismatch: %v vs %v", len(v.lhs), lhs_i)
 		}
 	case ^ast.Decl_Import:
+	case ^ast.Decl_Extension:
 	}
 
 	diverging = false
@@ -895,6 +896,53 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 			e.decl    = v
 			e.flags   = { .Resolved, }
 			scope_insert_entity(checker, e)
+		}
+	}
+
+	for stmt in stmts {
+		v := stmt.derived_stmt.(^ast.Decl_Extension) or_continue
+
+		if checker.scope.kind != .Global {
+			error(checker, v, "extension declarations must be placed at file scope")
+			return
+		}
+
+		extension := check_expr(checker, v.extension)
+		_, ok     := extension.value.(string)
+		if !ok {
+			error(checker, extension, "expected a constant string in extension name")
+		}
+
+		for stmt in v.body {
+			v, ok := stmt.derived_stmt.(^ast.Decl_Value)
+			if !ok {
+				error(checker, v, "only procedure declarations are allowed in extension declarations")
+				continue
+			}
+
+			if len(v.lhs) != 1 {
+				error(checker, v, "only procedure declarations are allowed in extension declarations")
+				continue
+			}
+
+			if len(v.values) != 1 {
+				error(checker, v, "only procedure declarations are allowed in extension declarations")
+				continue
+			}
+
+			if v.mutable {
+				error(checker, v, "only procedure declarations are allowed in extension declarations")
+				continue
+			}
+
+			type := check_type(checker, v.values[0])
+			if type.kind != .Proc {
+				error(checker, v, "only procedure declarations are allowed in extension declarations")
+				continue
+			}
+
+			entity := entity_new(.Proc, v.lhs[0], type, v, flags = { .Resolved, .Extension_Proc, }, allocator = checker.allocator)
+			scope_insert_entity(checker, entity)
 		}
 	}
 

@@ -1,4 +1,13 @@
 // This is purely for documentation
 
-read_subgroup_clock :: proc() -> u64 ---
-read_device_clock   :: proc() -> u64 ---
+extension "SPV_KHR_shader_clock" {
+	ReadClockKHR :: proc(#const scope: u32) -> u64
+}
+
+read_subgroup_clock :: proc() -> u64 {
+	return ReadClockKHR(1)
+}
+
+read_device_clock   :: proc() -> u64 {
+	return ReadClockKHR(3)
+}
