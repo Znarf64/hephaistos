@@ -413,5 +413,5 @@ ray_query_fragment :: proc() {
 }
 
 foobar :: proc() -> u8 {
-	return 1
+	return 15
 }

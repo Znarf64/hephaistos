@@ -101,7 +101,7 @@ int main(int argc, char const **argv) {
   char const *source = read_entire_file(path);
   assert(source != NULL);
 
-  Hep_Result result = hep_compile_shader(source, path);
+  Hep_Result result = hep_compile_shader(source, path, (Hep_Defines){0}, (Hep_Named_Types){0}, HEP_SPIR_V_VERSION_1_6);
   if (result.n_errors != 0) {
     print_errors(&result, path, source);
   } else {
