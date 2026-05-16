@@ -119,7 +119,7 @@ debug_callback_proc :: proc "system" (
 instance_create :: proc() -> (instance: vk.Instance) {
 	extensions := get_required_extensions()
 	create_info := vk.InstanceCreateInfo {
-    	sType                   = .INSTANCE_CREATE_INFO,
+		sType                   = .INSTANCE_CREATE_INFO,
 		pApplicationInfo        = &{
 		    sType              = .APPLICATION_INFO,
 		    pApplicationName   = "Hello Triangle",
@@ -130,7 +130,7 @@ instance_create :: proc() -> (instance: vk.Instance) {
 		},
 		ppEnabledExtensionNames = raw_data(extensions),
 		enabledExtensionCount   = u32(len(extensions)),
-    }
+	}
 
 	layer_count: u32
 	vk.EnumerateInstanceLayerProperties(&layer_count, nil)
@@ -446,8 +446,8 @@ choose_swapchain_parameters :: proc(ctx: Vulkan_Context, surface: vk.SurfaceKHR)
 		if format.format == .B8G8R8A8_SRGB && format.colorSpace == .SRGB_NONLINEAR {
 			surface_format = format
 			break
-        }
-    }
+		}
+	}
 
 	return
 }
@@ -663,7 +663,7 @@ find_memory_type :: proc(physical_device: vk.PhysicalDevice, type_filter: u32, p
 	for i in 0 ..< memory_properties.memoryTypeCount {
 		if (type_filter & (1 << i)) != 0 && (memory_properties.memoryTypes[i].propertyFlags & properties) == properties {
 			return i, true
-	    }
+		}
 	}
 
 	return 0, false
@@ -687,10 +687,10 @@ buffer_create :: proc(
 	    size        = size,
 	    usage       = usage,
 	    sharingMode = .EXCLUSIVE,
-    }, nil, &buffer.buffer); result != nil {
+	}, nil, &buffer.buffer); result != nil {
 		fmt.eprintln("Failed to create vertex buffer:", result)
 		os.exit(1)
-    }
+	}
 
 	requirements: vk.MemoryRequirements
 	vk.GetBufferMemoryRequirements(ctx.device, buffer.buffer, &requirements)
@@ -906,18 +906,18 @@ command_buffer_begin_single :: proc(ctx: Vulkan_Context) -> vk.CommandBuffer {
 	    level              = .PRIMARY,
 	    commandPool        = ctx.command_pool,
 	    commandBufferCount = 1,
-    }
+	}
 
 	command_buffer: vk.CommandBuffer
 	if result := vk.AllocateCommandBuffers(ctx.device, &alloc_info, &command_buffer); result != nil {
 		fmt.eprintln("Failed to allocate command buffer:", result)
 		os.exit(1)
-    }
+	}
 
 	vk.BeginCommandBuffer(command_buffer, &{
-    	sType = .COMMAND_BUFFER_BEGIN_INFO,
-    	flags = { .ONE_TIME_SUBMIT, },
-    })
+		sType = .COMMAND_BUFFER_BEGIN_INFO,
+		flags = { .ONE_TIME_SUBMIT, },
+	})
 	return command_buffer
 }
 

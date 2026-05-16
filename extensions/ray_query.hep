@@ -1,66 +1,85 @@
-// This is purely for documentation
+Query                  :: opaque(TypeRayQueryKHR)
+Acceleration_Structure :: opaque(TypeAccelerationStructureKHR, u64)
 
-Acceleration_Structure :: distinct u64
-Query                  :: distinct u64
+Ray_Flags :: bit_set[enum {
+	NoOpaque                   = 1,
+	TerminateOnFirstHit        = 2,
+	SkipClosestHitShader       = 3,
+	CullBackFacingTriangles    = 4,
+	CullFrontFacingTriangles   = 5,
+	CullOpaque                 = 6,
+	CullNoOpaque               = 7,
+	SkipTriangles              = 8,
+	SkipAABBs                  = 9,
+	ForceOpacityMicromap2State = 10,
+}; i32]
 
-// Note that this enum differs slightly from the definition in the extension
-// as it merges the candidate and commited variants.
-// This conversion is automatically handled by get_*_intersection_type()
-Intersection_Type :: enum i32 {
-	None      = 0,
-	Triangle  = 1,
-	Generated = 2,
-	AABB      = 3,
+Intersection :: enum i32 {
+	Candidate = 0,
+	Committed = 1,
 }
 
-initialize :: proc(ray_query: Query, acceleration_structure: Acceleration_Structure, ray_flags: Ray_Flags, cull_mask: i32, ray_origin: [3]f32, ray_tmin: f32, ray_direction: [3]f32, ray_tmax: f32) ---
+#capability(RayQueryKHR)
 
-terminate                                        :: proc(query: Query) ---
-generate_intersection                            :: proc(query: Query, hit_t: f32) ---
-confirm_intersection                             :: proc(query: Query) ---
-proceed                                          :: proc(query: Query) -> bool ---
+extension "SPV_KHR_ray_query" {
+	RayQueryInitializeKHR :: proc(
+		#by_ptr ray_query:      Query,
+		acceleration_structure: Acceleration_Structure,
+		ray_flags:              Ray_Flags,
+		cull_mask:              i32,
+		ray_origin:             [3]f32,
+		ray_tmin:               f32,
+		ray_direction:          [3]f32,
+		ray_tmax:               f32,
+	)
 
-get_ray_t_min                                    :: proc(query: Query) -> f32 ---
-get_ray_flags                                    :: proc(query: Query) -> Ray_Flags ---
-get_intersection_candidate_AABB_opaque           :: proc(query: Query) -> bool ---
-get_world_ray_direction                          :: proc(query: Query) -> [3]f32 ---
-get_world_ray_origin                             :: proc(query: Query) -> [3]f32 ---
+	RayQueryTerminateKHR                                             :: proc(#by_ptr query: Query)
+	RayQueryGenerateIntersectionKHR                                  :: proc(#by_ptr query: Query, hit_t: f32)
+	RayQueryConfirmIntersectionKHR                                   :: proc(#by_ptr query: Query)
+	RayQueryProceedKHR                                               :: proc(#by_ptr query: Query) -> bool
 
-get_candidate_intersection_type                  :: proc(query: Query) -> Intersection_Type ---
-get_commited_intersection_type                   :: proc(query: Query) -> Intersection_Type ---
+	RayQueryGetRayTMinKHR                                            :: proc(#by_ptr query: Query) -> f32
+	RayQueryGetRayFlagsKHR                                           :: proc(#by_ptr query: Query) -> Ray_Flags
+	RayQueryGetIntersectionCandidateAABBOpaqueKHR                    :: proc(#by_ptr query: Query) -> bool
+	RayQueryGetWorldRayDirectionKHR                                  :: proc(#by_ptr query: Query) -> [3]f32
+	RayQueryGetWorldRayOriginKHR                                     :: proc(#by_ptr query: Query) -> [3]f32
 
-get_candidate_intersection_t                     :: proc(query: Query) -> f32 ---
-get_commited_intersection_t                      :: proc(query: Query) -> f32 ---
+	RayQueryGetIntersectionTypeKHR                                   :: proc(#by_ptr query: Query, #const intersection: Intersection) -> i32
+	RayQueryGetIntersectionTKHR                                      :: proc(#by_ptr query: Query, #const intersection: Intersection) -> f32
+	RayQueryGetIntersectionInstanceCustomIndexKHR                    :: proc(#by_ptr query: Query, #const intersection: Intersection) -> i32
+	RayQueryGetIntersectionInstanceIdKHR                             :: proc(#by_ptr query: Query, #const intersection: Intersection) -> i32
+	RayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetKHR :: proc(#by_ptr query: Query, #const intersection: Intersection) -> i32
+	RayQueryGetIntersectionGeometryIndexKHR                          :: proc(#by_ptr query: Query, #const intersection: Intersection) -> i32
+	RayQueryGetIntersectionPrimitiveIndexKHR                         :: proc(#by_ptr query: Query, #const intersection: Intersection) -> i32
+	RayQueryGetIntersectionBarycentricsKHR                           :: proc(#by_ptr query: Query, #const intersection: Intersection) -> [2]f32
+	RayQueryGetIntersectionFrontFaceKHR                              :: proc(#by_ptr query: Query, #const intersection: Intersection) -> bool
+	RayQueryGetIntersectionObjectRayDirectionKHR                     :: proc(#by_ptr query: Query, #const intersection: Intersection) -> [3]f32
+	RayQueryGetIntersectionObjectRayOriginKHR                        :: proc(#by_ptr query: Query, #const intersection: Intersection) -> [3]f32
+	RayQueryGetIntersectionObjectToWorldKHR                          :: proc(#by_ptr query: Query, #const intersection: Intersection) -> matrix[4, 3]f32
+	RayQueryGetIntersectionWorldToObjectKHR                          :: proc(#by_ptr query: Query, #const intersection: Intersection) -> matrix[4, 3]f32
+}
 
-get_candidate_intersection_instance_custom_index :: proc(query: Query) -> i32 ---
-get_commited_intersection_instance_custom_index  :: proc(query: Query) -> i32 ---
+initialize                                  :: RayQueryInitializeKHR
+terminate                                   :: RayQueryTerminateKHR
+generate_intersection                       :: RayQueryGenerateIntersectionKHR
+confirm_intersection                        :: RayQueryConfirmIntersectionKHR
+proceed                                     :: RayQueryProceedKHR
+get_ray_t_min                               :: RayQueryGetRayTMinKHR
+get_ray_flags                               :: RayQueryGetRayFlagsKHR
+get_intersection_candidate_aabb_opaque      :: RayQueryGetIntersectionCandidateAABBOpaqueKHR
+get_world_ray_direction                     :: RayQueryGetWorldRayDirectionKHR
+get_world_ray_origin                        :: RayQueryGetWorldRayOriginKHR
 
-get_candidate_intersection_instance_id           :: proc(query: Query) -> i32 ---
-get_commited_intersection_instance_id            :: proc(query: Query) -> i32 ---
-
-get_candidate_intersection_instance_sbt_offset   :: proc(query: Query) -> i32 ---
-get_commited_intersection_instance_sbt_offset    :: proc(query: Query) -> i32 ---
-
-get_candidate_intersection_geometry_index        :: proc(query: Query) -> i32 ---
-get_commited_intersection_geometry_index         :: proc(query: Query) -> i32 ---
-
-get_candidate_intersection_primitive_index       :: proc(query: Query) -> i32 ---
-get_commited_intersection_primitive_index        :: proc(query: Query) -> i32 ---
-
-get_candidate_intersection_barycentrics          :: proc(query: Query) -> [2]f32 ---
-get_commited_intersection_barycentrics           :: proc(query: Query) -> [2]f32 ---
-
-get_candidate_intersection_front_face            :: proc(query: Query) -> bool ---
-get_commited_intersection_front_face             :: proc(query: Query) -> bool ---
-
-get_candidate_intersection_object_ray_direction  :: proc(query: Query) -> [3]f32 ---
-get_commited_intersection_object_ray_direction   :: proc(query: Query) -> [3]f32 ---
-
-get_candidate_intersection_object_ray_origin     :: proc(query: Query) -> [3]f32 ---
-get_commited_intersection_object_ray_origin      :: proc(query: Query) -> [3]f32 ---
-
-get_candidate_intersection_object_to_world       :: proc(query: Query) -> matrix[4, 3]f32 ---
-get_commited_intersection_object_to_world        :: proc(query: Query) -> matrix[4, 3]f32 ---
-
-get_candidate_intersection_world_to_object       :: proc(query: Query) -> matrix[4, 3]f32 ---
-get_commited_intersection_world_to_object        :: proc(query: Query) -> matrix[4, 3]f32 ---
+get_intersection_type                       :: RayQueryGetIntersectionTypeKHR
+get_intersection_t                          :: RayQueryGetIntersectionTKHR
+get_intersection_instance_custom_index      :: RayQueryGetIntersectionInstanceCustomIndexKHR
+get_intersection_instance_id                :: RayQueryGetIntersectionInstanceIdKHR
+get_intersection_instance_sbt_record_offset :: RayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetKHR
+get_intersection_geometry_index             :: RayQueryGetIntersectionGeometryIndexKHR
+get_intersection_primitive_index            :: RayQueryGetIntersectionPrimitiveIndexKHR
+get_intersection_barycentrics               :: RayQueryGetIntersectionBarycentricsKHR
+get_intersection_front_face                 :: RayQueryGetIntersectionFrontFaceKHR
+get_intersection_object_ray_direction       :: RayQueryGetIntersectionObjectRayDirectionKHR
+get_intersection_object_ray_origin          :: RayQueryGetIntersectionObjectRayOriginKHR
+get_intersection_object_to_world            :: RayQueryGetIntersectionObjectToWorldKHR
+get_intersection_world_to_object            :: RayQueryGetIntersectionWorldToObjectKHR

@@ -26,8 +26,8 @@ Flag :: enum {
 Flags :: bit_set[Flag]
 
 Library :: struct {
-	entities:  map[string]^Entity,
-	extension: string,
+	entities: map[string]^Entity,
+	stmts: []^ast.Stmt,
 }
 
 Checker :: struct {
@@ -109,7 +109,7 @@ Operand :: struct {
 	library:           string,
 	scope:            ^ast.Scope,
 	is_call:           bool,
-	diverges:          bool,
+	diverging:         bool,
 	constant_compound: bool,
 }
 
@@ -457,7 +457,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		if !operand.is_call {
 			error(checker, v.expr, "expression is not used")
 		}
-		if operand.diverges {
+		if operand.diverging {
 			return true
 		}
 
@@ -935,14 +935,10 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 				continue
 			}
 
-			type := check_type(checker, v.values[0])
-			if type.kind != .Proc {
-				error(checker, v, "only procedure declarations are allowed in extension declarations")
-				continue
-			}
-
-			entity := entity_new(.Proc, v.lhs[0], type, v, flags = { .Resolved, .Extension_Proc, }, allocator = checker.allocator)
-			scope_insert_entity(checker, entity)
+			type := types.new_any(checker.allocator)
+			e    := entity_new(.Proc, v.lhs[0], type, decl = v, flags = { .Extension_Proc, }, allocator = checker.allocator)
+			scope_insert_entity(checker, e)
+			append(entities, e)
 		}
 	}
 
@@ -1084,7 +1080,10 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 	case .Invalid:
 		e.kind = .Invalid
 	case .Type:
-		e.kind = .Type
+		// extension ops will have their kind set to .Proc, we should probably have an actual destinction here with '---'
+		if e.kind != .Proc {
+			e.kind = .Type
+		}
 	case .Proc:
 		e.kind = .Proc
 	case .Proc_Group:
@@ -1244,16 +1243,13 @@ checker_init :: proc(
 	create_builtin_type(checker, types.t_quaternion128)
 	create_builtin_type(checker, types.t_quaternion256)
 
+	create_builtin_type(checker, types.t_any)
+
 	find_or_create_lib :: proc(checker: ^Checker, name: string) -> (library: ^Library) {
 		library = &checker.libraries[name]
 		if library == nil {
 			checker.libraries[name] = { entities = make(map[string]^Entity, checker.allocator), }
 			library                 = &checker.libraries[name]
-
-			name := name
-			if base, ok := strings.split_iterator(&name, ":"); ok && base == "extensions" {
-				library.extension = name
-			}
 		}
 		return
 	}
@@ -1262,17 +1258,6 @@ checker_init :: proc(
 		name := strings.trim_prefix(type_expr, "types.t_")
 		library.entities[name] = entity_new_no_ident(.Type, name, type, flags = { .Resolved, }, allocator = checker.allocator)
 	}
-
-	raytracing_extension := find_or_create_lib(checker, "extensions:raytracing")
-	create_library_type(checker, raytracing_extension, types.t_Acceleration_Structure)
-	create_library_type(checker, raytracing_extension, types.t_Ray_Flags)
-	create_library_type(checker, raytracing_extension, types.t_Hit_Kind)
-
-	ray_query_extension := find_or_create_lib(checker, "extensions:ray_query")
-	create_library_type(checker, ray_query_extension, types.t_Acceleration_Structure)
-	create_library_type(checker, ray_query_extension, types.t_Ray_Flags)
-	create_library_type(checker, ray_query_extension, types.t_Hit_Kind)
-	create_library_type(checker, ray_query_extension, types.t_Ray_Query, "Query")
 
 	for name, builtin in builtin_names {
 		create_builtin_proc :: proc(checker: ^Checker, name: string, builtin: ast.Builtin_Id) -> ^Entity {
@@ -1301,7 +1286,7 @@ checker_init :: proc(
 	}
 
 	for name, lib in libraries {
-		assert(name not_in checker.libraries, "extension and base libraries can not be overwritten")
+		assert(name not_in checker.libraries, "base libraries can not be overwritten")
 		checker.libraries[name] = lib
 	}
 
@@ -1653,6 +1638,7 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: types.Const_Value,
 
 @(require_results)
 check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc {
+	@(require_results)
 	check_field_list :: proc(checker: ^Checker, fields: []ast.Field, usage: string) -> (out_fields: [dynamic]types.Field) {
 		out_fields.allocator = checker.allocator
 		reserve(&out_fields, len(fields))
@@ -1710,6 +1696,7 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 					name     = ident,
 					type     = nil, // patched later
 					location = location,
+					flags    = field.flags,
 				})
 
 				if field.type == nil {
@@ -1760,9 +1747,10 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 	args    := check_field_list(checker, p.args,    "input")
 	returns := check_field_list(checker, p.returns, "output")
 
-	t        := types.new(.Proc, types.Proc, checker.allocator)
-	t.args    = args[:]
-	t.returns = returns[:]
+	t          := types.new(.Proc, types.Proc, checker.allocator)
+	t.args      = args[:]
+	t.returns   = returns[:]
+	t.diverging = p.diverging
 
 	if len(returns) == 1 {
 		t.return_type = returns[0].type
@@ -2233,6 +2221,9 @@ check_expr_internal :: proc(
 					}
 					operand.value = definition
 				}
+			case .Capability:
+				operand.mode    = .No_Value
+				operand.is_call = true
 			}
 			return
 		}
@@ -2365,24 +2356,27 @@ check_expr_internal :: proc(
 					type_hint = proc_type.args[arg_index].type
 				}
 				value := check_expr(checker, e.value, type_hint = type_hint)
-				if arg_index >= len(proc_type.args) {
-					continue
-				}
 
 				arg_types: []^types.Type = { value.type, }
 				deconstruct_tuple(checker, &arg_types)
 
 				for arg_type in arg_types {
+					defer arg_index += 1
 					if arg_index >= len(proc_type.args) {
-						break
+						continue
 					}
 					if !types.implicitly_castable(arg_type, proc_type.args[arg_index].type) {
 						error(checker, value, "mismatched type at argument %d: expected %v, got %v", arg_index, proc_type.args[arg_index].type, arg_type)
 					}
+					if .By_Ptr in proc_type.args[arg_index].flags && value.mode != .LValue {
+						error(checker, value, "argument has '#by_ptr' tag, but the provided value is not addressable")
+					}
+					if .Const in proc_type.args[arg_index].flags && value.mode != .Const {
+						error(checker, value, "argument has '#const' tag, but the provided value is not constant")
+					}
 					if len(arg_types) == 1 {
 						e.value.type = proc_type.args[arg_index].type
 					}
-					arg_index += 1
 				}
 			}
 
@@ -2390,9 +2384,10 @@ check_expr_internal :: proc(
 				error(checker, v, "expected %d arguments but got %d", len(proc_type.args), arg_index)
 			}
 
-			operand.type    = proc_type.return_type
-			operand.mode    = .RValue
-			operand.is_call = true
+			operand.mode      = len(proc_type.returns) == 0 ? .No_Value : .RValue
+			operand.type      = proc_type.return_type
+			operand.is_call   = true
+			operand.diverging = proc_type.diverging
 		}
 	case ^ast.Expr_Compound:
 		defer v.constant = operand.constant_compound
@@ -3003,6 +2998,14 @@ check_expr_internal :: proc(
 		enum_type   := check_type(checker, v.enum_type)
 		backing     := check_type(checker, v.backing)
 		operand.type = types.bit_set_new(enum_type, backing, checker.allocator)
+		operand.mode = .Type
+
+	case ^ast.Type_Opaque:
+		backing: ^types.Type
+		if v.backing != nil {
+			backing = check_type(checker, v.backing)
+		}
+		operand.type = types.opaque_new(v.name.text, backing, checker.allocator)
 		operand.mode = .Type
 
 	case ^ast.Expr_Directive:

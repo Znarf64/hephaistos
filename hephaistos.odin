@@ -150,6 +150,7 @@ check_library :: proc(
 	}
 
 	library.entities = c.scope.entities
+	library.stmts    = stmts
 	return
 }
 
@@ -255,28 +256,54 @@ print_error :: proc(w: io.Writer, file_name: string, lines: []string, error: Err
 	return
 }
 
-core_library_source_files := #load_directory("core")
+core_library_source_files       := #load_directory("core")
+extensions_library_source_files := #load_directory("extensions")
 
+@(require_results)
 check_core_libraries :: proc(
-	allocator := context.allocator,
+	enable_extensions := true,
+	enable_core       := true,
+	allocator         := context.allocator,
 	error_writer: io.Writer = {},
 ) -> (libraries: map[string]Library, ok: bool = true) {
 	error_writer := error_writer if error_writer.procedure != nil else os.to_stream(os.stderr)
 
-	libraries = make(map[string]Library, allocator)
-	for file in core_library_source_files {
-		source      := string(file.data)
-		lib, errors := check_library(source, file.name, allocator = allocator, error_allocator = context.temp_allocator)
-		if len(errors) != 0 {
-			lines := strings.split_lines(source)
-			for error in errors {
-				print_error(error_writer, file.name, lines, error)
+	handle_directory :: proc(
+		files:      []runtime.Load_Directory_File,
+		prefix:       string,
+		libraries:   ^map[string]Library,
+		error_writer: io.Writer,
+		allocator:    runtime.Allocator,
+	) -> (ok: bool = true) {
+		for file in files {
+			source      := string(file.data)
+			lib, errors := check_library(source, file.name, allocator = allocator, error_allocator = context.temp_allocator)
+			if len(errors) != 0 {
+				lines := strings.split_lines(source)
+				for error in errors {
+					print_error(error_writer, file.name, lines, error)
+				}
+				ok = false
 			}
+			name, _ := strings.concatenate({ prefix, file.name, }, allocator)
+			name     = strings.trim_suffix(name, ".hep")
+			libraries[name] = lib
+		}
+		return
+	}
+
+	libraries = make(map[string]Library, allocator)
+
+	if enable_core {
+		if !handle_directory(core_library_source_files, "core:", &libraries, error_writer, allocator) {
 			ok = false
 		}
-		name, _ := strings.concatenate({ "core:", file.name, }, allocator)
-		name     = strings.trim_suffix(name, ".hep")
-		libraries[name] = lib
+	}
+
+	if enable_extensions {
+		if !handle_directory(extensions_library_source_files, "extensions:", &libraries, error_writer, allocator) {
+			ok = false
+		}
 	}
 
 	return

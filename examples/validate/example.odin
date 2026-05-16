@@ -89,7 +89,7 @@ main :: proc() {
 	defines["SHADOW_PASS"] = false
 	defer delete(defines)
 
-	core_libraries, core_ok := hep.check_core_libraries(context.temp_allocator)
+	core_libraries, core_ok := hep.check_core_libraries(allocator = context.temp_allocator)
 	assert(core_ok)
 
 	FILE_NAME :: "example.hep"
@@ -147,6 +147,7 @@ main :: proc() {
 	binary: ^spv_tools.Binary
 	result := spv_tools.optimizer_run(optimizer, raw_data(code), len(code), &binary, options)
 	assert(result == .Success)
+	defer spv_tools.binary_destroy(binary)
 
 	_ = os.write_entire_file("opt.spv", slice.to_bytes(binary^))
 }

@@ -309,7 +309,7 @@ test_bit_intrinsics :: proc(a, b, c: u32) -> u32 {
 import rt "extensions:raytracing"
 
 @(uniform, binding = 1)
-acceleration_structure: rt.Acceleration_Structure
+acceleration_structure: rq.Acceleration_Structure
 
 @(rt.ray_payload)
 payload: f32
@@ -404,11 +404,11 @@ ray_query_fragment :: proc() {
 	rq.initialize(q, acceleration_structure, {}, 0xff, {}, 0, {}, 1)
 	rq.proceed(q)
 	dist: f32
-	if rq.get_candidate_intersection_type(q) != .AABB {
-		dist = rq.get_candidate_intersection_t(q)
+	if rq.get_intersection_type(q, .Candidate) == 0 {
+		dist = rq.get_intersection_t(q, .Candidate)
 	}
-	if rq.get_commited_intersection_type(q) != .None {
-		dist = rq.get_commited_intersection_t(q)
+	if rq.get_intersection_type(q, .Committed) == 0 {
+		dist = rq.get_intersection_t(q, .Committed)
 	}
 }
 
@@ -416,10 +416,17 @@ foobar :: proc() -> u8 {
 	return 15
 }
 
-extension "SPV_KHR_shader_clock" {
-	ReadClockKHR :: proc(scope: u32) -> u64
+Scope :: enum u32 {
+	Device   = 1,
+	Subgroup = 3,
 }
 
-read_device_clock :: proc() -> u64 {
-	return ReadClockKHR(1)
+// Note that this enum differs slightly from the definition in the extension
+// as it merges the candidate and commited variants.
+// This conversion is automatically handled by get_*_intersection_type()
+Intersection_Type :: enum i32 {
+	None      = 0,
+	Triangle  = 1,
+	Generated = 2,
+	AABB      = 3,
 }

@@ -177,9 +177,9 @@ Value :: struct {
 	swizzle:         []u32,
 	group_members:   []spv.Id,
 	explicit_layout: bool,
-	discard:         bool,
+	diverging:       bool,
 	coord:           spv.Id, // texel reference for ImageStore
-	extension_op:    string,
+	extension_op:    spv.Op,
 }
 
 Scope_Kind :: enum {
@@ -201,11 +201,6 @@ Scope :: struct {
 
 @(require_results)
 cg_lookup_entity :: proc(ctx: ^Context, entity: ^ast.Entity) -> Value {
-	if .Extension_Proc in entity.flags {
-		return {
-			extension_op = entity.name,
-		}
-	}
 	assert(entity != nil)
 	return ctx.entities[entity] or_else panic("Backend: Failed to find entity value")
 }
@@ -410,15 +405,11 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 				}
 
 				if types.is_opaque(type) {
-					switch types.opaque_kind(type) {
-					case .Acceleration_Structure:
-						assert(len(v.lhs) == 1)
+					has_nil_value = false
+					if v.interface == .Uniform {
 						storage_class     = .Uniform_Constant
 						spv_storage_class = .UniformConstant
-						has_nil_value     = false
 						annotate          = true
-					case .Ray_Query:
-						has_nil_value = false
 					}
 				}
 
@@ -551,7 +542,7 @@ generate :: proc(
 
 	spv.OpMemoryModel(&ctx.memory_model, .Logical, .Simple)
 
-	b: spv.Builder = { current_id = &ctx.current_id }
+	b: spv.Builder = { current_id = &ctx.current_id, }
 
 	for name, lib in checker.libraries {
 		scope_push(&ctx, kind = .Block)
@@ -559,8 +550,8 @@ generate :: proc(
 
 		ctx.name_prefix = strings.concatenate({ name, "::", })
 
-		for _, e in lib.entities {
-			cg_stmt(&ctx, &b, e.decl, true)
+		for stmt in lib.stmts {
+			cg_stmt(&ctx, &b, stmt, true)
 		}
 
 		for p in ctx.procs {
@@ -609,7 +600,7 @@ generate :: proc(
 			}
 		}
 
-		proc_type            := types.new(.Proc, types.Proc, checker.allocator)
+		proc_type            := types.new(.Proc, types.Proc, context.temp_allocator)
 		proc_type.args        = arg_types
 		proc_type.return_type = return_type
 
@@ -778,6 +769,7 @@ generate :: proc(
 	return spirv
 }
 
+@(require_results)
 cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) -> Value {
 	type := type
 
@@ -810,7 +802,8 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 		     .Bit_Set,
 		     .Complex,
 		     .Quaternion,
-		     .Opaque:
+		     .Opaque,
+		     .Any:
 			fmt.panicf("Tried to generate constant with type", type)
 
 		case .Matrix:
@@ -1172,14 +1165,13 @@ cg_type_internal :: proc(
 			}
 		}
 	case .Opaque:
-		type := type.variant.(^types.Opaque)
-		switch type.opaque_kind {
-		case .Acceleration_Structure:
-			info.type = spv.OpTypeAccelerationStructureKHR(type_builder)
-		case .Ray_Query:
-			info.type = spv.OpTypeRayQueryKHR(type_builder)
-		}
-	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion, .Proc_Group:
+		type   := type.variant.(^types.Opaque)
+		opcode := reflect.enum_from_name(spv.Op, type.name) or_else fmt.panicf("Invalid opaque type: '%s' (this needs a better error message)", type.name)
+		append(&type_builder.data, u32(opcode) | u32(2 << 16))
+		id := spv.next_id(type_builder)
+		append(&type_builder.data, id)
+		info.type = spv.Id(id)
+	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion, .Proc_Group, .Any:
 		unreachable()
 	}
 
@@ -1859,13 +1851,7 @@ cg_cast :: proc(
 				unreachable()
 			}
 		case .Opaque:
-			to := to.variant.(^types.Opaque)
-			switch to.opaque_kind {
-			case .Acceleration_Structure:
-				return spv.OpConvertUToAccelerationStructureKHR
-			case .Ray_Query:
-				return nil
-			}
+			unimplemented()
 		}
 		return nil
 	}
@@ -2029,6 +2015,12 @@ cg_expr_internal :: proc(
 
 	case ^ast.Expr_Call:
 		if v.is_directive {
+			#partial switch v.lhs.derived.(^ast.Expr_Directive).directive {
+			case .Capability:
+				ident := v.args[0].value.derived.(^ast.Expr_Ident)
+				cap   := reflect.enum_from_name(spv.Capability, ident.text) or_else fmt.panicf("Invalid capability: '%s' (this needs a better error message)", ident.text)
+				ctx.capabilities[cap] = {}
+			}
 			return
 		}
 		if v.builtin != nil {
@@ -2067,7 +2059,7 @@ cg_expr_internal :: proc(
 				case:
 					unreachable()
 				}
-				return { id = id, type = elem }
+				return { id = id, type = elem, }
 			case .Cross:
 				a   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
 				b   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
@@ -2251,7 +2243,7 @@ cg_expr_internal :: proc(
 				return { id = spv.OpDPdy(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Discard:
 				spv.OpKill(builder)
-				return { discard = true, }
+				return { diverging = true, }
 			case .Texture_Size:
 				ctx.capabilities[.ImageQuery] = {}
 				sampler := cg_expr(ctx, builder, v.args[0].value)
@@ -2334,151 +2326,10 @@ cg_expr_internal :: proc(
 			case .Real, .Imag, .Jmag, .Kmag:
 				coord := u32(v.builtin - .Real)
 				return { id = spv.OpCompositeExtract(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id, coord), }
-			case .Read_Device_Clock, .Read_Subgroup_Clock:
-				scope: spv.Scope
-				#partial switch v.builtin {
-				case .Read_Device_Clock:
-					scope = .Device
-				case .Read_Subgroup_Clock:
-					scope = .Subgroup
-				}
-				return { id = spv.OpReadClockKHR(builder, ti.type, cg_constant(ctx, i64(scope), nil).id), }
 			case .Barrier:
 				scope     := cg_constant(ctx, i64(spv.Scope.Workgroup), nil).id
 				semantics := cg_constant(ctx, i64(spv.MemorySemantics{ .AcquireRelease, .WorkgroupMemory, }), nil).id
 				spv.OpControlBarrier(builder, scope, scope, semantics)
-				return
-			case .Trace_Ray:
-				args := make([]spv.Id, 11, context.temp_allocator)
-				types: [11]^types.Type = {
-					nil,                // Acceleration Structure
-					types.t_Ray_Flags,  // Ray Flags
-					types.t_i32,        // Cull Mask
-					types.t_i32,        // SBT Offset
-					types.t_i32,        // SBT Stride
-					types.t_i32,        // Miss Index
-					types.t_vec3,       // Ray Origin
-					types.t_f32,        // Ray Tmin
-					types.t_vec3,       // Ray Direction
-					types.t_f32,        // Ray Tmax
-					nil,                // Payload
-				}
-				for &arg, i in args {
-					type := types[i]
-					val  := cg_expr(ctx, builder, v.args[i].value, i != 10)
-					if i == 10 || type == nil {
-						arg = val.id
-					} else {
-						arg = cg_cast(ctx, builder, val, type)
-					}
-				}
-				spv.OpTraceRayKHR(builder, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10])
-				return
-			case .Ignore_Intersection:
-				spv.OpIgnoreIntersectionKHR(builder)
-				return { discard = true, }
-			case .Terminate_Ray:
-				spv.OpTerminateRayKHR(builder)
-				return { discard = true, }
-			case .Report_Intersection:
-				hit      := cg_expr(ctx, builder, v.args[0].value).id
-				hit_kind := cg_expr(ctx, builder, v.args[1].value).id
-				return { id = spv.OpReportIntersectionKHR(builder, cg_type(ctx, types.t_bool).type, hit, hit_kind), }
-	        case .Ray_Query_Initialize:
-				args := make([]spv.Id, 8, context.temp_allocator)
-				types: [8]^types.Type = {
-					types.t_Ray_Query,              // Ray Query
-					types.t_Acceleration_Structure, // Acceleration Structure
-					types.t_Ray_Flags,              // Ray Flags
-					types.t_i32,                    // Cull Mask
-					types.t_vec3,                   // Ray Origin
-					types.t_f32,                    // Ray Tmin
-					types.t_vec3,                   // Ray Direction
-					types.t_f32,                    // Ray Tmax
-				}
-				for &arg, i in args {
-					type := types[i]
-					val  := cg_expr(ctx, builder, v.args[i].value, i != 0)
-					if i == 0 {
-						arg = val.id
-					} else {
-						arg = cg_cast(ctx, builder, val, type)
-					}
-				}
-				spv.OpRayQueryInitializeKHR(builder, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7])
-				return
-	        case .Terminate:
-				query := cg_expr(ctx, builder, v.args[0].value, false).id
-				spv.OpRayQueryTerminateKHR(builder, query)
-				return
-	        case .Generate_Intersection:
-				query := cg_expr(ctx, builder, v.args[0].value, false).id
-				hit_t := cg_expr(ctx, builder, v.args[1].value).id
-				spv.OpRayQueryGenerateIntersectionKHR(builder, query, hit_t)
-				return
-	        case .Confirm_Intersection:
-				query := cg_expr(ctx, builder, v.args[0].value, false).id
-				spv.OpRayQueryConfirmIntersectionKHR(builder, query)
-				return
-	        case .Proceed:
-				query := cg_expr(ctx, builder, v.args[0].value, false).id
-				return { id = spv.OpRayQueryProceedKHR(builder, ti.type, query), }
-	        case .Get_Ray_T_Min:
-				query := cg_expr(ctx, builder, v.args[0].value, false).id
-				return { id = spv.OpRayQueryGetRayTMinKHR(builder, ti.type, query), }
-	        case .Get_Ray_Flags:
-				query := cg_expr(ctx, builder, v.args[0].value, false).id
-				return { id = spv.OpRayQueryGetRayFlagsKHR(builder, ti.type, query), }
-	        case .Get_Intersection_Candidate_AABB_Opaque:
-				query := cg_expr(ctx, builder, v.args[0].value, false).id
-				return { id = spv.OpRayQueryGetIntersectionCandidateAABBOpaqueKHR(builder, ti.type, query), }
-	        case .Get_World_Ray_Direction:
-				query := cg_expr(ctx, builder, v.args[0].value, false).id
-				return { id = spv.OpRayQueryGetWorldRayDirectionKHR(builder, ti.type, query), }
-	        case .Get_World_Ray_Origin:
-				query := cg_expr(ctx, builder, v.args[0].value, false).id
-				return { id = spv.OpRayQueryGetWorldRayOriginKHR(builder, ti.type, query), }
-			case .Get_Candidate_Intersection_Type ..= .Get_Commited_Intersection_World_To_Object:
-				query := cg_expr(ctx, builder, v.args[0].value, false).id
-
-				commited     := i64(v.builtin - .Get_Candidate_Intersection_Type) % 2
-				intersection := cg_constant(ctx, commited, nil).id
-
-				b := v.builtin
-				#partial switch b + ast.Builtin_Id(1 - commited) {
-				case .Get_Commited_Intersection_Type:
-					value.id = spv.OpRayQueryGetIntersectionTypeKHR(builder, ti.type, query, intersection)
-					if commited == 0 {
-						// Convert the enum the unified representation
-						value.id = spv.OpIAdd(builder, ti.type, value.id, value.id)
-						one     := cg_constant(ctx, i64(1), v.type)
-						value.id = spv.OpIAdd(builder, ti.type, value.id, one.id)
-					}
-				case .Get_Commited_Intersection_T:
-					value.id = spv.OpRayQueryGetIntersectionTKHR(builder, ti.type, query, intersection)
-				case .Get_Commited_Intersection_Instance_Custom_Index:
-					value.id = spv.OpRayQueryGetIntersectionInstanceCustomIndexKHR(builder, ti.type, query, intersection)
-				case .Get_Commited_Intersection_Instance_Id:
-					value.id = spv.OpRayQueryGetIntersectionInstanceIdKHR(builder, ti.type, query, intersection)
-				case .Get_Commited_Intersection_Instance_Sbt_Offset:
-					value.id = spv.OpRayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetKHR(builder, ti.type, query, intersection)
-				case .Get_Commited_Intersection_Geometry_Index:
-					value.id = spv.OpRayQueryGetIntersectionGeometryIndexKHR(builder, ti.type, query, intersection)
-				case .Get_Commited_Intersection_Primitive_Index:
-					value.id = spv.OpRayQueryGetIntersectionPrimitiveIndexKHR(builder, ti.type, query, intersection)
-				case .Get_Commited_Intersection_Barycentrics:
-					value.id = spv.OpRayQueryGetIntersectionBarycentricsKHR(builder, ti.type, query, intersection)
-				case .Get_Commited_Intersection_Front_Face:
-					value.id = spv.OpRayQueryGetIntersectionFrontFaceKHR(builder, ti.type, query, intersection)
-				case .Get_Commited_Intersection_Object_Ray_Direction:
-					value.id = spv.OpRayQueryGetIntersectionObjectRayDirectionKHR(builder, ti.type, query, intersection)
-				case .Get_Commited_Intersection_Object_Ray_Origin:
-					value.id = spv.OpRayQueryGetIntersectionObjectRayOriginKHR(builder, ti.type, query, intersection)
-				case .Get_Commited_Intersection_Object_To_World:
-					value.id = spv.OpRayQueryGetIntersectionObjectToWorldKHR(builder, ti.type, query, intersection)
-				case .Get_Commited_Intersection_World_To_Object:
-					value.id = spv.OpRayQueryGetIntersectionWorldToObjectKHR(builder, ti.type, query, intersection)
-				}
 				return
 			}
 
@@ -2489,44 +2340,53 @@ cg_expr_internal :: proc(
 			return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type), }
 		}
 
-		_fn       := cg_expr(ctx, builder, v.lhs)
-		fn        := _fn.id
+		fn_value  := cg_expr(ctx, builder, v.lhs)
+		fn        := fn_value.id
 		proc_type := v.lhs.type.variant.(^types.Proc) or_else nil
 		if member, ok := v.group_member.?; ok {
-			fn        = _fn.group_members[member]
+			fn        = fn_value.group_members[member]
 			proc_type = v.lhs.type.variant.(^types.Proc_Group).members[member]
 		}
 
 		args := make([dynamic]spv.Id, 0, len(v.args))
 		arg_i: int
 		for arg in v.args {
-			value  := cg_expr(ctx, builder, arg.value)
+			value  := cg_expr(ctx, builder, arg.value, deref = .By_Ptr not_in proc_type.args[arg_i].flags)
 			values := []Value{ value, }
 			deconstruct_tuple(ctx, builder, value.type, &values)
 
 			for value in values {
-				append(&args, cg_cast(ctx, builder, value, proc_type.args[arg_i].type))
+				id := value.id
+				if .By_Ptr not_in proc_type.args[arg_i].flags {
+					id = cg_cast(ctx, builder, value, proc_type.args[arg_i].type)
+				}
+				append(&args, id)
 				arg_i += 1
 			}
 		}
 
 		return_type_info := cg_type(ctx, proc_type.return_type)
 
-		if _fn.extension_op != {} {
-			opcode := reflect.enum_from_name(spv.Op, _fn.extension_op) or_else panic("fried")
-
-			for cap in spv.op_capabilties[opcode] {
-				ctx.capabilities[cap] = {}
+		ret: spv.Id
+		if fn_value.extension_op != nil {
+			word_count := 1 + len(args)
+			if len(proc_type.returns) != 0 {
+				word_count += 2
 			}
-
-			append(&builder.data, u32(opcode) | u32((3 + len(args)) << 16))
-			append(&builder.data, u32(return_type_info.type))
-			ret := spv.next_id(builder)
-			append(&builder.data, ret)
+			append(&builder.data, u32(fn_value.extension_op) | u32(word_count << 16))
+			if len(proc_type.returns) != 0 {
+				append(&builder.data, u32(return_type_info.type))
+				ret = spv.Id(spv.next_id(builder))
+				append(&builder.data, u32(ret))
+			}
 			append(&builder.data, ..slice.reinterpret([]u32, args[:]))
-			return { id = spv.Id(ret), }
 		} else {
-			return { id = spv.OpFunctionCall(builder, return_type_info.type, fn, ..args[:]), }
+			ret = spv.OpFunctionCall(builder, return_type_info.type, fn, ..args[:])
+		}
+
+		return {
+			id        = ret,
+			diverging = proc_type.diverging,
 		}
 	case ^ast.Expr_Compound:
 		if len(v.fields) == 0 {
@@ -2784,7 +2644,7 @@ cg_expr_internal :: proc(
 		then_value := cg_expr(ctx, builder, v.then_expr).id
 		else_value := cg_expr(ctx, builder, v.else_expr).id
 		return { id = spv.OpSelect(builder, cg_type(ctx, v.type).type, cond, then_value, else_value), }
-	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Image, ^ast.Type_Enum, ^ast.Type_Bit_Set:
+	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Image, ^ast.Type_Enum, ^ast.Type_Bit_Set, ^ast.Type_Opaque:
 		panic("tried to cg type as expression")
 	case ^ast.Expr_Directive:
 		panic("tried to cg directive as expression")
@@ -3230,35 +3090,28 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		}
 	case ^ast.Stmt_Expr:
 		e := cg_expr(ctx, builder, v.expr, false)
-		if e.discard {
+		if e.diverging {
 			return true
 		}
 
 	case ^ast.Decl_Value:
 		cg_value_decl(ctx, builder, v, global)
 	case ^ast.Decl_Import:
-		text      := v.path.const_value.(string)
-		extension := strings.trim_prefix(text, "extensions:")
-		if extension == text {
-			break
-		}
-
-		switch extension {
-		case "raytracing":
-			ctx.extensions["SPV_KHR_ray_tracing"] = {}
-			ctx.capabilities[.RayTracingKHR]      = {}
-		case "ray_query":
-			ctx.extensions["SPV_KHR_ray_query"] = {}
-			ctx.capabilities[.RayQueryKHR]      = {}
-		case "clock":
-			ctx.extensions["SPV_KHR_shader_clock"] = {}
-			ctx.capabilities[.ShaderClockKHR]      = {}
-		}
 	case ^ast.Decl_Extension:
-		ctx.extensions[v.extension.const_value.(string)] = {}
+		cg_extension(ctx, v)
 	}
 
 	return
+}
+
+cg_extension :: proc(ctx: ^Context, extension: ^ast.Decl_Extension) {
+	ctx.extensions[extension.extension.const_value.(string)] = {}
+
+	for decl in extension.body {
+		v      := decl.derived.(^ast.Decl_Value)
+		opcode := reflect.enum_from_name(spv.Op, v.lhs[0].text) or_else fmt.panicf("Invalid extension operation: '%s' (this needs a better error message)", v.lhs[0].text)
+		ctx.entities[v.lhs[0].entity] = { extension_op = opcode, }
+	}
 }
 
 cg_stmt_list :: proc(ctx: ^Context, builder: ^spv.Builder, stmts: []^ast.Stmt, global := false) -> (returned: bool) {

@@ -31,11 +31,14 @@ Decl :: struct {
 	derived_decl:    Any_Decl,
 }
 
+Field_Flags :: types.Field_Flags
+
 Field :: struct {
-	name:       ^Expr_Ident,
-	type:       ^Expr,
-	value:      ^Expr,
-	location:   ^Expr, // location for proc params, libraries for attributes
+	name:        ^Expr_Ident,
+	type:        ^Expr,
+	value:       ^Expr,
+	location:    ^Expr, // location for proc params, libraries for attributes
+	flags:        Field_Flags,
 	member_index: int,
 	swizzle:    []u32,
 }
@@ -85,15 +88,17 @@ Directive :: enum {
 	Panic,
 	Import,
 	Config,
+	Capability,
 }
 
 @(rodata)
 directive_names: [Directive]string = {
-	.Invalid = "<invalid>",
-	.Assert  = "assert",
-	.Panic   = "panic",
-	.Import  = "import",
-	.Config  = "config",
+	.Invalid    = "<invalid>",
+	.Assert     = "assert",
+	.Panic      = "panic",
+	.Import     = "import",
+	.Config     = "config",
+	.Capability = "capability",
 }
 
 Expr_Directive :: struct {
@@ -144,6 +149,7 @@ Expr_Proc_Sig :: struct {
 	using node: Expr,
 	args:     []Field,
 	returns:  []Field,
+	diverging:  bool,
 }
 
 Expr_Proc_Group :: struct {
@@ -240,70 +246,6 @@ Builtin_Id :: enum {
 	Reverse_Bits,
 
 	Barrier,
-
-	/** extensions **/
-
-	/* clock */
-	Read_Subgroup_Clock,
-	Read_Device_Clock,
-
-	/* raytracing */
-	Trace_Ray,
-	Report_Intersection,
-	Ignore_Intersection,
-	Terminate_Ray,
-
-	/* ray query */
-	Ray_Query_Initialize,
-	Generate_Intersection,
-	Terminate,
-	Confirm_Intersection,
-	Proceed,
-
-	Get_Ray_T_Min,
-	Get_Ray_Flags,
-	Get_Intersection_Candidate_AABB_Opaque,
-	Get_World_Ray_Direction,
-	Get_World_Ray_Origin,
-
-	Get_Candidate_Intersection_Type,
-	Get_Commited_Intersection_Type,
-
-	Get_Candidate_Intersection_T,
-	Get_Commited_Intersection_T,
-
-	Get_Candidate_Intersection_Instance_Custom_Index,
-	Get_Commited_Intersection_Instance_Custom_Index,
-
-	Get_Candidate_Intersection_Instance_Id,
-	Get_Commited_Intersection_Instance_Id,
-
-	Get_Candidate_Intersection_Instance_Sbt_Offset,
-	Get_Commited_Intersection_Instance_Sbt_Offset,
-
-	Get_Candidate_Intersection_Geometry_Index,
-	Get_Commited_Intersection_Geometry_Index,
-
-	Get_Candidate_Intersection_Primitive_Index,
-	Get_Commited_Intersection_Primitive_Index,
-
-	Get_Candidate_Intersection_Barycentrics,
-	Get_Commited_Intersection_Barycentrics,
-
-	Get_Candidate_Intersection_Front_Face,
-	Get_Commited_Intersection_Front_Face,
-
-	Get_Candidate_Intersection_Object_Ray_Direction,
-	Get_Commited_Intersection_Object_Ray_Direction,
-
-	Get_Candidate_Intersection_Object_Ray_Origin,
-	Get_Commited_Intersection_Object_Ray_Origin,
-
-	Get_Candidate_Intersection_Object_To_World,
-	Get_Commited_Intersection_Object_To_World,
-
-	Get_Candidate_Intersection_World_To_Object,
-	Get_Commited_Intersection_World_To_Object,
 }
 
 Expr_Call :: struct {
@@ -391,6 +333,12 @@ Type_Enum :: struct {
 Type_Bit_Set :: struct {
 	using node: Expr,
 	enum_type: ^Expr,
+	backing:   ^Expr,
+}
+
+Type_Opaque :: struct {
+	using node: Expr,
+	name:      ^Expr_Ident,
 	backing:   ^Expr,
 }
 
@@ -571,6 +519,7 @@ Any_Node :: union {
 	^Type_Image,
 	^Type_Enum,
 	^Type_Bit_Set,
+	^Type_Opaque,
 
 	^Stmt_Return,
 	^Stmt_Break,
@@ -614,6 +563,7 @@ Any_Expr :: union {
 	^Type_Image,
 	^Type_Enum,
 	^Type_Bit_Set,
+	^Type_Opaque,
 }
 
 Any_Decl :: union {

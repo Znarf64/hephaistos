@@ -1,6 +1,4 @@
-// This is purely for documentation
-
-Acceleration_Structure :: distinct u64
+Acceleration_Structure :: opaque(TypeAccelerationStructureKHR)
 
 Ray_Flags :: bit_set[enum {
 	NoOpaque,
@@ -20,19 +18,29 @@ Hit_Kind :: enum u32 {
 	Back  = 0xFF,
 }
 
-report_intersection :: proc(hit: f32, hit_kind: Hit_Kind) -> bool ---
-ignore_intersection :: proc() -> ! ---
-terminate_ray       :: proc() -> ! ---
+#capability(RayTracingKHR)
 
-trace_ray :: proc(
-	acceleration_structure: Acceleration_Structure,
-	ray_flags:              Ray_Flags,
-	cull_mask:              i32,
-	sbt_offset:             i32,
-	sbt_stride:             i32,
-	miss_index:             i32,
-	ray_origin:             vec3,
-	ray_tmin:               f32,
-	ray_direction:          vec3,
-	ray_tmax:               f32,
-) ---
+extension "SPV_KHR_ray_tracing" {
+	ReportIntersectionKHR :: proc(hit: f32, hit_kind: Hit_Kind) -> bool
+	IgnoreIntersectionKHR :: proc() -> !
+	TerminateRayKHR       :: proc() -> !
+
+	TraceRayKHR :: proc(
+		acceleration_structure: Acceleration_Structure,
+		ray_flags:              Ray_Flags,
+		cull_mask:              i32,
+		sbt_offset:             i32,
+		sbt_stride:             i32,
+		miss_index:             i32,
+		ray_origin:             [3]f32,
+		ray_tmin:               f32,
+		ray_direction:          [3]f32,
+		ray_tmax:               f32,
+		#by_ptr payload:        any,
+	)
+}
+
+trace_ray           :: TraceRayKHR
+report_intersection :: ReportIntersectionKHR
+ignore_intersection :: IgnoreIntersectionKHR
+terminate_ray       :: TerminateRayKHR

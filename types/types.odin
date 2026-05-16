@@ -10,12 +10,22 @@ import "core:slice"
 
 import "../tokenizer"
 
+Field_Flag :: enum {
+	Const,
+	By_Ptr,
+	// Any_Int,
+	// Any_Float,
+}
+
+Field_Flags :: bit_set[Field_Flag]
+
 Field :: struct {
 	name:     string,
-	type:     ^Type,
+	type:    ^Type,
 	value:    Const_Value,
 	offset:   int,
 	location: int,
+	flags:    Field_Flags,
 	entity:   rawptr,
 }
 
@@ -65,6 +75,7 @@ Proc :: struct {
 	args:        []Field,
 	returns:     []Field,
 	return_type: ^Type,
+	diverging:   bool,
 }
 
 Proc_Group :: struct {
@@ -91,16 +102,11 @@ Bit_Set :: struct {
 	backing:    ^Type,
 }
 
-Opaque_Kind :: enum {
-	Acceleration_Structure,
-	Ray_Query,
-}
-
 // A deliberately opaque type such as OpTypeAccelerationStructureKHR
 Opaque :: struct {
 	using base:  Type,
-	opaque_kind: Opaque_Kind,
-	backing:     ^Type,
+	name:        string,
+	backing:    ^Type,
 }
 
 Kind :: enum {
@@ -110,6 +116,7 @@ Kind :: enum {
 	Int,
 	Bool,
 	Float,
+	Any,
 
 	Struct,
 	Matrix,
@@ -191,6 +198,8 @@ t_f16     := &Type{ kind = .Float,   size = 2, align = 2, }
 t_f32     := &Type{ kind = .Float,   size = 4, align = 4, }
 t_f64     := &Type{ kind = .Float,   size = 8, align = 8, }
 
+t_any     := &Type{ kind = .Any,     size = 0, align = 0, }
+
 t_vec2,  t_vec3,  t_vec4:  ^Type
 t_ivec2, t_ivec3, t_ivec4: ^Type
 
@@ -200,11 +209,7 @@ t_quaternion128, t_quaternion256: ^Type
 t_mat4x3:            ^Type
 t_Hit_Kind:          ^Type
 t_Ray_Flags:         ^Type
-t_Intersection_Type: ^Type
-t_Geometry_Mode:     ^Type
-
-t_Ray_Query:              ^Type
-t_Acceleration_Structure: ^Type
+// t_Intersection_Type: ^Type
 
 @(init)
 _base_types_init :: proc "contextless" () {
@@ -260,19 +265,6 @@ _base_types_init :: proc "contextless" () {
 	set.enum_type = ray_flags_bits
 	set.backing   = t_i32
 	t_Ray_Flags   = set
-
-	t_Acceleration_Structure = opaque_new(.Acceleration_Structure, t_u64,     allocator)
-	t_Ray_Query              = opaque_new(.Ray_Query,              t_invalid, allocator)
-
-	intersection_type := new(.Enum, Enum, allocator)
-	intersection_type.backing = t_i32
-	intersection_type.values  = slice.clone([]Enum_Value {
-		{ "None",      0, nil, },
-		{ "Triangle",  1, nil, },
-		{ "Generated", 2, nil, },
-		{ "AABB",      3, nil, },
-	}, allocator)
-	t_Intersection_Type = intersection_type
 }
 
 print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
@@ -449,7 +441,9 @@ print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 		fmt.wprintf(w, "]")
 	case .Opaque:
 		type := type.variant.(^Opaque)
-		fmt.wprintf(w, `"%v"`, type.opaque_kind)
+		fmt.wprintf(w, `"%v"`, type.name)
+	case .Any:
+		fmt.wprintf(w, "any")
 	}
 }
 
@@ -561,7 +555,7 @@ equal :: proc(a, b: ^Type) -> bool {
 
 		return equal(a.texel_type, b.texel_type)
 	case .Opaque:
-		return opaque_kind(a) == opaque_kind(b)
+		return opaque_name(a) == opaque_name(b)
 	}
 
 	return true
@@ -596,6 +590,10 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 	from := base_type(from)
 
 	if equal(from, to) {
+		return true
+	}
+
+	if to.kind == .Any {
 		return true
 	}
 
@@ -785,8 +783,8 @@ buffer_elem :: proc(type: ^Type) -> ^Type {
 }
 
 @(require_results)
-opaque_kind :: proc(type: ^Type) -> Opaque_Kind {
-	return type.variant.(^Opaque).opaque_kind
+opaque_name :: proc(type: ^Type) -> string {
+	return type.variant.(^Opaque).name
 }
 
 @(require_results)
@@ -975,10 +973,10 @@ matrix_new :: proc(col_type: ^Array, cols: int, allocator: mem.Allocator) -> ^Ma
 }
 
 @(require_results)
-opaque_new :: proc(kind: Opaque_Kind, backing: ^Type, allocator: mem.Allocator) -> ^Opaque {
-	type            := new(.Opaque, Opaque, allocator)
-	type.opaque_kind = kind
-	type.backing     = backing
+opaque_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Opaque {
+	type        := new(.Opaque, Opaque, allocator)
+	type.name    = name
+	type.backing = backing
 
 	return type
 }

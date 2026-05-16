@@ -57,9 +57,20 @@ parse_field_list :: proc(
 	fields := make([dynamic]ast.Field, parser.allocator)
 
 	loop: for {
+		flags: ast.Field_Flags
 		#partial switch token_peek(parser).kind {
 		case terminator, .EOF:
 			break loop
+		}
+		for token_peek(parser).kind == .Directive {
+			token_advance(parser)
+			ident := token_expect(parser, .Ident, "'#'") or_continue
+			switch ident.text {
+			case "const":
+				flags |= { .Const, }
+			case "by_ptr":
+				flags |= { .By_Ptr, }
+			}
 		}
 		name := parse_ident(parser) or_return
 		type: ^ast.Expr
@@ -94,6 +105,7 @@ parse_field_list :: proc(
 			value    = value,
 			type     = type,
 			location = location,
+			flags    = flags,
 		})
 
 		if token_peek(parser).kind == .Comma {
@@ -141,13 +153,19 @@ parse_arg_list :: proc(parser: ^Parser, terminator: tokenizer.Token_Kind) -> (_f
 	return fields[:], true
 }
 
-parse_proc_signature :: proc(parser: ^Parser) -> (args, returns: []ast.Field, ok: bool) {
+parse_proc_signature :: proc(parser: ^Parser) -> (args, returns: []ast.Field, diverging, ok: bool) {
 	token_expect(parser, .Proc) or_return
 	token_expect(parser, .Open_Paren)
 	args = parse_field_list(parser, .Close_Paren, true, true) or_return
 
-	if token_peek(parser).kind == .Arrow {
+	parse_returns: if token_peek(parser).kind == .Arrow {
 		token_advance(parser)
+
+		if token_peek(parser).kind == .Not {
+			token_advance(parser)
+			diverging = true
+			break parse_returns
+		}
 
 		if token_peek(parser).kind == .Open_Paren {
 			token_advance(parser)
@@ -158,7 +176,7 @@ parse_proc_signature :: proc(parser: ^Parser) -> (args, returns: []ast.Field, ok
 		}
 	}
 
-	return args, returns, true
+	return args, returns, diverging, true
 }
 
 parse_stmt_list :: proc(
@@ -255,21 +273,23 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 			group.members = members[:]
 			return group, true
 		}
-		args, returns := parse_proc_signature(parser) or_return
+		args, returns, diverging := parse_proc_signature(parser) or_return
 		if token_peek(parser).kind == .Open_Brace {
 			token_advance(parser)
 			body := parse_stmt_list(parser) or_return
 			token_advance(parser)
 
-			lit := ast.new(ast.Expr_Proc_Lit, token.location, parser.end_location, parser.allocator)
-			lit.args    = args
-			lit.returns = returns
-			lit.body    = body
+			lit          := ast.new(ast.Expr_Proc_Lit, token.location, parser.end_location, parser.allocator)
+			lit.args      = args
+			lit.returns   = returns
+			lit.body      = body
+			lit.diverging = diverging
 			return lit, true
 		} else {
-			sig := ast.new(ast.Expr_Proc_Sig, token.location, parser.end_location, parser.allocator)
-			sig.args    = args
-			sig.returns = returns
+			sig          := ast.new(ast.Expr_Proc_Sig, token.location, parser.end_location, parser.allocator)
+			sig.args      = args
+			sig.returns   = returns
+			sig.diverging = diverging
 			return sig, true
 		}
 
@@ -288,9 +308,10 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 			backing = parse_expr(parser, allow_compound_literals = false) or_else nil
 		}
 		token_expect(parser, .Open_Brace) or_return
-		values := parse_field_list(parser, .Close_Brace, true, types = false) or_return
-		s      := ast.new(ast.Type_Enum, token.location, parser.end_location, parser.allocator)
-		s.values = values
+		values   := parse_field_list(parser, .Close_Brace, true, types = false) or_return
+		s        := ast.new(ast.Type_Enum, token.location, parser.end_location, parser.allocator)
+		s.values  = values
+		s.backing = backing
 		return s, true
 
 	case .Bit_Set:
@@ -357,6 +378,21 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 		s.is_sampler = token.kind == .Sampler
 		return s, true
 
+	case .Opaque:
+		token_advance(parser)
+		token_expect(parser, .Open_Paren) or_return
+		ident := parse_ident(parser) or_return
+		backing: ^ast.Expr
+		if token_peek(parser).kind == .Comma {
+			token_advance(parser)
+			backing = parse_expr(parser) or_return
+		}
+		token_expect(parser, .Close_Paren) or_return
+		o        := ast.new(ast.Type_Opaque, token.location, parser.end_location, parser.allocator)
+		o.name    = ident
+		o.backing = backing
+		return o, true
+
 	case .Open_Paren:
 		token_advance(parser)
 		expr := parse_expr(parser) or_return
@@ -410,8 +446,13 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 			}
 
 			return image, true
+		case "capability":
+			token_expect(parser, .Open_Paren, "#capability") or_return
+			cap := token_expect(parser, .Ident, "#capability") or_return
+			token_expect(parser, .Close_Paren, "#capability") or_return
 		case:
 			error(parser, directive_token, "unknown directive: '%s'", directive_token.text)
+			return
 		}
 	case .Ellipsis:
 		token_advance(parser)
