@@ -941,7 +941,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 			}
 
 			type := types.new_any(checker.allocator)
-			e    := entity_new(.Proc, v.lhs[0], type, decl = v, flags = { .Extension_Proc, }, allocator = checker.allocator)
+			e    := entity_new(checker, .Proc, v.lhs[0], type, decl = v, flags = { .Extension_Proc, })
 			scope_insert_entity(checker, e)
 			append(entities, e)
 		}
