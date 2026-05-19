@@ -2550,8 +2550,10 @@ check_expr_internal :: proc(
 					if n == 1 {
 						expected_type = type.elem
 					} else {
-						expected_type = types.array_new(type.elem, n, context.temp_allocator)
+						expected_type = types.array_new(type.elem, n, checker.allocator)
 					}
+
+					field.name.type = expected_type
 
 					value := check_expr(checker, field.value, type_hint = expected_type)
 					operand.constant_compound &&= value.mode == .Const
@@ -2559,10 +2561,8 @@ check_expr_internal :: proc(
 						error(checker, field.value, "expected value of type %v but got %v", expected_type, value.type)
 						return
 					}
-					if n == 1 {
-						field.value.type = expected_type
-					}
-					field.swizzle = indices[:]
+					field.value.type = expected_type
+					field.swizzle    = indices[:]
 				}
 				return
 			}
@@ -2915,9 +2915,9 @@ check_expr_internal :: proc(
 	case ^ast.Type_Enum:
 		operand.mode = .Type
 
-		type          := types.new(.Enum, types.Enum, checker.allocator)
-		values        := make([dynamic]types.Enum_Value, 0, len(v.values), checker.allocator)
-		values_seen   := make(map[string]struct{}, context.temp_allocator)
+		type       := types.new(.Enum, types.Enum, checker.allocator)
+		values     := make([dynamic]types.Enum_Value, 0, len(v.values), checker.allocator)
+		names_seen := make(map[string]struct{}, context.temp_allocator)
 
 		max_value: i64
 		min_value: i64
@@ -2926,10 +2926,10 @@ check_expr_internal :: proc(
 		for value in v.values {
 			name := value.name.text
 
-			if name in values_seen {
+			if name in names_seen {
 				error(checker, value.name, "duplicate enum value name: '%s'", name)
 			}
-			values_seen[name] = {}
+			names_seen[name] = {}
 
 			val: i64
 			if value.value == nil {
