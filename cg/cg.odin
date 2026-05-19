@@ -1936,8 +1936,10 @@ cg_expr_internal :: proc(
 		return cg_constant(ctx, expr.const_value, expr.type)
 	}
 
-	cg_ident :: proc(ctx: ^Context, builder: ^spv.Builder, entity: ^ast.Entity) -> (value: Value) {
-		value = cg_lookup_entity(ctx, entity)
+	@(require_results)
+	cg_ident :: proc(ctx: ^Context, builder: ^spv.Builder, ident: ^ast.Expr_Ident) -> (value: Value) {
+		entity := ident.entity
+		value   = cg_lookup_entity(ctx, entity)
 		#partial switch value.storage_class {
 		case .Push_Constant, .Storage_Buffer, .Uniform, .Uniform_Constant:
 			value.explicit_layout = true
@@ -1960,7 +1962,7 @@ cg_expr_internal :: proc(
 		value.id  = cg_expr_binary(ctx, builder, v.op, lhs, rhs, &value.type)
 		return
 	case ^ast.Expr_Ident:
-		return cg_ident(ctx, builder, v.entity)
+		return cg_ident(ctx, builder, v)
 	case ^ast.Expr_Proc_Lit:
 		return cg_proc_lit(ctx, v, shader_stage)
 	case ^ast.Expr_Proc_Sig:
@@ -1976,8 +1978,8 @@ cg_expr_internal :: proc(
 	case ^ast.Expr_Ellipsis:
 		return cg_expr(ctx, builder, v.expr)
 	case ^ast.Expr_Selector:
-		if v.entity != nil && v.entity.kind != .Enum_Value && v.entity.kind != .Struct_Field {
-			return cg_ident(ctx, builder, v.entity)
+		if v.selector.entity != nil && v.selector.entity.kind != .Enum_Value && v.selector.entity.kind != .Struct_Field {
+			return cg_ident(ctx, builder, v.selector)
 		}
 		lhs := cg_expr(ctx, builder, v.lhs, false)
 

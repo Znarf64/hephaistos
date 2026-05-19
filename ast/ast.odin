@@ -266,7 +266,6 @@ Expr_Paren :: struct {
 Expr_Selector :: struct {
 	using node:  Expr,
 	lhs:        ^Expr,
-	entity:     ^Entity,
 	selector:   ^Expr_Ident,
 	field_index: int,
 	swizzle:     []u32,
@@ -621,6 +620,7 @@ Entity :: struct {
 	interface:  Interface_Kind,
 	flags:      Entity_Flags,
 	scope:     ^Scope,
+	references: [dynamic]^Expr_Ident,
 }
 
 Entity_Kind :: enum u32 {

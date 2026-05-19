@@ -1,7 +1,5 @@
 package hephaistos_checker
 
-import "core:mem"
-
 import "../ast"
 import "../types"
 
@@ -29,6 +27,7 @@ entity_kind_strings := [Entity_Kind]string{
 
 @(require_results)
 entity_new :: proc(
+	checker:   ^Checker,
 	kind:       ast.Entity_Kind,
 	ident:     ^ast.Expr_Ident,
 	type:      ^types.Type,
@@ -36,11 +35,10 @@ entity_new :: proc(
 	value:      types.Const_Value = nil,
 	builtin_id: ast.Builtin_Id    = nil,
 	flags:      ast.Entity_Flags  = {},
-	allocator:  mem.Allocator,
 ) -> ^ast.Entity {
 	assert(type != nil)
 
-	e           := new(ast.Entity, allocator)
+	e           := new(ast.Entity, checker.allocator)
 	e.kind       = kind
 	e.type       = type
 	e.ident      = ident
@@ -50,6 +48,11 @@ entity_new :: proc(
 	e.builtin_id = builtin_id
 	e.flags      = flags
 
+	e.references.allocator = checker.allocator
+	if .Enable_References in checker.flags {
+		append(&e.references, ident)
+	}
+
 	ident.entity = e
 
 	return e
@@ -57,6 +60,7 @@ entity_new :: proc(
 
 @(require_results)
 entity_new_no_ident :: proc(
+	checker:   ^Checker,
 	kind:       ast.Entity_Kind,
 	name:       string,
 	type:      ^types.Type,
@@ -64,9 +68,8 @@ entity_new_no_ident :: proc(
 	builtin_id: ast.Builtin_Id    = nil,
 	value:      types.Const_Value = nil,
 	flags:      ast.Entity_Flags  = {},
-	allocator:  mem.Allocator,
 ) -> ^ast.Entity {
-	e           := new(ast.Entity, allocator)
+	e           := new(ast.Entity, checker.allocator)
 	e.kind       = kind
 	e.type       = type
 	e.ident      = nil
@@ -75,5 +78,8 @@ entity_new_no_ident :: proc(
 	e.value      = value
 	e.builtin_id = builtin_id
 	e.flags      = flags
+
+	e.references.allocator = checker.allocator
+
 	return e
 }

@@ -21,6 +21,7 @@ Flag :: enum {
 	Auto_Map_Locations,
 	Auto_Bind_Uniforms,
 	Enable_Reflection,
+	Enable_References,
 }
 
 Flags :: bit_set[Flag]
@@ -123,12 +124,16 @@ scope_new :: proc(parent: ^Scope, kind: Scope_Kind, allocator: mem.Allocator) ->
 }
 
 @(require_results)
-scope_lookup :: proc(checker: ^Checker, name: ^ast.Expr_Ident) -> (e: ^Entity, ok: bool) {
+resolve_ident :: proc(checker: ^Checker, name: ^ast.Expr_Ident) -> (e: ^Entity, ok: bool) {
 	s := checker.scope
 	for s != nil {
 		e, ok = s.entities[name.text]
 		if ok {
 			decl_resolve(checker, e)
+			name.entity = e
+			if .Enable_References in checker.flags {
+				append(&e.references, name)
+			}
 			return
 		}
 		s = s.parent
@@ -168,7 +173,7 @@ scope_push :: proc(checker: ^Checker, kind: Scope_Kind, label: ^ast.Expr_Ident =
 	checker.scope = scope_new(checker.scope, kind, checker.allocator)
 
 	if label != nil {
-		e      := entity_new(.Label, label, types.t_invalid, flags = { .Resolved, }, allocator = checker.allocator)
+		e      := entity_new(checker, .Label, label, types.t_invalid, flags = { .Resolved, })
 		e.scope = checker.scope
 		scope_insert_entity(checker, e)
 	}
@@ -291,7 +296,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			error(checker, v.end, "mismatched types in range stmt: %v vs %v", start.type, end.type)
 		}
 
-		scope_insert_entity(checker, entity_new(.Var, v.variable, iter_type, flags = { .Readonly, .Resolved, }, allocator = checker.allocator))
+		scope_insert_entity(checker, entity_new(checker, .Var, v.variable, iter_type, flags = { .Readonly, .Resolved, }))
 		v.variable.type = iter_type
 
 		v.scope = scope_push(checker, .Block)
@@ -496,7 +501,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					continue
 				}
 
-				scope_insert_entity(checker, entity_new(.Var, ident, explicit_type, decl = v, flags = flags, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(checker, .Var, ident, explicit_type, decl = v, flags = flags))
 
 				lhs.type = explicit_type
 			}
@@ -539,12 +544,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				}
 
 				scope_insert_entity(checker, entity_new(
+					checker,
 					entity_kind,
 					ident,
 					type,
-					decl      = v,
-					flags     = flags,
-					allocator = checker.allocator,
+					decl  = v,
+					flags = flags,
 				))
 			}
 		}
@@ -888,9 +893,9 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 		} else {
 			e: ^Entity
 			if v.alias != nil {
-				e = entity_new(.Library, v.alias, types.t_invalid, allocator = checker.allocator)
+				e = entity_new(checker, .Library, v.alias, types.t_invalid)
 			} else {
-				e = entity_new_no_ident(.Library, name, types.t_invalid, allocator = checker.allocator)
+				e = entity_new_no_ident(checker, .Library, name, types.t_invalid)
 			}
 			e.library = path
 			e.decl    = v
@@ -964,7 +969,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 			}
 
 			type       := types.new_any(checker.allocator)
-			e          := entity_new(entity_kind, ident, type, decl = d, flags = flags, allocator = checker.allocator)
+			e          := entity_new(checker, entity_kind, ident, type, decl = d, flags = flags)
 			e.interface = d.interface
 			scope_insert_entity(checker, e)
 			append(entities, e)
@@ -1216,12 +1221,12 @@ checker_init :: proc(
 
 	create_builtin_type :: proc(checker: ^Checker, type: ^types.Type, type_expr := #caller_expression(type)) {
 		name := type_expr[len("types.t_"):]
-		scope_insert_entity(checker, entity_new_no_ident(.Type, name, type, flags = { .Resolved, }, allocator = checker.allocator))
+		scope_insert_entity(checker, entity_new_no_ident(checker, .Type, name, type, flags = { .Resolved, }))
 	}
 
 	create_builtin_type(checker, types.t_bool)
-	scope_insert_entity(checker, entity_new_no_ident(.Const, "true",  types.t_bool, value = true,  flags = { .Resolved, }, allocator = checker.allocator))
-	scope_insert_entity(checker, entity_new_no_ident(.Const, "false", types.t_bool, value = false, flags = { .Resolved, }, allocator = checker.allocator))
+	scope_insert_entity(checker, entity_new_no_ident(checker, .Const, "true",  types.t_bool, value = true,  flags = { .Resolved, }))
+	scope_insert_entity(checker, entity_new_no_ident(checker, .Const, "false", types.t_bool, value = false, flags = { .Resolved, }))
 
 	create_builtin_type(checker, types.t_i8)
 	create_builtin_type(checker, types.t_i16)
@@ -1256,18 +1261,18 @@ checker_init :: proc(
 
 	create_library_type :: proc(checker: ^Checker, library: ^Library, type: ^types.Type, type_expr := #caller_expression(type)) {
 		name := strings.trim_prefix(type_expr, "types.t_")
-		library.entities[name] = entity_new_no_ident(.Type, name, type, flags = { .Resolved, }, allocator = checker.allocator)
+		library.entities[name] = entity_new_no_ident(checker, .Type, name, type, flags = { .Resolved, })
 	}
 
 	for name, builtin in builtin_names {
 		create_builtin_proc :: proc(checker: ^Checker, name: string, builtin: ast.Builtin_Id) -> ^Entity {
 			return entity_new_no_ident(
+				checker,
 				.Builtin,
 				name,
 				types.t_invalid,
 				builtin_id = builtin,
 				flags      = { .Resolved, },
-				allocator  = checker.allocator,
 			)
 		}
 
@@ -1846,13 +1851,12 @@ check_expr_internal :: proc(
 			error(checker, v, "invalid use of blank identifier ('_')")
 			return
 		}
-		e, ok := scope_lookup(checker, v)
+		e, ok := resolve_ident(checker, v)
 		if !ok {
 			operand.type = types.t_invalid
 			operand.mode = .Invalid
 			return
 		}
-		v.entity = e
 		entity_to_operand(checker, e, &operand)
 		return
 
@@ -1896,7 +1900,7 @@ check_expr_internal :: proc(
 			if arg.name != "" {
 				expr     := v.args[i].name
 				expr.type = arg.type
-				scope_insert_entity(checker, entity_new(.Var, expr, arg.type, flags = { .Resolved, }, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(checker, .Var, expr, arg.type, flags = { .Resolved, }))
 			}
 		}
 
@@ -1904,7 +1908,7 @@ check_expr_internal :: proc(
 			if ret.name != "" {
 				expr     := v.returns[i].name
 				expr.type = ret.type
-				scope_insert_entity(checker, entity_new(.Var, expr, ret.type, flags = { .Resolved, }, allocator = checker.allocator))
+				scope_insert_entity(checker, entity_new(checker, .Var, expr, ret.type, flags = { .Resolved, }))
 			}
 		}
 
@@ -1956,9 +1960,13 @@ check_expr_internal :: proc(
 		return operand
 
 	case ^ast.Expr_Selector:
-		defer {
-			v.selector.type   = operand.type
-			v.selector.entity = v.entity
+		defer v.selector.type = operand.type
+
+		assign_entity :: proc(checker: ^Checker, ident: ^ast.Expr_Ident, entity: ^Entity) {
+			ident.entity = entity
+			if .Enable_References in checker.flags && entity != nil {
+				append(&entity.references, ident)
+			}
 		}
 
 		selector := v.selector.text
@@ -1979,7 +1987,7 @@ check_expr_internal :: proc(
 					operand.type  = type_hint
 					operand.value = i64(val.value)
 					operand.mode  = .Const
-					v.entity      = (^Entity)(val.entity)
+					assign_entity(checker, v.selector, (^Entity)(val.entity))
 					return
 				}
 			}
@@ -2002,7 +2010,7 @@ check_expr_internal :: proc(
 		if lhs.mode == .Library {
 			if e, ok := checker.libraries[lhs.library].entities[selector]; ok {
 				entity_to_operand(checker, e, &operand)
-				v.entity = e
+				assign_entity(checker, v.selector, e)
 				return
 			} else {
 				error(checker, v.selector, "'%s' is not declared by '%s'", selector, lhs.library)
@@ -2021,7 +2029,7 @@ check_expr_internal :: proc(
 					operand.type  = lhs.type
 					operand.value = i64(val.value)
 					operand.mode  = .Const
-					v.entity      = (^Entity)(val.entity)
+					assign_entity(checker, v.selector, (^Entity)(val.entity))
 					return
 				}
 			}
@@ -2097,7 +2105,7 @@ check_expr_internal :: proc(
 					operand.type  = field.type
 					operand.mode  = lhs.mode
 					v.field_index = i
-					v.entity      = (^Entity)(field.entity)
+					assign_entity(checker, v.selector, (^Entity)(field.entity))
 					return
 				}
 			}
@@ -2461,9 +2469,15 @@ check_expr_internal :: proc(
 						continue
 					}
 
+					entity := (^Entity)(struct_field.entity)
+
 					field.value.type   = struct_field.type
-					field.name.entity  = (^Entity)(struct_field.entity)
+					field.name.entity  = entity
 					field.member_index = field_index
+
+					if .Enable_References in checker.flags && entity != nil {
+						append(&entity.references, field.name)
+					}
 
 					field_operand := check_expr(checker, field.value, type_hint = struct_field.type)
 					operand.constant_compound &&= field_operand.mode == .Const
@@ -2877,7 +2891,7 @@ check_expr_internal :: proc(
 			align = max(align, type.align)
 			for i in start ..< i {
 				name   := v.fields[i].name.text
-				entity := entity_new(.Struct_Field, v.fields[i].name, type, allocator = checker.allocator)
+				entity := entity_new(checker, .Struct_Field, v.fields[i].name, type)
 				append(&fields, types.Field {
 					name   = name,
 					type   = type,
@@ -2938,7 +2952,7 @@ check_expr_internal :: proc(
 			append(&values, types.Enum_Value {
 				name   = name,
 				value  = val,
-				entity = entity_new(.Enum_Value, value.name, type, value = i64(current_value), allocator = checker.allocator),
+				entity = entity_new(checker, .Enum_Value, value.name, type, value = i64(current_value)),
 			})
 		}
 
