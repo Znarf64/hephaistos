@@ -123,12 +123,12 @@ check_library :: proc(
 	defines:       map[string]Const_Value = {},
 	shared_types:  []typeid               = {},
 	libraries:     map[string]Library     = {},
-	file_id:       int                    = 0,
+	file_id:       i32                    = -1,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (library: ast.Library, errors: []Error) {
 	tokens: []Token
-	tokens, errors = tokenize(source, false, context.temp_allocator, error_allocator)
+	tokens, errors = tokenize(source, false, file_id, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}
@@ -140,7 +140,7 @@ check_library :: proc(
 	}
 
 	c: Checker
-	c, errors = check(stmts, defines, shared_types, libraries, {}, file_id, allocator, error_allocator)
+	c, errors = check(stmts, defines, shared_types, libraries, {}, allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}
@@ -162,7 +162,7 @@ compile_shader :: proc(
 	error_allocator := context.allocator,
 ) -> (code: []u32, errors: []Error) {
 	tokens: []Token
-	tokens, errors = tokenize(source, false, context.temp_allocator, error_allocator)
+	tokens, errors = tokenize(source, false, allocator = context.temp_allocator, error_allocator = error_allocator)
 	if len(errors) != 0 {
 		return
 	}
@@ -174,7 +174,7 @@ compile_shader :: proc(
 	}
 
 	checker: Checker
-	checker, errors = check(stmts, defines, shared_types, libraries, {}, 0, context.temp_allocator, error_allocator)
+	checker, errors = check(stmts, defines, shared_types, libraries, {}, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}

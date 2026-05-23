@@ -35,7 +35,6 @@ Checker :: struct {
 	shared_types:     map[string]^types.Type,
 	config_vars:      map[string]types.Const_Value,
 	flags:            Flags,
-	file_id:          int,
 
 	scope:            ^Scope,
 	shader_stage:     ast.Shader_Stage,
@@ -1129,9 +1128,11 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		if d.shader_stage != nil {
 			checker.shader_stage = d.shader_stage
 		}
-		_  = check_expr_or_type(checker, d.values[value_index], d.attributes, type, true)
-		if d.shader_stage != nil {
-			checker.shader_stage = nil
+		if lit, ok := d.values[value_index].derived.(^ast.Expr_Proc_Lit); ok {
+			_  = check_expr_or_type(checker, lit, d.attributes, type, true)
+			if d.shader_stage != nil {
+				checker.shader_stage = nil
+			}
 		}
 	}
 
@@ -1196,7 +1197,6 @@ checker_init :: proc(
 	shared_types:  map[string]^types.Type,
 	libraries:     map[string]ast.Library,
 	flags:         Flags,
-	file_id:       int,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) {
@@ -1207,7 +1207,6 @@ checker_init :: proc(
 	checker.errors                            = make([dynamic]tokenizer.Error, error_allocator)
 	checker.flags                             = flags
 	checker.libraries                         = make(map[string]ast.Library, allocator)
-	checker.file_id                           = file_id
 
 	_ = scope_push(checker, .Global)
 
@@ -1463,12 +1462,11 @@ check :: proc(
 	types:     []typeid                     = {},
 	libraries: map[string]ast.Library       = {},
 	flags:     Flags                        = {},
-	file_id:   int                          = 0,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
 	shared_types := shared_types_from_typeids(types, allocator)
-	return check_with_types(stmts, defines, shared_types, libraries, flags, file_id, allocator, error_allocator)
+	return check_with_types(stmts, defines, shared_types, libraries, flags, allocator, error_allocator)
 }
 
 @(require_results)
@@ -1478,11 +1476,10 @@ check_with_types :: proc(
 	types:     map[string]^types.Type       = {},
 	libraries: map[string]ast.Library       = {},
 	flags:     Flags                        = {},
-	file_id:   int                          = 0,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
-	checker_init(&checker, defines, types, libraries, flags, file_id, allocator, error_allocator)
+	checker_init(&checker, defines, types, libraries, flags, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
 	return checker, checker.errors[:]
 }
@@ -3165,9 +3162,9 @@ error_start_end :: proc(checker: ^Checker, start, end: tokenizer.Location, messa
 }
 
 error_token :: proc(checker: ^Checker, token: tokenizer.Token, message: string, args: ..any) {
-	end := token.location
-	end.offset += len(token.text)
-	end.column += len(token.text)
+	end        := token.location
+	end.offset += i32(len(token.text))
+	end.column += i32(len(token.text))
 	append(&checker.errors, tokenizer.Error {
 		location = token.location,
 		end      = end,

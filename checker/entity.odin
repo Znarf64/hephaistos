@@ -48,7 +48,6 @@ entity_new :: proc(
 		value      = value,
 		builtin_id = builtin_id,
 		flags      = flags,
-		file_id    = checker.file_id,
 	}
 
 	e.references.allocator = checker.allocator
@@ -82,7 +81,6 @@ entity_new_no_ident :: proc(
 		value      = value,
 		builtin_id = builtin_id,
 		flags      = flags,
-		file_id    = checker.file_id,
 	}
 
 	e.references.allocator = checker.allocator

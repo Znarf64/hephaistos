@@ -129,19 +129,15 @@ Imaginary :: enum u8 {
 }
 
 Token :: struct {
-	location: Location,
-	text:     string,
-	value:    struct #raw_union {
-		int:   i64,
-		float: f64,
-		op:    Token_Kind,
-	},
+	location:  Location,
+	text:      string,
+	assign_op: Token_Kind,
 	kind:      Token_Kind,
 	imaginary: Imaginary,
 }
 
 Location :: struct {
-	line, column, offset: int,
+	line, column, offset, file_id: i32,
 }
 
 Error :: struct {
@@ -153,13 +149,16 @@ Error :: struct {
 tokenize :: proc(
 	source:   string,
 	comments: bool,
+	file_id:  i32 = -1,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> ([]Token, []Error) {
+	assert(len(source) < int(max(i32)))
+
 	tokens := make([dynamic]Token,       allocator)
 	errors := make([dynamic]Error, error_allocator)
 
-	error :: proc(errors: ^[dynamic]Error, token: Token, current: int, message: string, args: ..any) {
+	error :: proc(errors: ^[dynamic]Error, token: Token, current: i32, message: string, args: ..any) {
 		append(errors, Error {
 			location = token.location,
 			end      = {
@@ -171,19 +170,22 @@ tokenize :: proc(
 		})
 	}
 
-	line   := 1
-	column := 1
+	source_len := i32(len(source))
+
+	line:   i32 = 1
+	column: i32 = 1
 
 	last_token_kind: Token_Kind
 
-	current: int
-	for current < len(source) {
+	current: i32
+	for current < source_len {
 		start := current
 		token := Token {
 			location = {
-				line   = line,
-				column = column,
-				offset = current,
+				line    = line,
+				column  = column,
+				offset  = current,
+				file_id = file_id,
 			},
 		}
 
@@ -199,7 +201,7 @@ tokenize :: proc(
 		switch char {
 		case '=', '!':
 			token.kind = Token_Kind(char)
-			if current < len(source) && source[current] == '=' {
+			if current < source_len && source[current] == '=' {
 				current += 1
 				switch char {
 				case '=':
@@ -211,7 +213,7 @@ tokenize :: proc(
 
 		case '<', '>':
 			token.kind = Token_Kind(char)
-			if current < len(source) {
+			if current < source_len {
 				switch source[current] {
 				case '=':
 					current += 1
@@ -233,7 +235,7 @@ tokenize :: proc(
 		case '&', '|', '%':
 			potential_assign_op = true
 			token.kind          = Token_Kind(char)
-			if current < len(source) && source[current] == char {
+			if current < source_len && source[current] == char {
 				current += 1
 				#partial switch token.kind {
 				case .Bit_And:
@@ -248,21 +250,21 @@ tokenize :: proc(
 			potential_assign_op = true
 			token.kind          = Token_Kind(char)
 		case '/':
-			if current < len(source) && source[current] == '/' {
-				for current < len(source) && source[current] != '\n' {
+			if current < source_len && source[current] == '/' {
+				for current < source_len && source[current] != '\n' {
 					current += 1
 				}
 				token.kind = .Comment
 				if !comments {
 					continue
 				}
-			} else if current < len(source) && source[current] == '*' {
+			} else if current < source_len && source[current] == '*' {
 				column    += 2 // manual correction for the two consumed characters
 				current   += 1
 				set_column = false
 
 				depth := 1
-				for current + 1 < len(source) && depth != 0 {
+				for current + 1 < source_len && depth != 0 {
 					if source[current] == '\n' {
 						line   += 1
 						column  = 1
@@ -282,7 +284,7 @@ tokenize :: proc(
 					current += 1
 				}
 
-				if current >= len(source) - 1 {
+				if current >= source_len - 1 {
 					error(&errors, token, current, "unterminated multi-line comment")
 				}
 
@@ -295,7 +297,7 @@ tokenize :: proc(
 				token.kind = Token_Kind(char)
 			}
 		case '-':
-			if current < len(source) && source[current] == '>' {
+			if current < source_len && source[current] == '>' {
 				current   += 1
 				token.kind = .Arrow
 			} else {
@@ -303,9 +305,9 @@ tokenize :: proc(
 				token.kind = Token_Kind(char)
 			}
 		case '.':
-			if current < len(source) && source[current] == '.' {
+			if current < source_len && source[current] == '.' {
 				current += 1
-				if current == len(source) {
+				if current == source_len {
 					token.kind = .Ellipsis
 					break
 				}
@@ -328,14 +330,14 @@ tokenize :: proc(
 
 		case '"':
 			// TODO: maybe handle escaping
-			for current < len(source) && source[current] != '"' {
+			for current < source_len && source[current] != '"' {
 				if source[current] == '\n' {
 					break
 				}
 				current += 1
 			}
 
-			if current <= len(source) && source[current] == '"' {
+			if current <= source_len && source[current] == '"' {
 				current += 1
 			} else {
 				error(&errors, token, current, "unterminated string literal")
@@ -344,7 +346,7 @@ tokenize :: proc(
 			token.kind = .String_Literal
 
 		case 'a' ..= 'z', 'A' ..= 'Z', '_':
-			for current < len(source) {
+			for current < source_len {
 				switch source[current] {
 				case 'a' ..= 'z', 'A' ..= 'Z', '_', '0' ..= '9':
 					current += 1
@@ -360,7 +362,7 @@ tokenize :: proc(
 
 		case '0' ..= '9':
 			hex: bool
-			if char == '0' && current < len(source) {
+			if char == '0' && current < source_len {
 				switch source[current] {
 				case 'x':
 					hex      = true
@@ -370,7 +372,7 @@ tokenize :: proc(
 				}
 			}
 
-			for current < len(source) {
+			for current < source_len {
 				switch source[current] {
 				case 'a' ..= 'f', 'A' ..= 'F':
 					if hex {
@@ -388,10 +390,10 @@ tokenize :: proc(
 			}
 
 			has_decimal: bool
-			if current <= len(source) && source[current] == '.' {
+			if current <= source_len && source[current] == '.' {
 				current    += 1
 				has_decimal = true
-				for current < len(source) {
+				for current < source_len {
 					switch source[current] {
 					case '_', '0' ..= '9':
 						current += 1
@@ -402,21 +404,17 @@ tokenize :: proc(
 			}
 
 			if has_decimal {
-				float_value, ok := strconv.parse_f64(source[start:current])
-				if ok {
-					token.value.float = float_value
-					token.kind        = .Float_Literal
-				} else {
+				_, ok := strconv.parse_f64(source[start:current])
+				if !ok {
 					error(&errors, token, current, "failed to parse float literal: '%s'", source[start:current])
 				}
+				token.kind = .Float_Literal
 			} else {
-				int_value, ok := strconv.parse_i64(source[start:current])
-				if ok {
-					token.value.int = int_value
-					token.kind       = .Integer_Literal
-				} else {
+				_, ok := strconv.parse_i64(source[start:current])
+				if !ok {
 					error(&errors, token, current, "failed to parse integer literal: '%s'", source[start:current])
 				}
+				token.kind = .Integer_Literal
 			}
 
 			switch source[current] {
@@ -448,10 +446,10 @@ tokenize :: proc(
 			continue
 		}
 
-		if potential_assign_op && current < len(source) && source[current] == '=' {
-			token.value.op = token.kind
-			current       += 1
-			token.kind     = .Assign
+		if potential_assign_op && current < source_len && source[current] == '=' {
+			token.assign_op = token.kind
+			current        += 1
+			token.kind      = .Assign
 		}
 
 		token.text = source[start:current]

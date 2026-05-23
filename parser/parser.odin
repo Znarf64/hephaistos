@@ -3,6 +3,7 @@ package hephaistos_parser
 import "base:runtime"
 
 import "core:fmt"
+import "core:strconv"
 
 import "../ast"
 import "../tokenizer"
@@ -24,8 +25,8 @@ token_peek :: proc(parser: ^Parser, lookahead := 0) -> tokenizer.Token {
 token_advance :: proc(parser: ^Parser) -> (t: tokenizer.Token) {
 	t                           = token_peek(parser)
 	parser.end_location         = t.location
-	parser.end_location.column += len(t.text)
-	parser.end_location.offset += len(t.text)
+	parser.end_location.column += i32(len(t.text))
+	parser.end_location.offset += i32(len(t.text))
 	parser.current             += 1
 	return
 }
@@ -653,7 +654,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}, allow_c
 			assign       := ast.new(ast.Stmt_Assign, token.location, parser.end_location, parser.allocator)
 			assign.lhs    = lhs
 			assign.rhs    = rhs
-			assign.op     = assign_token.value.op
+			assign.op     = assign_token.assign_op
 			return assign, true
 		case .Colon:
 			for l in lhs {
@@ -809,8 +810,8 @@ parse_attributes :: proc(parser: ^Parser) -> (_attributes: []ast.Field, ok: bool
 @(require_results)
 literal_to_expression :: proc(token: tokenizer.Token, allocator: runtime.Allocator) -> ^ast.Expr_Constant {
 	end_location        := token.location
-	end_location.column += len(token.text)
-	end_location.offset += len(token.text)
+	end_location.column += i32(len(token.text))
+	end_location.offset += i32(len(token.text))
 
 	#partial switch token.kind {
 	case .String_Literal:
@@ -820,12 +821,12 @@ literal_to_expression :: proc(token: tokenizer.Token, allocator: runtime.Allocat
 
 	case .Float_Literal:
 		expr      := ast.new(ast.Expr_Constant, token.location, end_location, allocator)
-		expr.value = token.value.float
+		expr.value = strconv.parse_f64(token.text) or_else panic("Failed to parse float literal (this should not happen)")
 		return expr
 
 	case .Integer_Literal:
 		expr      := ast.new(ast.Expr_Constant, token.location, end_location, allocator)
-		expr.value = token.value.int
+		expr.value = strconv.parse_i64(token.text) or_else panic("Failed to parse integer literal (this should not happen)")
 		return expr
 	case:
 		panic("not a literal")
@@ -1125,8 +1126,8 @@ error_single_token :: proc(parser: ^Parser, token: tokenizer.Token, format: stri
 		location = token.location,
 		end      = {
 			line   = token.location.line,
-			column = token.location.column + len(token.text),
-			offset = token.location.offset + len(token.text),
+			column = token.location.column + i32(len(token.text)),
+			offset = token.location.offset + i32(len(token.text)),
 		},
 		message  = fmt.aprintf(format, ..args, allocator = parser.error_allocator),
 	})

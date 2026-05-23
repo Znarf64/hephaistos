@@ -626,7 +626,6 @@ Entity :: struct {
 	flags:      Entity_Flags,
 	scope:     ^Scope,
 	references: [dynamic]^Expr_Ident,
-	file_id:    int,
 }
 
 Entity_Kind :: enum u32 {
