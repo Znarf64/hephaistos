@@ -35,18 +35,21 @@ entity_new :: proc(
 	value:      types.Const_Value = nil,
 	builtin_id: ast.Builtin_Id    = nil,
 	flags:      ast.Entity_Flags  = {},
-) -> ^ast.Entity {
+) -> (e: ^ast.Entity) {
 	assert(type != nil)
 
-	e           := new(ast.Entity, checker.allocator)
-	e.kind       = kind
-	e.type       = type
-	e.ident      = ident
-	e.name       = ident.text
-	e.decl       = decl
-	e.value      = value
-	e.builtin_id = builtin_id
-	e.flags      = flags
+	e  = new(ast.Entity, checker.allocator)
+	e^ = {
+		kind       = kind,
+		type       = type,
+		ident      = ident,
+		name       = ident.text,
+		decl       = decl,
+		value      = value,
+		builtin_id = builtin_id,
+		flags      = flags,
+		file_id    = checker.file_id,
+	}
 
 	e.references.allocator = checker.allocator
 	if .Enable_References in checker.flags {
@@ -55,7 +58,7 @@ entity_new :: proc(
 
 	ident.entity = e
 
-	return e
+	return
 }
 
 @(require_results)
@@ -68,16 +71,19 @@ entity_new_no_ident :: proc(
 	builtin_id: ast.Builtin_Id    = nil,
 	value:      types.Const_Value = nil,
 	flags:      ast.Entity_Flags  = {},
-) -> ^ast.Entity {
-	e           := new(ast.Entity, checker.allocator)
-	e.kind       = kind
-	e.type       = type
-	e.ident      = nil
-	e.name       = name
-	e.decl       = decl
-	e.value      = value
-	e.builtin_id = builtin_id
-	e.flags      = flags
+) -> (e: ^ast.Entity) {
+	e  = new(ast.Entity, checker.allocator)
+	e^ = {
+		kind       = kind,
+		type       = type,
+		ident      = nil,
+		name       = name,
+		decl       = decl,
+		value      = value,
+		builtin_id = builtin_id,
+		flags      = flags,
+		file_id    = checker.file_id,
+	}
 
 	e.references.allocator = checker.allocator
 

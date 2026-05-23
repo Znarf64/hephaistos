@@ -230,21 +230,9 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 		expr.ident = ident
 		return expr, true
 
-	case .Literal:
+	case .String_Literal, .Float_Literal, .Integer_Literal:
 		token_advance(parser)
-		expr := ast.new(ast.Expr_Constant, token.location, parser.end_location, parser.allocator)
-		#partial switch token.value_kind {
-		case .Int:
-			expr.value = token.value.int
-		case .Float:
-			expr.value = token.value.float
-		case .String:
-			expr.value = token.text[1:len(token.text) - 1]
-		case:
-			unreachable()
-		}
-		expr.imaginary = token.imaginary
-		return expr, true
+		return literal_to_expression(token, parser.allocator), true
 
 	case .Open_Brace:
 		token_advance(parser)
@@ -446,10 +434,6 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 			}
 
 			return image, true
-		case "capability":
-			token_expect(parser, .Open_Paren, "#capability") or_return
-			cap := token_expect(parser, .Ident, "#capability") or_return
-			token_expect(parser, .Close_Paren, "#capability") or_return
 		case:
 			error(parser, directive_token, "unknown directive: '%s'", directive_token.text)
 			return
@@ -652,9 +636,9 @@ parse_expr_list :: proc(parser: ^Parser, allow_compound_literals := true) -> (ex
 parse_simple_stmt :: proc(parser: ^Parser, attributes: []ast.Field = {}, allow_compound_literals := true) -> (stmt: ^ast.Stmt, ok: bool) {
 	token := token_peek(parser)
 	#partial switch token.kind {
-	case .Literal:
-		expr := parse_expr(parser, allow_compound_literals = allow_compound_literals) or_return
-		se   := ast.new(ast.Stmt_Expr, token.location, parser.end_location, parser.allocator)
+	case .String_Literal, .Float_Literal, .Integer_Literal:
+		expr   := parse_expr(parser, allow_compound_literals = allow_compound_literals) or_return
+		se     := ast.new(ast.Stmt_Expr, token.location, parser.end_location, parser.allocator)
 		se.expr = expr
 		return se, true
 	case .Ident, .Cast, .Open_Paren, .Dollar, .Directive:
@@ -822,6 +806,32 @@ parse_attributes :: proc(parser: ^Parser) -> (_attributes: []ast.Field, ok: bool
 	return
 }
 
+@(require_results)
+literal_to_expression :: proc(token: tokenizer.Token, allocator: runtime.Allocator) -> ^ast.Expr_Constant {
+	end_location        := token.location
+	end_location.column += len(token.text)
+	end_location.offset += len(token.text)
+
+	#partial switch token.kind {
+	case .String_Literal:
+		expr      := ast.new(ast.Expr_Constant, token.location, end_location, allocator)
+		expr.value = token.text[1:len(token.text) - 1]
+		return expr
+
+	case .Float_Literal:
+		expr      := ast.new(ast.Expr_Constant, token.location, end_location, allocator)
+		expr.value = token.value.float
+		return expr
+
+	case .Integer_Literal:
+		expr      := ast.new(ast.Expr_Constant, token.location, end_location, allocator)
+		expr.value = token.value.int
+		return expr
+	case:
+		panic("not a literal")
+	}
+}
+
 parse_stmt :: proc(parser: ^Parser, label: ^ast.Expr_Ident = nil, attributes: []ast.Field = {}) -> (stmt: ^ast.Stmt, ok: bool) {
 	token := token_peek(parser)
 	#partial switch token.kind {
@@ -830,7 +840,7 @@ parse_stmt :: proc(parser: ^Parser, label: ^ast.Expr_Ident = nil, attributes: []
 			error(parser, token, "only one set of attributes can be applied to a statement")
 		}
 		return parse_stmt(parser, label, parse_attributes(parser) or_return)
-	case .Return, .Continue, .Break, .Literal, .Open_Paren, .Cast, .Dollar, .Directive:
+	case .Return, .Continue, .Break, .String_Literal, .Open_Paren, .Cast, .Dollar, .Directive:
 		return parse_simple_stmt(parser, attributes)
 	case .Import:
 		token_advance(parser)
@@ -838,9 +848,10 @@ parse_stmt :: proc(parser: ^Parser, label: ^ast.Expr_Ident = nil, attributes: []
 		if token_peek(parser).kind == .Ident {
 			alias = parse_ident(parser) or_return
 		}
-		path             := parse_expr(parser) or_return
+
+		string_literal   := token_expect(parser, .String_Literal, "import") or_return
 		import_decl      := ast.new(ast.Decl_Import, token.location, parser.end_location, parser.allocator)
-		import_decl.path  = path
+		import_decl.path  = literal_to_expression(string_literal, parser.allocator)
 		import_decl.alias = alias
 		return import_decl, true
 	case .Extension:

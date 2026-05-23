@@ -42,7 +42,10 @@ Token_Kind :: enum u16 {
 	Ident = 128,
 
 	Comment,
-	Literal,
+
+	String_Literal,
+	Integer_Literal,
+	Float_Literal,
 
 	Arrow, // ->
 
@@ -133,13 +136,7 @@ Token :: struct {
 		float: f64,
 		op:    Token_Kind,
 	},
-	kind:       Token_Kind,
-	value_kind: enum u8 {
-		Int,
-		Float,
-		Op,
-		String,
-	},
+	kind:      Token_Kind,
 	imaginary: Imaginary,
 }
 
@@ -344,8 +341,7 @@ tokenize :: proc(
 				error(&errors, token, current, "unterminated string literal")
 			}
 
-			token.kind       = .Literal
-			token.value_kind = .String
+			token.kind = .String_Literal
 
 		case 'a' ..= 'z', 'A' ..= 'Z', '_':
 			for current < len(source) {
@@ -409,7 +405,7 @@ tokenize :: proc(
 				float_value, ok := strconv.parse_f64(source[start:current])
 				if ok {
 					token.value.float = float_value
-					token.value_kind  = .Float
+					token.kind        = .Float_Literal
 				} else {
 					error(&errors, token, current, "failed to parse float literal: '%s'", source[start:current])
 				}
@@ -417,7 +413,7 @@ tokenize :: proc(
 				int_value, ok := strconv.parse_i64(source[start:current])
 				if ok {
 					token.value.int = int_value
-					token.value_kind = .Int
+					token.kind       = .Integer_Literal
 				} else {
 					error(&errors, token, current, "failed to parse integer literal: '%s'", source[start:current])
 				}
@@ -429,11 +425,9 @@ tokenize :: proc(
 				current        += 1
 			}
 
-			token.kind = .Literal
-
 		case '\n':
 			#partial switch last_token_kind {
-			case .Ident, .Close_Brace, .Close_Paren, .Close_Bracket, .Literal:
+			case .Ident, .Close_Brace, .Close_Paren, .Close_Bracket, .Integer_Literal, .Float_Literal, .String_Literal:
 				fallthrough
 			case ._Keyword_Start ..= max(Token_Kind):
 				token.kind = .Semicolon
@@ -455,10 +449,9 @@ tokenize :: proc(
 		}
 
 		if potential_assign_op && current < len(source) && source[current] == '=' {
-			token.value.op   = token.kind
-			token.value_kind = .Op
-			current         += 1
-			token.kind       = .Assign
+			token.value.op = token.kind
+			current       += 1
+			token.kind     = .Assign
 		}
 
 		token.text = source[start:current]
@@ -479,87 +472,91 @@ tokenize :: proc(
 
 @(rodata)
 token_strings := #sparse[Token_Kind]string {
-	.Invalid        = "<invalid>",
-	.Bit_And        = "&",
-	.Bit_Or         = "|",
-	.Xor            = "~",
-	.Not            = "!",
-	.Add            = "+",
-	.Subtract       = "-",
-	.Multiply       = "*",
-	.Divide         = "/",
-	.Modulo         = "%",
-	.Modulo_Floored = "%%",
-	.Pointer        = "^",
-	.Colon          = ":",
-	.Assign         = "assignment",
-	.Semicolon      = ";",
-	.Open_Paren     = "(",
-	.Close_Paren    = ")",
-	.Open_Brace     = "{",
-	.Close_Brace    = "}",
-	.Open_Bracket   = "[",
-	.Close_Bracket  = "]",
-	.Period         = ".",
-	.Comma          = ",",
-	.Less           = "<",
-	.Greater        = ">",
-	.Question_Mark  = "?",
-	.Attribute      = "@",
-	.Directive      = "#",
-	.Dollar         = "$",
+	.Invalid         = "<invalid>",
+	.Bit_And         = "&",
+	.Bit_Or          = "|",
+	.Xor             = "~",
+	.Not             = "!",
+	.Add             = "+",
+	.Subtract        = "-",
+	.Multiply        = "*",
+	.Divide          = "/",
+	.Modulo          = "%",
+	.Modulo_Floored  = "%%",
+	.Pointer         = "^",
+	.Colon           = ":",
+	.Assign          = "assignment",
+	.Semicolon       = ";",
+	.Open_Paren      = "(",
+	.Close_Paren     = ")",
+	.Open_Brace      = "{",
+	.Close_Brace     = "}",
+	.Open_Bracket    = "[",
+	.Close_Bracket   = "]",
+	.Period          = ".",
+	.Comma           = ",",
+	.Less            = "<",
+	.Greater         = ">",
+	.Question_Mark   = "?",
+	.Attribute       = "@",
+	.Directive       = "#",
+	.Dollar          = "$",
 
-	.Ident          = "identifier",
+	.Ident           = "identifier",
 
-	.Comment        = "comment",
-	.Literal        = "literal",
+	.Comment         = "comment",
 
-	.Arrow          = "arrow",
+	.String_Literal  = "string literal",
+	.Float_Literal   = "floating point literal",
+	.Integer_Literal = "integer literal",
 
-	.Range_Equal    = "..=",
-	.Range_Less     = "..<",
+	.Arrow           = "arrow",
 
-	.Ellipsis       = "..",
+	.Range_Equal     = "..=",
+	.Range_Less      = "..<",
 
-	.EOF            = "EOF",
+	.Ellipsis        = "..",
 
-	.Equal          = "==",
-	.Not_Equal      = "!=",
-	.Less_Equal     = "<=",
-	.Greater_Equal  = ">=",
+	.EOF             = "EOF",
 
-	.And            = "&&",
-	.Or             = "||",
-	.Shift_Left     = "<<",
-	.Shift_Right    = ">>",
+	.Equal           = "==",
+	.Not_Equal       = "!=",
+	.Less_Equal      = "<=",
+	.Greater_Equal   = ">=",
 
-	.Return         = "return",
-	.If             = "if",
-	.Else           = "else",
-	.For            = "for",
-	.Break          = "break",
-	.Continue       = "continue",
-	.Switch         = "switch",
-	.Case           = "case",
-	.Fallthrough    = "fallthrough",
-	.In             = "in",
-	.When           = "when",
-	.Import         = "import",
-	.Extension      = "extension",
+	.And             = "&&",
+	.Or              = "||",
+	.Shift_Left      = "<<",
+	.Shift_Right     = ">>",
 
-	.Struct         = "struct",
-	.Enum           = "enum",
-	.Bit_Set        = "bit_set",
-	.Proc           = "proc",
-	.Matrix         = "matrix",
-	.Sampler        = "sampler",
-	.Image          = "image",
+	.Return          = "return",
+	.If              = "if",
+	.Else            = "else",
+	.For             = "for",
+	.Break           = "break",
+	.Continue        = "continue",
+	.Switch          = "switch",
+	.Case            = "case",
+	.Fallthrough     = "fallthrough",
+	.In              = "in",
+	.When            = "when",
+	.Import          = "import",
+	.Extension       = "extension",
 
-	.Opaque         = "opaque",
+	.Struct          = "struct",
+	.Enum            = "enum",
+	.Bit_Set         = "bit_set",
+	.Proc            = "proc",
+	.Matrix          = "matrix",
+	.Sampler         = "sampler",
+	.Image           = "image",
 
-	.Cast           = "cast",
+	.Opaque          = "opaque",
+
+	.Cast            = "cast",
 }
 
+@(require_results)
 to_string :: proc(token_kind: Token_Kind) -> string {
 	return token_strings[token_kind]
 }

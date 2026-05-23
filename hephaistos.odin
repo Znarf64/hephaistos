@@ -33,13 +33,14 @@ Checker_Flags      :: checker.Flags
 Buffer_Address     :: checker.Buffer_Address
 Reflection_Info    :: checker.Reflection_Info
 Entry_Point_Info   :: checker.Entry_Point_Info
-Library            :: checker.Library
 type_info_to_type  :: checker.type_info_to_type
 
 Const_Value        :: types.Const_Value
 Type               :: types.Type
 
 cg_generate        :: cg.generate
+
+Library             :: ast.Library
 
 Ast_Node            :: ast.Node
 Ast_Expr            :: ast.Expr
@@ -122,9 +123,10 @@ check_library :: proc(
 	defines:       map[string]Const_Value = {},
 	shared_types:  []typeid               = {},
 	libraries:     map[string]Library     = {},
+	file_id:       int                    = 0,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
-) -> (library: checker.Library, errors: []Error) {
+) -> (library: ast.Library, errors: []Error) {
 	tokens: []Token
 	tokens, errors = tokenize(source, false, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
@@ -138,15 +140,9 @@ check_library :: proc(
 	}
 
 	c: Checker
-	c, errors = check(stmts, defines, shared_types, libraries, {}, allocator, error_allocator)
+	c, errors = check(stmts, defines, shared_types, libraries, {}, file_id, allocator, error_allocator)
 	if len(errors) != 0 {
 		return
-	}
-
-	for _, entity in c.scope.entities {
-		if entity.library == "" {
-			entity.library = path
-		}
 	}
 
 	library.entities = c.scope.entities
@@ -178,7 +174,7 @@ compile_shader :: proc(
 	}
 
 	checker: Checker
-	checker, errors = check(stmts, defines, shared_types, libraries, {}, context.temp_allocator, error_allocator)
+	checker, errors = check(stmts, defines, shared_types, libraries, {}, 0, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
 		return
 	}

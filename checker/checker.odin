@@ -26,20 +26,16 @@ Flag :: enum {
 
 Flags :: bit_set[Flag]
 
-Library :: struct {
-	entities: map[string]^Entity,
-	stmts: []^ast.Stmt,
-}
-
 Checker :: struct {
 	allocator:        runtime.Allocator,
 	errors:           [dynamic]tokenizer.Error,
 	error_allocator:  runtime.Allocator,
 
-	libraries:        map[string]Library,
+	libraries:        map[string]ast.Library,
 	shared_types:     map[string]^types.Type,
 	config_vars:      map[string]types.Const_Value,
 	flags:            Flags,
+	file_id:          int,
 
 	scope:            ^Scope,
 	shader_stage:     ast.Shader_Stage,
@@ -107,7 +103,7 @@ Operand :: struct {
 	value:             types.Const_Value,
 	builtin_id:        ast.Builtin_Id,
 	interface:         ast.Interface_Kind,
-	library:           string,
+	library:          ^ast.Library,
 	scope:            ^ast.Scope,
 	is_call:           bool,
 	diverging:         bool,
@@ -852,18 +848,12 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 	for stmt in stmts {
 		v := stmt.derived_stmt.(^ast.Decl_Import) or_continue
 
-		if checker.scope.kind != .Global {
+		if !checker.scope.allow_imports {
 			error(checker, v, "Imports must be placed at file scope")
 			return
 		}
 
-		path_operand := check_expr(checker, v.path)
-		path, ok     := path_operand.value.(string)
-		if !ok {
-			error(checker, path_operand, "expected a constant string in import path")
-			continue
-		}
-
+		path := v.path.value.(string)
 		name := path
 		if v.alias != nil {
 			name = v.alias.text
@@ -888,7 +878,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 			}
 		}
 
-		if path not_in checker.libraries {
+		if library, ok := &checker.libraries[path]; !ok {
 			error(checker, v.path, "Imported library does not exist: \"%v\"", path)
 		} else {
 			e: ^Entity
@@ -897,7 +887,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 			} else {
 				e = entity_new_no_ident(checker, .Library, name, types.t_invalid)
 			}
-			e.library = path
+			e.library = library
 			e.decl    = v
 			e.flags   = { .Resolved, }
 			scope_insert_entity(checker, e)
@@ -1204,8 +1194,9 @@ checker_init :: proc(
 	checker:       ^Checker,
 	defines:       map[string]types.Const_Value,
 	shared_types:  map[string]^types.Type,
-	libraries:     map[string]Library,
+	libraries:     map[string]ast.Library,
 	flags:         Flags,
+	file_id:       int,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) {
@@ -1215,7 +1206,8 @@ checker_init :: proc(
 	checker.error_allocator                   = error_allocator
 	checker.errors                            = make([dynamic]tokenizer.Error, error_allocator)
 	checker.flags                             = flags
-	checker.libraries                         = make(map[string]Library, allocator)
+	checker.libraries                         = make(map[string]ast.Library, allocator)
+	checker.file_id                           = file_id
 
 	_ = scope_push(checker, .Global)
 
@@ -1250,7 +1242,7 @@ checker_init :: proc(
 
 	create_builtin_type(checker, types.t_any)
 
-	find_or_create_lib :: proc(checker: ^Checker, name: string) -> (library: ^Library) {
+	find_or_create_lib :: proc(checker: ^Checker, name: string) -> (library: ^ast.Library) {
 		library = &checker.libraries[name]
 		if library == nil {
 			checker.libraries[name] = { entities = make(map[string]^Entity, checker.allocator), }
@@ -1259,7 +1251,7 @@ checker_init :: proc(
 		return
 	}
 
-	create_library_type :: proc(checker: ^Checker, library: ^Library, type: ^types.Type, type_expr := #caller_expression(type)) {
+	create_library_type :: proc(checker: ^Checker, library: ^ast.Library, type: ^types.Type, type_expr := #caller_expression(type)) {
 		name := strings.trim_prefix(type_expr, "types.t_")
 		library.entities[name] = entity_new_no_ident(checker, .Type, name, type, flags = { .Resolved, })
 	}
@@ -1295,7 +1287,8 @@ checker_init :: proc(
 		checker.libraries[name] = lib
 	}
 
-	_ = scope_push(checker, .Global)
+	file_scope              := scope_push(checker, .Global)
+	file_scope.allow_imports = true
 
 	checker.shared_types = shared_types
 	checker.config_vars  = defines
@@ -1468,13 +1461,14 @@ check :: proc(
 	stmts:     []^ast.Stmt,
 	defines:   map[string]types.Const_Value = {},
 	types:     []typeid                     = {},
-	libraries: map[string]Library           = {},
+	libraries: map[string]ast.Library       = {},
 	flags:     Flags                        = {},
+	file_id:   int                          = 0,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
 	shared_types := shared_types_from_typeids(types, allocator)
-	return check_with_types(stmts, defines, shared_types, libraries, flags, allocator, error_allocator)
+	return check_with_types(stmts, defines, shared_types, libraries, flags, file_id, allocator, error_allocator)
 }
 
 @(require_results)
@@ -1482,12 +1476,13 @@ check_with_types :: proc(
 	stmts:     []^ast.Stmt,
 	defines:   map[string]types.Const_Value = {},
 	types:     map[string]^types.Type       = {},
-	libraries: map[string]Library           = {},
+	libraries: map[string]ast.Library       = {},
 	flags:     Flags                        = {},
+	file_id:   int                          = 0,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []tokenizer.Error) {
-	checker_init(&checker, defines, types, libraries, flags, allocator, error_allocator)
+	checker_init(&checker, defines, types, libraries, flags, file_id, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
 	return checker, checker.errors[:]
 }
@@ -2008,12 +2003,12 @@ check_expr_internal :: proc(
 		}
 
 		if lhs.mode == .Library {
-			if e, ok := checker.libraries[lhs.library].entities[selector]; ok {
+			if e, ok := lhs.library.entities[selector]; ok {
 				entity_to_operand(checker, e, &operand)
 				assign_entity(checker, v.selector, e)
 				return
 			} else {
-				error(checker, v.selector, "'%s' is not declared by '%s'", selector, lhs.library)
+				error(checker, v.selector, "'%s' is not declared by library", selector)
 				return
 			}
 		}

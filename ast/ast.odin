@@ -387,7 +387,7 @@ Decl_Value :: struct {
 
 Decl_Import :: struct {
 	using node: Decl,
-	path:      ^Expr,
+	path:      ^Expr_Constant,
 	alias:     ^Expr_Ident,
 	name:       string,
 }
@@ -608,19 +608,25 @@ new :: proc($T: typeid, start, end: tokenizer.Location, allocator: mem.Allocator
 	return n
 }
 
+Library :: struct {
+	entities: map[string]^Entity,
+	stmts: []^Stmt,
+}
+
 Entity :: struct {
 	kind:       Entity_Kind,
 	ident:     ^Expr_Ident,
 	name:       string,
 	type:      ^types.Type,
 	decl:      ^Decl,
-	library:    string,
+	library:   ^Library,
 	value:      types.Const_Value,
 	builtin_id: Builtin_Id,
 	interface:  Interface_Kind,
 	flags:      Entity_Flags,
 	scope:     ^Scope,
 	references: [dynamic]^Expr_Ident,
+	file_id:    int,
 }
 
 Entity_Kind :: enum u32 {
@@ -650,10 +656,11 @@ Entity_Flag :: enum {
 Entity_Flags :: bit_set[Entity_Flag]
 
 Scope :: struct {
-	parent:    ^Scope,
-	entities:   map[string]^Entity,
-	proc_type: ^types.Proc,
-	kind:       Scope_Kind,
+	parent:       ^Scope,
+	entities:      map[string]^Entity,
+	proc_type:    ^types.Proc,
+	kind:          Scope_Kind,
+	allow_imports: bool,
 }
 
 Scope_Kind :: enum {
