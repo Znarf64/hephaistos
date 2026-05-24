@@ -382,6 +382,13 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 		o.backing = backing
 		return o, true
 
+	case .Distinct:
+		token_advance(parser)
+		type     := parse_expr(parser) or_return
+		d        := ast.new(ast.Type_Distinct, token.location, parser.end_location, parser.allocator)
+		d.backing = type
+		return d, true
+
 	case .Open_Paren:
 		token_advance(parser)
 		expr := parse_expr(parser) or_return
@@ -813,6 +820,11 @@ literal_to_expression :: proc(token: tokenizer.Token, allocator: runtime.Allocat
 	end_location.column += i32(len(token.text))
 	end_location.offset += i32(len(token.text))
 
+	text := token.text
+	if token.imaginary != nil {
+		text = text[:len(text) - 1]
+	}
+
 	#partial switch token.kind {
 	case .String_Literal:
 		expr      := ast.new(ast.Expr_Constant, token.location, end_location, allocator)
@@ -821,12 +833,12 @@ literal_to_expression :: proc(token: tokenizer.Token, allocator: runtime.Allocat
 
 	case .Float_Literal:
 		expr      := ast.new(ast.Expr_Constant, token.location, end_location, allocator)
-		expr.value = strconv.parse_f64(token.text) or_else panic("Failed to parse float literal (this should not happen)")
+		expr.value = strconv.parse_f64(text) or_else panic("Failed to parse float literal (this should not happen)")
 		return expr
 
 	case .Integer_Literal:
 		expr      := ast.new(ast.Expr_Constant, token.location, end_location, allocator)
-		expr.value = strconv.parse_i64(token.text) or_else panic("Failed to parse integer literal (this should not happen)")
+		expr.value = strconv.parse_i64(text) or_else panic("Failed to parse integer literal (this should not happen)")
 		return expr
 	case:
 		panic("not a literal")

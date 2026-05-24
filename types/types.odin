@@ -104,9 +104,15 @@ Bit_Set :: struct {
 
 // A deliberately opaque type such as OpTypeAccelerationStructureKHR
 Opaque :: struct {
-	using base:  Type,
-	name:        string,
-	backing:    ^Type,
+	using base: Type,
+	name:       string,
+	backing:   ^Type,
+}
+
+Named :: struct {
+	using base: Type,
+	name:       string,
+	type:      ^Type,
 }
 
 Kind :: enum {
@@ -131,6 +137,7 @@ Kind :: enum {
 	Complex,
 	Quaternion,
 	Opaque,
+	Named,
 
 	Tuple,
 }
@@ -151,6 +158,7 @@ Type :: struct {
 		^Bit_Set,
 		^Complex,
 		^Opaque,
+		^Named,
 	},
 }
 
@@ -435,8 +443,8 @@ print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 	case .Bit_Set:
 		type := type.variant.(^Bit_Set)
 		fmt.wprintf(w, "bit_set[")
-		print_writer(w, type.enum_type, indent + 1)
-		fmt.wprintf(w, ";")
+		print_writer(w, type.enum_type, indent)
+		fmt.wprintf(w, "; ")
 		print_writer(w, type.backing, indent)
 		fmt.wprintf(w, "]")
 	case .Opaque:
@@ -444,6 +452,9 @@ print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 		fmt.wprintf(w, `"%v"`, type.name)
 	case .Any:
 		fmt.wprintf(w, "any")
+	case .Named:
+		type := type.variant.(^Named)
+		fmt.wprint(w, type.name)
 	}
 }
 
@@ -468,7 +479,7 @@ equal :: proc(a, b: ^Type) -> bool {
 		return false
 	}
 
-	#partial switch a.kind {
+	switch a.kind {
 	case .Int, .Bool, .Float, .Uint:
 		return a.size == b.size && a.align == b.align
 
@@ -556,18 +567,71 @@ equal :: proc(a, b: ^Type) -> bool {
 		return equal(a.texel_type, b.texel_type)
 	case .Opaque:
 		return opaque_name(a) == opaque_name(b)
-	}
+	case .Invalid, .Any, .Tuple:
+		return true
+	case .Buffer:
+		a := a.variant.(^Buffer)
+		b := b.variant.(^Buffer)
 
-	return true
+		if a.physical != b.physical {
+			return false
+		}
+
+		return equal(a.elem, b.elem)
+	case .Proc_Group:
+		a := a.variant.(^Proc_Group)
+		b := b.variant.(^Proc_Group)
+
+		if len(a.members) != len(b.members) {
+			return false
+		}
+
+		for i in 0 ..< len(a.members) {
+			if !equal(a.members[i], b.members[i]) {
+				return false
+			}
+		}
+
+		return true
+	case .Enum:
+		a := a.variant.(^Enum)
+		b := b.variant.(^Enum)
+
+		for i in 0 ..< len(a.values) {
+			if a.values[i].value != b.values[i].value {
+				return false
+			}
+			if a.values[i].name != b.values[i].name {
+				return false
+			}
+		}
+
+		return true
+	case .Bit_Set:
+		a := a.variant.(^Bit_Set)
+		b := b.variant.(^Bit_Set)
+
+		return equal(a.backing, b.backing) && equal(a.enum_type, b.enum_type)
+	case .Complex, .Quaternion:
+		a := a.variant.(^Complex)
+		b := b.variant.(^Complex)
+
+		return equal(a.array, b.array)
+	case .Named:
+		a := a.variant.(^Named)
+		b := b.variant.(^Named)
+
+		return a.name == b.name
+	case:
+		unreachable()
+	}
 }
 
 @(require_results)
-base_type :: proc(type: ^Type, keep_complex := false) -> ^Type {
+core_type :: proc(type: ^Type, keep_complex := false) -> ^Type {
 	type := type
 	for {
 		#partial switch type.kind {
-		case .Tuple: 
-			return type
 		case .Enum:
 			type = type.variant.(^Enum).backing
 		case .Bit_Set:
@@ -577,6 +641,8 @@ base_type :: proc(type: ^Type, keep_complex := false) -> ^Type {
 				return type
 			}
 			type = type.variant.(^Complex).array
+		case .Named:
+			type = type.variant.(^Named).type
 		case:
 			return type
 		}
@@ -585,10 +651,16 @@ base_type :: proc(type: ^Type, keep_complex := false) -> ^Type {
 }
 
 @(require_results)
-implicitly_castable :: proc(from, to: ^Type) -> bool {
-	to   := base_type(to)
-	from := base_type(from)
+base_type :: proc(type: ^Type) -> ^Type {
+	type := type
+	for type.kind == .Named {
+		type = type.variant.(^Named).type
+	}
+	return type
+}
 
+@(require_results)
+implicitly_castable :: proc(from, to: ^Type) -> bool {
 	if equal(from, to) {
 		return true
 	}
@@ -608,12 +680,17 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 		return true
 	}
 
-	if to.kind == .Array {
-		return implicitly_castable(from, array_elem(to))
+	to_elem: ^Type
+	#partial switch to.kind {
+	case .Array:
+		to_elem = array_elem(to)
+	case .Matrix:
+		to_elem = matrix_elem(to)
+	case .Complex, .Quaternion:
+		to_elem = complex_elem(to)
 	}
-
-	if to.kind == .Matrix {
-		return implicitly_castable(from, matrix_elem(to))
+	if to_elem != nil {
+		return implicitly_castable(from, to_elem)
 	}
 
 	return false
@@ -639,8 +716,6 @@ op_result_type :: proc(a, b: ^Type, is_multiply: bool = false, allocator: mem.Al
 
 @(require_results)
 default_type :: proc(type: ^Type) -> ^Type {
-	// type := base_type(type)
-
 	if type == nil || type.size != 0 {
 		return type
 	}
@@ -663,6 +738,9 @@ default_type :: proc(type: ^Type) -> ^Type {
 
 @(require_results)
 castable :: proc(from, to: ^Type) -> bool {
+	from := core_type(from)
+	to   := core_type(to)
+
 	if equal(from, to) {
 		return true
 	}
@@ -977,6 +1055,21 @@ opaque_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^O
 	type        := new(.Opaque, Opaque, allocator)
 	type.name    = name
 	type.backing = backing
+	if backing != nil {
+		type.size  = backing.size
+		type.align = backing.align
+	}
+
+	return type
+}
+
+@(require_results)
+named_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Named {
+	type      := new(.Named, Named, allocator)
+	type.name  = name
+	type.type  = backing
+	type.size  = backing.size
+	type.align = backing.align
 
 	return type
 }
@@ -1036,9 +1129,14 @@ operator_applicable :: proc(type: ^Type, op: tokenizer.Token_Kind) -> bool {
 	}
 
 	#partial switch type.kind {
-	case .Int, .Uint:
+	case .Int, .Uint, .Enum:
 		#partial switch op {
 		case .Bit_Or, .Bit_And, .Xor, .Shift_Left, .Shift_Right:
+			return true
+		}
+	case .Bit_Set:
+		#partial switch op {
+		case .Bit_Or, .Bit_And, .Xor:
 			return true
 		}
 	case .Bool:

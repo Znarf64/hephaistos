@@ -1,16 +1,17 @@
 Acceleration_Structure :: opaque(TypeAccelerationStructureKHR)
 
 Ray_Flags :: bit_set[enum {
-	NoOpaque,
-	TerminateOnFirstHit,
-	SkipClosestHitShader,
-	CullBackFacingTriangles,
-	CullFrontFacingTriangles,
-	CullOpaque,
-	CullNoOpaque,
-	SkipTriangles,
-	SkipAABBs,
-	ForceOpacityMicromap2State,
+	Opaque                     = 0,
+	NoOpaque                   = 1,
+	TerminateOnFirstHit        = 2,
+	SkipClosestHitShader       = 3,
+	CullBackFacingTriangles    = 4,
+	CullFrontFacingTriangles   = 5,
+	CullOpaque                 = 6,
+	CullNoOpaque               = 7,
+	SkipTriangles              = 8,
+	SkipAABBs                  = 9,
+	ForceOpacityMicromap2State = 10,
 }; i32]
 
 Hit_Kind :: enum u32 {

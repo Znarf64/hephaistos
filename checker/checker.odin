@@ -107,6 +107,7 @@ Operand :: struct {
 	is_call:           bool,
 	diverging:         bool,
 	constant_compound: bool,
+	type_distinct:     bool,
 }
 
 @(require_results)
@@ -438,11 +439,11 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					lhs[lhs_i].type      = type
 					lhs[lhs_i].expr.type = type
 				}
-				result_type := types.op_result_type(lhs[lhs_i].type, type)
 				if !types.implicitly_castable(type, lhs[lhs_i].type) {
 					error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, type)
 					continue
 				}
+				result_type := types.op_result_type(lhs[lhs_i].type, type)
 				if len(rhs_types) == 1 {
 					r_expr.type = result_type
 				}
@@ -468,15 +469,16 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		check_decl_attributes(checker, v, false)
 
-		values := make([]Operand,         len(v.values), checker.allocator)
+		values := make([]Operand, len(v.values), checker.allocator)
 
 		explicit_type: ^types.Type
 		if v.type_expr != nil {
 			explicit_type = check_type(checker, v.type_expr)
 		}
 
-		for &values, i in values {
-			values = check_expr(checker, v.values[i], stmt.attributes, explicit_type)
+		for &value, i in values {
+			value = check_expr(checker, v.values[i], stmt.attributes, explicit_type)
+			check_decl_init_value(checker, value, false)
 		}
 
 		flags: Entity_Flags = { .Resolved, }
@@ -989,6 +991,34 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 	}
 }
 
+check_decl_init_value :: proc(checker: ^Checker, value: Operand, expect_constant: bool) {
+	switch value.mode {
+	case .Const:
+	case .RValue, .LValue:
+		if value.constant_compound || !expect_constant {
+			break
+		}
+		error(checker, value, "expected a constant expression in global variable declaration")
+	case .Builtin:
+		error(checker, value, "expected an expression, got builtin")
+	case .Type:
+		error(checker, value, "expected an expression, got type")
+	case .No_Value:
+		error(checker, value, "expected an expression, got no value")
+	case .Library:
+		error(checker, value, "expected an expression, got library")
+	case .Ellipsis:
+		error(checker, value, "illegal use of ellipsis ('..')")
+	case .Label:
+		error(checker, value, "invalid use of label")
+	case .Proc:
+		error(checker, value, "invalid use of procedure")
+	case .Proc_Group:
+		error(checker, value, "invalid use of procedure group")
+	case .Invalid:
+	}
+}
+
 decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 	if .Resolved in e.flags {
 		return
@@ -1045,7 +1075,10 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 			size = size_of(types.Bit_Set)
 		case ^types.Complex:
 			size = size_of(types.Complex)
-		case ^types.Opaque: size = size_of(types.Opaque)
+		case ^types.Opaque:
+			size = size_of(types.Opaque)
+		case ^types.Named:
+			size = size_of(types.Named)
 		}
 		mem.copy(dst, src, size)
 	}
@@ -1070,13 +1103,17 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		false,
 	)
 
-	#partial switch v.mode {
+	switch v.mode {
 	case .Invalid:
 		e.kind = .Invalid
 	case .Type:
 		// extension ops will have their kind set to .Proc, we should probably have an actual destinction here with '---'
-		if e.kind != .Proc {
-			e.kind = .Type
+		if e.kind == .Proc {
+			break
+		}
+		e.kind = .Type
+		if v.type_distinct {
+			v.type = types.named_new(e.name, v.type, checker.allocator)
 		}
 	case .Proc:
 		e.kind = .Proc
@@ -1089,23 +1126,25 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		e.kind       = .Builtin
 		e.builtin_id = v.builtin_id
 	case .Const:
-		if d.mutable {
-			e.kind  = .Var
-		} else {
-			e.kind  = .Const
-			e.value = v.value
+		e.kind  = .Const
+		e.value = v.value
+	case .RValue, .LValue:
+		if !d.mutable {
+			error(checker, v, "expected a constant expression or type in constant declaration")
+			e.kind = .Invalid
 		}
-	case:
-		if d.mutable {
-			if v.constant_compound {
-				e.kind = .Var
-				break
-			}
-			error(checker, v, "Expected a constant expression in global variable declaration")
-		} else {
-			error(checker, v, "Expected a constant expression or type in constant declaration")
-		}
-		e.kind = .Invalid
+	case .No_Value:
+		error(checker, v, "expected an expression, got no value")
+	case .Ellipsis:
+		error(checker, v, "illegal use of ellipsis ('..')")
+	case .Label:
+		error(checker, v, "invalid use of label")
+	}
+
+	if d.mutable {
+		e.kind  = .Var
+		e.value = nil
+		check_decl_init_value(checker, v, true)
 	}
 
 	if type == nil {
@@ -1969,12 +2008,14 @@ check_expr_internal :: proc(
 				return
 			}
 
-			if type_hint.kind != .Enum {
+			base := types.base_type(type_hint)
+
+			if base.kind != .Enum {
 				error(checker, v, "implicit selectors can only be used for enum types, got '%v'", type_hint)
 				return
 			}
 
-			for val in type_hint.variant.(^types.Enum).values {
+			for val in base.variant.(^types.Enum).values {
 				if val.name == selector {
 					operand.type  = type_hint
 					operand.value = i64(val.value)
@@ -2010,13 +2051,15 @@ check_expr_internal :: proc(
 			}
 		}
 
+		base := types.base_type(lhs.type)
+
 		if lhs.mode == .Type {
-			if lhs.type.kind != .Enum {
+			if base.kind != .Enum {
 				error(checker, v, "expected an expression or an enum type, got '%v'", lhs.type)
 				return
 			}
 
-			for val in lhs.type.variant.(^types.Enum).values {
+			for val in base.variant.(^types.Enum).values {
 				if val.name == selector {
 					operand.type  = lhs.type
 					operand.value = i64(val.value)
@@ -2030,22 +2073,10 @@ check_expr_internal :: proc(
 			return
 		}
 
-		type := lhs.type
-		if type.kind == .Tuple {
-			tuple := type.variant.(^types.Struct)
-			switch len(tuple.fields) {
-			case 0:
-				error(checker, lhs, "expected a single expression, got no value")
-				return
-			case 1:
-				type = tuple.fields[0].type
-			case:
-				error(checker, lhs, "expected a single expression, got multiple values")
-				return
-			}
-		}
+		#partial switch base.kind {
+		case .Array:
+			array := base.variant.(^types.Array)
 
-		if type.kind == .Array {
 			indices := make([dynamic]u32, 0, len(selector), checker.allocator)
 
 			duplicates := false
@@ -2064,8 +2095,8 @@ check_expr_internal :: proc(
 				}
 				append(&indices, u32(index))
 
-				if index == -1 || index >= types.array_len(type) {
-					error(checker, v, "can not swizzle vector of type '%s' with coordinate '%v'", type, char)
+				if index == -1 || index >= array.count {
+					error(checker, v, "can not swizzle vector of type '%s' with coordinate '%v'", array, char)
 				}
 				if index != -1 {
 					if seen[index] {
@@ -2077,22 +2108,23 @@ check_expr_internal :: proc(
 
 			v.swizzle = indices[:]
 
-			if len(selector) == 1 {
-				operand.type = types.array_elem(type)
-				operand.mode = lhs.mode
-				return
-			}
-
-			operand.type = types.array_new(types.array_elem(type), len(selector), checker.allocator)
 			operand.mode = lhs.mode
 			if duplicates {
 				operand.mode = .RValue
 			}
-			return
-		}
 
-		if type.kind == .Struct {
-			for field, i in type.variant.(^types.Struct).fields {
+			switch len(selector) {
+			case 1:
+				operand.type = array.elem
+			case array.count:
+				operand.type = array
+			case:
+				operand.type = types.array_new(array.elem, len(selector), checker.allocator)
+			}
+
+			return
+		case .Struct:
+			for field, i in base.variant.(^types.Struct).fields {
 				if field.name == selector {
 					operand.type  = field.type
 					operand.mode  = lhs.mode
@@ -2101,8 +2133,9 @@ check_expr_internal :: proc(
 					return
 				}
 			}
+		case:
+			error(checker, v, "expression of type %v has no field called '%s'", lhs.type, selector)
 		}
-		error(checker, v, "expression of type %v has no field called '%s'", type, selector)
 
 	case ^ast.Expr_Call:
 		if directive, ok := v.lhs.derived_expr.(^ast.Expr_Directive); ok {
@@ -2427,9 +2460,11 @@ check_expr_internal :: proc(
 		}
 		v.named = named
 
-		#partial switch type.kind {
+		base := types.base_type(type)
+
+		#partial switch base.kind {
 		case .Struct:
-			type := type.variant.(^types.Struct)
+			type := base.variant.(^types.Struct)
 
 			operand.constant_compound = true
 
@@ -2499,7 +2534,7 @@ check_expr_internal :: proc(
 		case .Array:
 			operand.constant_compound = true
 
-			type := type.variant.(^types.Array)
+			type := base.variant.(^types.Array)
 			if named {
 				if type.count > 4 {
 					error(checker, v, "swizzled initializers are only supported for arrays with up to 4 elements.")
@@ -2840,7 +2875,8 @@ check_expr_internal :: proc(
 		}
 
 	case ^ast.Type_Struct:
-		operand.mode = .Type
+		operand.mode          = .Type
+		operand.type_distinct = true
 
 		type        := types.new(.Struct, types.Struct, checker.allocator)
 		fields      := make([dynamic]types.Field, 0, len(v.fields), checker.allocator)
@@ -2905,7 +2941,8 @@ check_expr_internal :: proc(
 		operand.type = type
 		operand.mode = .Type
 	case ^ast.Type_Enum:
-		operand.mode = .Type
+		operand.mode          = .Type
+		operand.type_distinct = true
 
 		type       := types.new(.Enum, types.Enum, checker.allocator)
 		values     := make([dynamic]types.Enum_Value, 0, len(v.values), checker.allocator)
@@ -3013,6 +3050,11 @@ check_expr_internal :: proc(
 		}
 		operand.type = types.opaque_new(v.name.text, backing, checker.allocator)
 		operand.mode = .Type
+
+	case ^ast.Type_Distinct:
+		operand.type          = check_type(checker, v.backing)
+		operand.mode          = .Type
+		operand.type_distinct = true
 
 	case ^ast.Expr_Directive:
 		error(checker, v, "invalid use of directive")

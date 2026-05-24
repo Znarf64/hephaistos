@@ -411,7 +411,7 @@ check_builtin :: proc(checker: ^Checker, v: ^ast.Expr_Call, fn: Operand) -> (ope
 			return
 		}
 		x    := args[0]
-		type := types.base_type(x.type)
+		type := types.core_type(x.type)
 		if !types.is_array(type) || !types.is_float(types.array_elem(type)) {
 			error(checker, x, "builtin '%v' expects a vector of floats, got %v", builtin_names[v.builtin], type)
 			return

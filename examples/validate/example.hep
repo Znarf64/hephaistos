@@ -330,7 +330,7 @@ ray_intersection_shader :: proc() {
 	launch_id := $LaunchId
 
 	if rt.report_intersection(69, .Front) {
-		
+
 	}
 }
 
@@ -429,4 +429,11 @@ Intersection_Type :: enum i32 {
 	Triangle  = 1,
 	Generated = 2,
 	AABB      = 3,
+}
+
+Foo :: distinct i32
+Bar :: distinct i32
+
+do_thing :: proc(foo: Foo, bar: Bar) -> i32 {
+	return i32(foo) + i32(bar)
 }

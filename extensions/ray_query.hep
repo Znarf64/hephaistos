@@ -2,6 +2,7 @@ Query                  :: opaque(TypeRayQueryKHR)
 Acceleration_Structure :: opaque(TypeAccelerationStructureKHR, u64)
 
 Ray_Flags :: bit_set[enum {
+	Opaque                     = 0,
 	NoOpaque                   = 1,
 	TerminateOnFirstHit        = 2,
 	SkipClosestHitShader       = 3,

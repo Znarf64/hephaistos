@@ -341,6 +341,11 @@ Type_Opaque :: struct {
 	backing:   ^Expr,
 }
 
+Type_Distinct :: struct {
+	using node: Expr,
+	backing:   ^Expr,
+}
+
 
 Interface_Kind :: enum {
 	None = 0,
@@ -519,6 +524,7 @@ Any_Node :: union {
 	^Type_Enum,
 	^Type_Bit_Set,
 	^Type_Opaque,
+	^Type_Distinct,
 
 	^Stmt_Return,
 	^Stmt_Break,
@@ -563,6 +569,7 @@ Any_Expr :: union {
 	^Type_Enum,
 	^Type_Bit_Set,
 	^Type_Opaque,
+	^Type_Distinct,
 }
 
 Any_Decl :: union {

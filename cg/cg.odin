@@ -785,7 +785,7 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 			panic("String constant used as value")
 		}
 	} else {
-		type = types.default_type(types.base_type(type))
+		type = types.default_type(types.core_type(type))
 		switch type.kind {
 		case .Uint, .Int, .Bool, .Float:
 			// fine
@@ -803,7 +803,8 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 		     .Complex,
 		     .Quaternion,
 		     .Opaque,
-		     .Any:
+		     .Any,
+		     .Named:
 			fmt.panicf("Tried to generate constant with type", type)
 
 		case .Matrix:
@@ -961,7 +962,7 @@ cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> (in
 	assert(type != nil)
 	assert(.Block not_in flags || .Explicit_Layout in flags)
 
-	type := types.base_type(type)
+	type := types.core_type(type)
 
 	cache_key := get_type_cache_key(type, flags)
 
@@ -1004,7 +1005,7 @@ cg_type_internal :: proc(
 ) -> (info: Type_Info) {
 	assert(type != nil)
 	assert(.Block not_in flags || .Explicit_Layout in flags)
-	type := types.base_type(type)
+	type := types.core_type(type)
 
 	switch type.kind {
 	case .Uint:
@@ -1171,7 +1172,7 @@ cg_type_internal :: proc(
 		id := spv.next_id(type_builder)
 		append(&type_builder.data, id)
 		info.type = spv.Id(id)
-	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion, .Proc_Group, .Any:
+	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion, .Proc_Group, .Any, .Named:
 		unreachable()
 	}
 
@@ -1455,10 +1456,10 @@ cg_expr_binary :: proc(
 
 		t: ^types.Type
 		if lhs_type.kind == .Float {
-			t   = types.base_type(lhs_type)
+			t   = types.core_type(lhs_type)
 			rhs = cg_cast(ctx, builder, { id = rhs, type = rhs_type, }, t)
 		} else {
-			t   = types.base_type(rhs_type)
+			t   = types.core_type(rhs_type)
 			lhs = cg_cast(ctx, builder, { id = lhs, type = lhs_type, }, t)
 		}
 		#partial switch t.kind {
@@ -1798,13 +1799,13 @@ cg_cast :: proc(
 	value:    Value,
 	type:    ^types.Type,
 ) -> spv.Id {
-	type               := types.base_type(type, true)
-	v_type             := types.base_type(value.type)
+	type               := types.core_type(type, true)
+	v_type             := types.core_type(value.type)
 	value              := value
 	value.id            = cg_deref(ctx, builder, value)
 	value.storage_class = nil
 
-	if types.equal(v_type, types.base_type(type)) {
+	if types.equal(v_type, types.core_type(type)) {
 		return value.id
 	}
 
@@ -2612,7 +2613,7 @@ cg_expr_internal :: proc(
 		return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.value), v.type), }
 	case ^ast.Expr_Unary:
 		e    := cg_expr(ctx, builder, v.expr)
-		type := types.base_type(expr.type)
+		type := types.core_type(expr.type)
 		ti   := cg_type(ctx, type)
 		#partial switch v.op {
 		case .Xor:
@@ -2646,7 +2647,7 @@ cg_expr_internal :: proc(
 		then_value := cg_expr(ctx, builder, v.then_expr).id
 		else_value := cg_expr(ctx, builder, v.else_expr).id
 		return { id = spv.OpSelect(builder, cg_type(ctx, v.type).type, cond, then_value, else_value), }
-	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Image, ^ast.Type_Enum, ^ast.Type_Bit_Set, ^ast.Type_Opaque:
+	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Image, ^ast.Type_Enum, ^ast.Type_Bit_Set, ^ast.Type_Opaque, ^ast.Type_Distinct:
 		panic("tried to cg type as expression")
 	case ^ast.Expr_Directive:
 		panic("tried to cg directive as expression")

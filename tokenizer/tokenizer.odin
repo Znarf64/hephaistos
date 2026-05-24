@@ -89,7 +89,7 @@ Token_Kind :: enum u16 {
 	Matrix,
 	Sampler,
 	Image,
-
+	Distinct,
 	Opaque,
 
 	Cast,
@@ -548,7 +548,7 @@ token_strings := #sparse[Token_Kind]string {
 	.Matrix          = "matrix",
 	.Sampler         = "sampler",
 	.Image           = "image",
-
+	.Distinct        = "distinct",
 	.Opaque          = "opaque",
 
 	.Cast            = "cast",

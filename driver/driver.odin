@@ -115,7 +115,7 @@ main :: proc() {
 	}
 
 	tokens: []hep.Token
-	tokens, errors = hep.tokenize(string(source), false, context.temp_allocator)
+	tokens, errors = hep.tokenize(string(source), false, allocator = context.temp_allocator)
 
 	if len(errors) != 0 {
 		return
