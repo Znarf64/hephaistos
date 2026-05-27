@@ -79,7 +79,7 @@ compile_shader :: proc(
 		return
 	}
 
-	code = hep.cg_generate(&checker, stmts, path, source, spirv_version, allocator = allocator)
+	code = hep.cg_file(&checker, stmts, path, source, spirv_version, allocator = allocator)
 
 	return
 }

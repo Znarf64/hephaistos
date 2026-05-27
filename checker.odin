@@ -1,4 +1,4 @@
-package hephaistos_checker
+package hephaistos
 
 import "base:intrinsics"
 import "base:runtime"
@@ -8,38 +8,31 @@ import "core:mem"
 import "core:reflect"
 import "core:strings"
 
-import "../ast"
-import "../tokenizer"
-import "../types"
+import spv "spirv-odin"
 
-import spv "../spirv-odin"
-
-@(require)
-import vk "vendor:vulkan"
-
-Flag :: enum {
+Checker_Flag :: enum {
 	Auto_Map_Locations,
 	Auto_Bind_Uniforms,
 	Enable_Reflection,
 	Enable_References,
 }
 
-Flags :: bit_set[Flag]
+Checker_Flags :: bit_set[Checker_Flag]
 
 Checker :: struct {
 	allocator:        runtime.Allocator,
-	errors:           [dynamic]tokenizer.Error,
+	errors:           [dynamic]Error,
 	error_allocator:  runtime.Allocator,
 
-	libraries:        map[string]ast.Library,
-	shared_types:     map[string]^types.Type,
-	config_vars:      map[string]types.Const_Value,
-	flags:            Flags,
+	libraries:        map[string]Library,
+	shared_types:     map[string]^Type,
+	config_vars:      map[string]Const_Value,
+	flags:            Checker_Flags,
 
 	scope:            ^Scope,
-	shader_stage:     ast.Shader_Stage,
-	current_location: int,
-	current_binding:  int,
+	shader_stage:     Shader_Stage,
+	current_location: i64,
+	current_binding:  i64,
 
 	reflection:       struct {
 		interface:    map[string]Reflection_Info,
@@ -50,18 +43,13 @@ Checker :: struct {
 Entry_Point_Info :: struct {
 	inputs:  []Reflection_Info,
 	outputs: []Reflection_Info,
-	stage:   ast.Shader_Stage,
+	stage:   Shader_Stage,
 }
 
 Reflection_Info :: struct {
-	type:              ^types.Type,
-	interface:         ast.Interface_Kind,
-	binding, location: int,
-}
-
-Buffer_Address :: struct($T: typeid) #raw_union {
-	address: vk.DeviceAddress,
-	_:       ^T `hephaistos:"buffer_device_address"`,
+	type:             ^Type,
+	interface:         Interface_Kind,
+	binding, location: i64,
 }
 
 Addressing_Mode :: enum {
@@ -96,14 +84,14 @@ addressing_mode_string := [Addressing_Mode]string {
 }
 
 Operand :: struct {
-	expr:             ^ast.Expr,
-	type:             ^types.Type,
+	expr:             ^Ast_Expr,
+	type:             ^Type,
 	mode:              Addressing_Mode,
-	value:             types.Const_Value,
-	builtin_id:        ast.Builtin_Id,
-	interface:         ast.Interface_Kind,
-	library:          ^ast.Library,
-	scope:            ^ast.Scope,
+	value:             Const_Value,
+	builtin_id:        Builtin_Id,
+	interface:         Interface_Kind,
+	library:          ^Library,
+	scope:            ^Scope,
 	is_call:           bool,
 	diverging:         bool,
 	constant_compound: bool,
@@ -120,8 +108,11 @@ scope_new :: proc(parent: ^Scope, kind: Scope_Kind, allocator: mem.Allocator) ->
 }
 
 @(require_results)
-resolve_ident :: proc(checker: ^Checker, name: ^ast.Expr_Ident) -> (e: ^Entity, ok: bool) {
-	s := checker.scope
+check_ident :: proc(checker: ^Checker, name: ^Expr_Ident, scope: ^Scope = nil) -> (e: ^Entity, ok: bool) {
+	s := scope
+	if s == nil {
+		s = checker.scope
+	}
 	for s != nil {
 		e, ok = s.entities[name.text]
 		if ok {
@@ -139,7 +130,7 @@ resolve_ident :: proc(checker: ^Checker, name: ^ast.Expr_Ident) -> (e: ^Entity, 
 }
 
 @(require_results)
-lookup_proc_type :: proc(checker: ^Checker) -> (e: ^types.Proc, ok: bool) {
+lookup_proc_type :: proc(checker: ^Checker) -> (e: ^Type_Proc, ok: bool) {
 	s := checker.scope
 	for s != nil {
 		if s.proc_type != nil {
@@ -165,11 +156,11 @@ lookup_scope_by_kind :: proc(checker: ^Checker, mask: bit_set[Scope_Kind]) -> (s
 }
 
 @(require_results)
-scope_push :: proc(checker: ^Checker, kind: Scope_Kind, label: ^ast.Expr_Ident = nil) -> ^Scope {
+scope_push :: proc(checker: ^Checker, kind: Scope_Kind, label: ^Expr_Ident = nil) -> ^Scope {
 	checker.scope = scope_new(checker.scope, kind, checker.allocator)
 
 	if label != nil {
-		e      := entity_new(checker, .Label, label, types.t_invalid, flags = { .Resolved, })
+		e      := entity_new(checker, .Label, label, t_invalid, flags = { .Resolved, })
 		e.scope = checker.scope
 		scope_insert_entity(checker, e)
 	}
@@ -183,7 +174,7 @@ scope_pop :: proc(checker: ^Checker) -> (s: ^Scope) {
 	return
 }
 
-scope_insert_entity :: proc(checker: ^Checker, e: ^Entity) -> bool {
+scope_insert_entity :: proc(checker: ^Checker, e: ^Entity, scope: ^Scope = nil) -> bool {
 	if e == nil {
 		return true
 	}
@@ -192,20 +183,24 @@ scope_insert_entity :: proc(checker: ^Checker, e: ^Entity) -> bool {
 		return true
 	}
 
+	scope := scope
+	if scope == nil {
+		scope = checker.scope
+	}
+
 	assert(e.name != "")
-	assert(checker.scope != nil)
-	if e.name in checker.scope.entities {
+	if e.name in scope.entities {
 		error(checker, e.ident, "'%s' has already been defined in this scope", e.name)
 		return false
 	}
 
-	checker.scope.entities[e.name] = e
+	scope.entities[e.name] = e
 	return true
 }
 
-check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
+check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 	switch v in stmt.derived_stmt {
-	case ^ast.Stmt_Return:
+	case ^Stmt_Return:
 		proc_type, ok := lookup_proc_type(checker)
 		if !ok {
 			error(checker, v, "unexpected return statement outside of procedure body")
@@ -213,7 +208,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 		return_index := 0
 		for e in v.values {
-			type_hint: ^types.Type
+			type_hint: ^Type
 			if return_index < len(proc_type.returns) {
 				type_hint = proc_type.returns[return_index].type
 			}
@@ -223,11 +218,11 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				continue
 			}
 
-			ts := []^types.Type{ value.type, }
+			ts := []^Type{ value.type, }
 			deconstruct_tuple(checker, &ts)
 
 			for type in ts {
-				if !types.implicitly_castable(type, proc_type.returns[return_index].type) {
+				if !implicitly_castable(type, proc_type.returns[return_index].type) {
 					error(checker, value, "mismatched type in return statement: expected %v, got %v", proc_type.returns[return_index].type, type)
 				}
 				if len(ts) == 1 {
@@ -242,7 +237,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 
 		return true
-	case ^ast.Stmt_Break:
+	case ^Stmt_Break:
 		if v.label != nil {
 			label := check_expr_internal(checker, v.label, {})
 			if label.mode != .Label {
@@ -257,7 +252,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 
 		return true
-	case ^ast.Stmt_Continue:
+	case ^Stmt_Continue:
 		if v.label != nil {
 			label := check_expr_internal(checker, v.label, {})
 			if label.mode != .Label {
@@ -268,24 +263,24 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				error(checker, label, "continue can only be used in loops")
 			}
 		} else {
-			_, ok := lookup_scope_by_kind(checker, { .Loop, .Switch, })
+			_, ok := lookup_scope_by_kind(checker, { .Loop, })
 			if !ok {
 				error(checker, v, "continue can only be used in loops")
 			}
 		}
 
 		return true
-	case ^ast.Stmt_For_Range:
+	case ^Stmt_For_Range:
 		v.init_scope = scope_push(checker, .Loop, v.label)
 		defer scope_pop(checker)
 
 		start := check_expr(checker, v.start_expr)
 		end   := check_expr(checker, v.end_expr, type_hint = start.type)
-		if !types.is_numeric(start.type) {
+		if !type_is_numeric(start.type) {
 			error(checker, v.end, "non-numeric type in range statment: %v", start.type)
 		}
-		iter_type        := types.op_result_type(start.type, end.type)
-		iter_type         = types.default_type(iter_type)
+		iter_type        := op_result_type(start.type, end.type)
+		iter_type         = default_type(iter_type)
 		v.start_expr.type = iter_type
 		v.end_expr.type   = iter_type
 		if iter_type.kind == .Invalid {
@@ -299,7 +294,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		defer scope_pop(checker)
 		check_stmt_list(checker, v.body)
 		return false
-	case ^ast.Stmt_For:
+	case ^Stmt_For:
 		v.init_scope = scope_push(checker, .Loop, v.label)
 		defer scope_pop(checker)
 
@@ -322,12 +317,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		defer scope_pop(checker)
 		check_stmt_list(checker, v.body)
 		return false
-	case ^ast.Stmt_Block:
+	case ^Stmt_Block:
 		v.scope = scope_push(checker, .Block, v.label)
 		defer scope_pop(checker)
 
 		return check_stmt_list(checker, v.body)
-	case ^ast.Stmt_If:
+	case ^Stmt_If:
 		v.init_scope = scope_push(checker, .Block, v.label)
 		defer scope_pop(checker)
 
@@ -349,7 +344,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		scope_pop(checker)
 
 		return then_diverging && else_diverging
-	case ^ast.Stmt_When:
+	case ^Stmt_When:
 		cond := check_expr(checker, v.cond)
 		if c, ok := cond.value.(bool); ok {
 			if c {
@@ -362,7 +357,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 		return false
 
-	case ^ast.Stmt_Switch:
+	case ^Stmt_Switch:
 		v.scope = scope_push(checker, .Block, v.label)
 		defer scope_pop(checker)
 
@@ -371,7 +366,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 
 		cond            := check_expr(checker, v.cond)
-		cond.type        = types.default_type(cond.type)
+		cond.type        = default_type(cond.type)
 		seen_default    := false
 		v.constant_cases = true
 		for &c in v.cases {
@@ -392,7 +387,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			defer scope_pop(checker)
 
 			value := check_expr(checker, c.value, type_hint = cond.type)
-			if !types.implicitly_castable(value.type, cond.type) {
+			if !implicitly_castable(value.type, cond.type) {
 				error(checker, value, "type of case value does not match selector type: expected %v, got %v", cond.type, value.type)
 			}
 			if value.mode != .Const {
@@ -402,10 +397,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			check_stmt_list(checker, c.body)
 		}
 
-	case ^ast.Stmt_Assign:
+	case ^Stmt_Assign:
 		lhs := make([]Operand, len(v.lhs), checker.allocator)
 		for &lhs, i in lhs {
-			if ident, ok := v.lhs[i].derived.(^ast.Expr_Ident); ok && ident.text == "_" {
+			if ident, ok := v.lhs[i].derived.(^Expr_Ident); ok && ident.text == "_" {
 				lhs.expr = v.lhs[i]
 				lhs.type = nil
 				lhs.mode = .LValue
@@ -422,12 +417,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		lhs_i := 0
 		check_assignment_types: for &r_expr in v.rhs {
-			type_hint: ^types.Type
+			type_hint: ^Type
 			if lhs_i < len(lhs) {
 				type_hint = lhs[lhs_i].type
 			}
 			rhs       := check_expr(checker, r_expr, type_hint = type_hint)
-			rhs_types := []^types.Type { rhs.type, }
+			rhs_types := []^Type { rhs.type, }
 			deconstruct_tuple(checker, &rhs_types)
 
 			for type in rhs_types {
@@ -439,11 +434,11 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					lhs[lhs_i].type      = type
 					lhs[lhs_i].expr.type = type
 				}
-				if !types.implicitly_castable(type, lhs[lhs_i].type) {
+				if !implicitly_castable(type, lhs[lhs_i].type) {
 					error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, type)
 					continue
 				}
-				result_type := types.op_result_type(lhs[lhs_i].type, type)
+				result_type := op_result_type(lhs[lhs_i].type, type)
 				if len(rhs_types) == 1 {
 					r_expr.type = result_type
 				}
@@ -453,7 +448,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			error(checker, v, "assignment count mismatch: %v vs %v", len(lhs), lhs_i)
 		}
 
-	case ^ast.Stmt_Expr:
+	case ^Stmt_Expr:
 		operand := check_expr(checker, v.expr, allow_no_value = true)
 		if !operand.is_call {
 			error(checker, v.expr, "expression is not used")
@@ -462,7 +457,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 			return true
 		}
 
-	case ^ast.Decl_Value:
+	case ^Decl_Value:
 		if checker.scope.kind == .Global || !v.mutable {
 			break
 		}
@@ -471,7 +466,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		values := make([]Operand, len(v.values), checker.allocator)
 
-		explicit_type: ^types.Type
+		explicit_type: ^Type
 		if v.type_expr != nil {
 			explicit_type = check_type(checker, v.type_expr)
 		}
@@ -487,11 +482,11 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		}
 		if len(values) == 0 {
 			if explicit_type == nil {
-				explicit_type = types.t_invalid
+				explicit_type = t_invalid
 			}
 			check_decl_interface_type(checker, v, explicit_type)
 			for lhs in v.lhs {
-				ident: ^ast.Expr_Ident
+				ident: ^Expr_Ident
 				ok:    bool
 				if ident, ok = lhs.derived_expr.?; !ok {
 					error(checker, lhs, "variable declaration must be an identifier")
@@ -507,7 +502,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 
 		lhs_i := 0
 		check_decl_types: for &rhs in values {
-			rhs_types := []^types.Type{ rhs.type, }
+			rhs_types := []^Type{ rhs.type, }
 			tuple     := deconstruct_tuple(checker, &rhs_types)
 			for rhs_type in rhs_types {
 				defer lhs_i += 1
@@ -522,10 +517,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 				if type == nil {
 					type = rhs_type
 					if entity_kind != .Const {
-						type = types.default_type(type)
+						type = default_type(type)
 					}
 				} else {
-					if !types.implicitly_castable(rhs_type, explicit_type) {
+					if !implicitly_castable(rhs_type, explicit_type) {
 						error(checker, stmt, "mismatched types in value declaration: %v vs %v", explicit_type, rhs_type)
 					}
 				}
@@ -534,7 +529,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 					v.values[lhs_i].type = type
 				}
 
-				ident: ^ast.Expr_Ident
+				ident: ^Expr_Ident
 				ok:    bool
 				if ident, ok = lhs.derived_expr.?; !ok {
 					continue
@@ -553,17 +548,17 @@ check_stmt :: proc(checker: ^Checker, stmt: ^ast.Stmt) -> (diverging: bool) {
 		if lhs_i != len(v.lhs) {
 			error(checker, v, "assignment count mismatch: %v vs %v", len(v.lhs), lhs_i)
 		}
-	case ^ast.Decl_Import:
-	case ^ast.Decl_Extension:
+	case ^Decl_Import:
+	case ^Decl_Extension:
 	}
 
 	diverging = false
 	return
 }
 
-check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type: ^types.Type) {
+check_decl_interface_type :: proc(checker: ^Checker, decl: ^Decl_Value, type: ^Type) {
 	@(static, rodata)
-	interface_kind_names := [ast.Interface_Kind]string {
+	interface_kind_names := [Interface_Kind]string {
 		.None                 = "none",
 		.Uniform              = "uniform",
 		.Uniform_Buffer       = "uniform buffer",
@@ -631,12 +626,12 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 	switch decl.interface {
 	case .None:
 	case .Uniform:
-		if types.is_buffer(type) || types.is_struct(type) {
+		if type_is_buffer(type) || type_is_struct(type) {
 			error(checker, decl.type_expr, "type of uniform variable can not be a composite type")
 		}
 	case .Shared, .Ray_Payload, .Hit_Attribute, .Incoming_Ray_Payload:
 	case .Uniform_Buffer, .Storage_Buffer, .Push_Constant:
-		if !(types.is_buffer(type) || types.is_struct(type)) {
+		if !(type_is_buffer(type) || type_is_struct(type)) {
 			error(checker, decl.type_expr, "type of %s variable has to be a composite type", interface_kind_names[decl.interface])
 		}
 	}
@@ -655,21 +650,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^ast.Decl_Value, type
 	}
 }
 
-@(require_results)
-check_ident :: proc(checker: ^Checker, expr: ^ast.Expr, ctx: string = "") -> (ident: string, ok: bool) {
-	if i, ok := expr.derived_expr.(^ast.Expr_Ident); ok {
-		return i.text, true
-	}
-
-	if ctx != "" {
-		error(checker, expr, "expected an identifier in %s", ctx)
-	} else {
-		error(checker, expr, "expected an identifier")
-	}
-	return
-}
-
-check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant: bool) {
+check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bool) {
 	decl.location       = -1
 	decl.binding        = -1
 	decl.descriptor_set = -1
@@ -677,8 +658,22 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 
 	for a in decl.attributes {
 		name, library: string
-		if selector, ok := a.name.derived_expr.(^ast.Expr_Selector); ok {
-			library = check_ident(checker, selector.lhs) or_continue
+		if selector, ok := a.name.derived_expr.(^Expr_Selector); ok {
+			@(require_results)
+			expect_ident :: proc(checker: ^Checker, expr: ^Ast_Expr, ctx: string = "") -> (ident: string, ok: bool) {
+				if i, ok := expr.derived_expr.(^Expr_Ident); ok {
+					return i.text, true
+				}
+
+				if ctx != "" {
+					error(checker, expr, "expected an identifier in %s", ctx)
+				} else {
+					error(checker, expr, "expected an identifier")
+				}
+				return
+			}
+
+			library = expect_ident(checker, selector.lhs) or_continue
 			name    = selector.selector.text
 		} else {
 			name = a.name.text
@@ -689,8 +684,8 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 		}
 		seen[name] = {}
 
-		interface_kind: ast.Interface_Kind
-		for name, interface in ast.interface_kind_names {
+		interface_kind: Interface_Kind
+		for name, interface in interface_kind_names {
 			if check_attribute_matches(checker, a, name) {
 				interface_kind = interface
 				break
@@ -699,7 +694,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 
 		if interface_kind != nil {
 			if decl.interface != nil {
-				error(checker, a.name, "the '%s' and '%s' attributes are mutually exclusive", ast.interface_kind_names[decl.interface], name)
+				error(checker, a.name, "the '%s' and '%s' attributes are mutually exclusive", interface_kind_names[decl.interface], name)
 			}
 			if a.value != nil {
 				error(checker, a.value, "'%s' attribute does not accept a value", name)
@@ -721,7 +716,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 			}
 			value := check_expr(checker, a.value)
 			if val, ok := value.value.(i64); ok && val >= 0 {
-				decl.binding = int(val)
+				decl.binding = val
 			} else {
 				error(checker, value, "'binding' attribute value must be a constant non-negative integer")
 			}
@@ -732,7 +727,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 			}
 			value := check_expr(checker, a.value)
 			if val, ok := value.value.(i64); ok && val >= 0 {
-				decl.location = int(val)
+				decl.location = val
 			} else {
 				error(checker, value, "'location' attribute value must be a constant non-negative integer")
 			}
@@ -743,7 +738,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 			}
 			value := check_expr(checker, a.value)
 			if val, ok := value.value.(i64); ok && val >= 0 {
-				decl.descriptor_set = int(val)
+				decl.descriptor_set = val
 			} else {
 				error(checker, value, "'descriptor_set' attribute value must be a constant non-negative integer")
 			}
@@ -763,7 +758,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 				error(checker, a.name, "'local_size' attribute requires a value")
 				break
 			}
-			if comp, ok := a.value.derived_expr.(^ast.Expr_Compound); ok {
+			if comp, ok := a.value.derived_expr.(^Expr_Compound); ok {
 				if len(comp.fields) != 3 {
 					error(checker, a.value, "'local_size' attribute value must be a compound literal of three constant integers")
 					break
@@ -784,7 +779,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 			}
 		case:
 			found: bool
-			for name, stage in ast.shader_stage_names {
+			for name, stage in shader_stage_names {
 				if check_attribute_matches(checker, a, name) {
 					if decl.shader_stage != nil {
 						error(checker, a.name, "procedures can only be annotated with one shader stage")
@@ -824,14 +819,14 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 				checker,
 				decl,
 				"variable with '%s' attribute can not have any values",
-				ast.interface_kind_names[decl.interface],
+				interface_kind_names[decl.interface],
 			)
 		} else if len(decl.lhs) != 1 {
 			error(
 				checker,
 				decl,
 				"attribute '%s' can not be applied to a declaration of multiple variables",
-				ast.interface_kind_names[decl.interface],
+				interface_kind_names[decl.interface],
 			)
 		}
 	}
@@ -845,9 +840,9 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^ast.Decl_Value, constant
 	}
 }
 
-collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entities: ^[dynamic]^Entity) {
+collect_decls :: proc(checker: ^Checker, stmts: []^Ast_Stmt, global: bool, entities: ^[dynamic]^Entity) {
 	for stmt in stmts {
-		v := stmt.derived_stmt.(^ast.Decl_Import) or_continue
+		v := stmt.derived_stmt.(^Decl_Import) or_continue
 
 		if !checker.scope.allow_imports {
 			error(checker, v, "Imports must be placed at file scope")
@@ -884,9 +879,9 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 		} else {
 			e: ^Entity
 			if v.alias != nil {
-				e = entity_new(checker, .Library, v.alias, types.t_invalid)
+				e = entity_new(checker, .Library, v.alias, t_invalid)
 			} else {
-				e = entity_new_no_ident(checker, .Library, name, types.t_invalid)
+				e = entity_new_no_ident(checker, .Library, name, t_invalid)
 			}
 			e.library = library
 			e.decl    = v
@@ -896,7 +891,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 	}
 
 	for stmt in stmts {
-		v := stmt.derived_stmt.(^ast.Decl_Extension) or_continue
+		v := stmt.derived_stmt.(^Decl_Extension) or_continue
 
 		if checker.scope.kind != .Global {
 			error(checker, v, "extension declarations must be placed at file scope")
@@ -910,7 +905,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 		}
 
 		for stmt in v.body {
-			v, ok := stmt.derived_stmt.(^ast.Decl_Value)
+			v, ok := stmt.derived_stmt.(^Decl_Value)
 			if !ok {
 				error(checker, v, "only procedure declarations are allowed in extension declarations")
 				continue
@@ -931,7 +926,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 				continue
 			}
 
-			type := types.new_any(checker.allocator)
+			type := type_any_new(checker.allocator)
 			e    := entity_new(checker, .Proc, v.lhs[0], type, decl = v, flags = { .Extension_Proc, })
 			scope_insert_entity(checker, e)
 			append(entities, e)
@@ -939,7 +934,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 	}
 
 	for stmt in stmts {
-		d := stmt.derived_stmt.(^ast.Decl_Value) or_continue
+		d := stmt.derived_stmt.(^Decl_Value) or_continue
 		if d.mutable && !global {
 			continue
 		}
@@ -952,14 +947,14 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 		}
 		entity_kind := Entity_Kind.Invalid
 		for lhs in d.lhs {
-			ident: ^ast.Expr_Ident
-			ok:    bool
+			ident: ^Expr_Ident
+			ok:     bool
 			if ident, ok = lhs.derived_expr.?; !ok {
 				error(checker, lhs, "variable declaration must be an identifier")
 				continue
 			}
 
-			type       := types.new_any(checker.allocator)
+			type       := type_any_new(checker.allocator)
 			e          := entity_new(checker, entity_kind, ident, type, decl = d, flags = flags)
 			e.interface = d.interface
 			scope_insert_entity(checker, e)
@@ -977,7 +972,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^ast.Stmt, global: bool, entit
 	}
 
 	for stmt in stmts {
-		v    := stmt.derived_stmt.(^ast.Stmt_When) or_continue
+		v    := stmt.derived_stmt.(^Stmt_When) or_continue
 		cond := check_expr(checker, v.cond)
 		if c, ok := cond.value.(bool); ok {
 			if c {
@@ -1036,10 +1031,10 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 	}
 
 	assert(e.decl != nil)
-	d           := e.decl.derived_decl.(^ast.Decl_Value)
+	d           := e.decl.derived_decl.(^Decl_Value)
 	value_index := -1
 	for lhs, i in d.lhs {
-		ident := lhs.derived_expr.(^ast.Expr_Ident) or_else {}
+		ident := lhs.derived_expr.(^Expr_Ident) or_else {}
 		if ident.text == e.name {
 			value_index = i
 			break
@@ -1047,44 +1042,44 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 	}
 	assert(value_index != -1)
 
-	type: ^types.Type
+	type: ^Type
 	if d.type_expr != nil {
 		type = check_type(checker, d.type_expr)
 	}
 
-	assign_type :: proc(dst, src: ^types.Type) {
-		size := size_of(types.Type)
+	assign_type :: proc(dst, src: ^Type) {
+		size := size_of(Type)
 		switch v in src.variant {
-		case ^types.Struct:
-			size = size_of(types.Struct)
-		case ^types.Matrix:
-			size = size_of(types.Matrix)
-		case ^types.Array:
-			size = size_of(types.Array)
-		case ^types.Buffer:
-			size = size_of(types.Buffer)
-		case ^types.Proc:
-			size = size_of(types.Proc)
-		case ^types.Proc_Group:
-			size = size_of(types.Proc_Group)
-		case ^types.Image:
-			size = size_of(types.Image)
-		case ^types.Enum:
-			size = size_of(types.Enum)
-		case ^types.Bit_Set:
-			size = size_of(types.Bit_Set)
-		case ^types.Complex:
-			size = size_of(types.Complex)
-		case ^types.Opaque:
-			size = size_of(types.Opaque)
-		case ^types.Named:
-			size = size_of(types.Named)
+		case ^Type_Struct:
+			size = size_of(Type_Struct)
+		case ^Type_Matrix:
+			size = size_of(Type_Matrix)
+		case ^Type_Array:
+			size = size_of(Type_Array)
+		case ^Type_Buffer:
+			size = size_of(Type_Buffer)
+		case ^Type_Proc:
+			size = size_of(Type_Proc)
+		case ^Type_Proc_Group:
+			size = size_of(Type_Proc_Group)
+		case ^Type_Image:
+			size = size_of(Type_Image)
+		case ^Type_Enum:
+			size = size_of(Type_Enum)
+		case ^Type_Bit_Set:
+			size = size_of(Type_Bit_Set)
+		case ^Type_Complex:
+			size = size_of(Type_Complex)
+		case ^Type_Opaque:
+			size = size_of(Type_Opaque)
+		case ^Type_Named:
+			size = size_of(Type_Named)
 		}
 		mem.copy(dst, src, size)
 	}
 
 	if len(d.values) == 0 {
-		check_decl_interface_type(checker, e.decl.derived_decl.(^ast.Decl_Value), type)
+		check_decl_interface_type(checker, e.decl.derived_decl.(^Decl_Value), type)
 		e.kind                  = .Var
 		d.lhs[value_index].type = type
 		assign_type(e.type, type)
@@ -1113,7 +1108,7 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		}
 		e.kind = .Type
 		if v.type_distinct {
-			v.type = types.named_new(e.name, v.type, checker.allocator)
+			v.type = named_new(e.name, v.type, checker.allocator)
 		}
 	case .Proc:
 		e.kind = .Proc
@@ -1150,10 +1145,10 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 	if type == nil {
 		type = v.type
 		if e.kind != .Const {
-			type = types.default_type(type)
+			type = default_type(type)
 		}
 	} else {
-		if !types.implicitly_castable(v.type, type) {
+		if !implicitly_castable(v.type, type) {
 			error(checker, v, "mismatched types in value declaration: %v vs %v", type, v.type)
 		}
 	}
@@ -1167,7 +1162,7 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		if d.shader_stage != nil {
 			checker.shader_stage = d.shader_stage
 		}
-		if lit, ok := d.values[value_index].derived.(^ast.Expr_Proc_Lit); ok {
+		if lit, ok := d.values[value_index].derived.(^Expr_Proc_Lit); ok {
 			_  = check_expr_or_type(checker, lit, d.attributes, type, true)
 			if d.shader_stage != nil {
 				checker.shader_stage = nil
@@ -1176,7 +1171,7 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 	}
 
 	if .Enable_Reflection not_in checker.flags && d.shader_stage != nil {
-		type    := type.variant.(^types.Proc)
+		type    := type.variant.(^Type_Proc)
 		inputs  := make([]Reflection_Info, len(type.args),    checker.allocator)
 		outputs := make([]Reflection_Info, len(type.returns), checker.allocator)
 
@@ -1205,7 +1200,7 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 	d.values[value_index].type = type
 }
 
-check_const_stmts :: proc(checker: ^Checker, stmts: []^ast.Stmt) {
+check_const_stmts :: proc(checker: ^Checker, stmts: []^Ast_Stmt) {
 	entities := make([dynamic]^Entity, context.temp_allocator)
 	collect_decls(checker, stmts, checker.scope.kind == .Global, &entities)
 	for e in entities {
@@ -1213,7 +1208,7 @@ check_const_stmts :: proc(checker: ^Checker, stmts: []^ast.Stmt) {
 	}
 }
 
-check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt, ignore_constants := false) -> (diverging: bool) {
+check_stmt_list :: proc(checker: ^Checker, stmts: []^Ast_Stmt, ignore_constants := false) -> (diverging: bool) {
 	if !ignore_constants {
 		check_const_stmts(checker, stmts)
 	}
@@ -1232,10 +1227,10 @@ check_stmt_list :: proc(checker: ^Checker, stmts: []^ast.Stmt, ignore_constants 
 @(private = "file")
 checker_init :: proc(
 	checker:       ^Checker,
-	defines:       map[string]types.Const_Value,
-	shared_types:  map[string]^types.Type,
-	libraries:     map[string]ast.Library,
-	flags:         Flags,
+	defines:       map[string]Const_Value,
+	shared_types:  map[string]^Type,
+	libraries:     map[string]Library,
+	flags:         Checker_Flags,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) {
@@ -1243,44 +1238,44 @@ checker_init :: proc(
 	checker.reflection.interface.allocator    = allocator
 	checker.reflection.entry_points.allocator = allocator
 	checker.error_allocator                   = error_allocator
-	checker.errors                            = make([dynamic]tokenizer.Error, error_allocator)
+	checker.errors                            = make([dynamic]Error, error_allocator)
 	checker.flags                             = flags
-	checker.libraries                         = make(map[string]ast.Library, allocator)
+	checker.libraries                         = make(map[string]Library, allocator)
 
 	_ = scope_push(checker, .Global)
 
-	create_builtin_type :: proc(checker: ^Checker, type: ^types.Type, type_expr := #caller_expression(type)) {
-		name := type_expr[len("types.t_"):]
+	create_builtin_type :: proc(checker: ^Checker, type: ^Type, type_expr := #caller_expression(type)) {
+		name := type_expr[len("t_"):]
 		scope_insert_entity(checker, entity_new_no_ident(checker, .Type, name, type, flags = { .Resolved, }))
 	}
 
-	create_builtin_type(checker, types.t_bool)
-	scope_insert_entity(checker, entity_new_no_ident(checker, .Const, "true",  types.t_bool, value = true,  flags = { .Resolved, }))
-	scope_insert_entity(checker, entity_new_no_ident(checker, .Const, "false", types.t_bool, value = false, flags = { .Resolved, }))
+	create_builtin_type(checker, t_bool)
+	scope_insert_entity(checker, entity_new_no_ident(checker, .Const, "true",  t_bool, value = true,  flags = { .Resolved, }))
+	scope_insert_entity(checker, entity_new_no_ident(checker, .Const, "false", t_bool, value = false, flags = { .Resolved, }))
 
-	create_builtin_type(checker, types.t_i8)
-	create_builtin_type(checker, types.t_i16)
-	create_builtin_type(checker, types.t_i32)
-	create_builtin_type(checker, types.t_i64)
+	create_builtin_type(checker, t_i8)
+	create_builtin_type(checker, t_i16)
+	create_builtin_type(checker, t_i32)
+	create_builtin_type(checker, t_i64)
 
-	create_builtin_type(checker, types.t_u8)
-	create_builtin_type(checker, types.t_u16)
-	create_builtin_type(checker, types.t_u32)
-	create_builtin_type(checker, types.t_u64)
+	create_builtin_type(checker, t_u8)
+	create_builtin_type(checker, t_u16)
+	create_builtin_type(checker, t_u32)
+	create_builtin_type(checker, t_u64)
 
-	create_builtin_type(checker, types.t_f16)
-	create_builtin_type(checker, types.t_f32)
-	create_builtin_type(checker, types.t_f64)
+	create_builtin_type(checker, t_f16)
+	create_builtin_type(checker, t_f32)
+	create_builtin_type(checker, t_f64)
 
-	create_builtin_type(checker, types.t_complex64)
-	create_builtin_type(checker, types.t_complex128)
+	create_builtin_type(checker, t_complex64)
+	create_builtin_type(checker, t_complex128)
 
-	create_builtin_type(checker, types.t_quaternion128)
-	create_builtin_type(checker, types.t_quaternion256)
+	create_builtin_type(checker, t_quaternion128)
+	create_builtin_type(checker, t_quaternion256)
 
-	create_builtin_type(checker, types.t_any)
+	create_builtin_type(checker, t_any)
 
-	find_or_create_lib :: proc(checker: ^Checker, name: string) -> (library: ^ast.Library) {
+	find_or_create_lib :: proc(checker: ^Checker, name: string) -> (library: ^Library) {
 		library = &checker.libraries[name]
 		if library == nil {
 			checker.libraries[name] = { entities = make(map[string]^Entity, checker.allocator), }
@@ -1289,18 +1284,18 @@ checker_init :: proc(
 		return
 	}
 
-	create_library_type :: proc(checker: ^Checker, library: ^ast.Library, type: ^types.Type, type_expr := #caller_expression(type)) {
-		name := strings.trim_prefix(type_expr, "types.t_")
+	create_library_type :: proc(checker: ^Checker, library: ^Library, type: ^Type, type_expr := #caller_expression(type)) {
+		name := strings.trim_prefix(type_expr, "t_")
 		library.entities[name] = entity_new_no_ident(checker, .Type, name, type, flags = { .Resolved, })
 	}
 
 	for name, builtin in builtin_names {
-		create_builtin_proc :: proc(checker: ^Checker, name: string, builtin: ast.Builtin_Id) -> ^Entity {
+		create_builtin_proc :: proc(checker: ^Checker, name: string, builtin: Builtin_Id) -> ^Entity {
 			return entity_new_no_ident(
 				checker,
 				.Builtin,
 				name,
-				types.t_invalid,
+				t_invalid,
 				builtin_id = builtin,
 				flags      = { .Resolved, },
 			)
@@ -1333,68 +1328,68 @@ checker_init :: proc(
 }
 
 @(require_results)
-type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator) -> (type: ^types.Type, ok: bool) {
+type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator) -> (type: ^Type, ok: bool) {
 	switch v in ti.variant {
 	case reflect.Type_Info_Named:
 		return type_info_to_type(v.base, allocator)
 	case reflect.Type_Info_Integer:
 		switch ti.size {
 		case 1:
-			return types.t_i8  if v.signed else types.t_u8, true
+			return t_i8  if v.signed else t_u8, true
 		case 2:
-			return types.t_i16 if v.signed else types.t_u16, true
+			return t_i16 if v.signed else t_u16, true
 		case 4:
-			return types.t_i32 if v.signed else types.t_u32, true
+			return t_i32 if v.signed else t_u32, true
 		case 8:
-			return types.t_i64 if v.signed else types.t_u64, true
+			return t_i64 if v.signed else t_u64, true
 		case:
 			return
 		}
 	case reflect.Type_Info_Rune:
-		return types.t_i32, true
+		return t_i32, true
 	case reflect.Type_Info_Float:
 		switch ti.size {
 		case 4:
-			return types.t_f32, true
+			return t_f32, true
 		case 8:
-			return types.t_f64, true
+			return t_f64, true
 		case:
 			return
 		}
 	case reflect.Type_Info_Complex:
-		elem: ^types.Type
+		elem: ^Type
 		switch ti.size {
 		case 8:
-			elem = types.t_f32
+			elem = t_f32
 		case 16:
-			elem = types.t_f64
+			elem = t_f64
 		case:
 			return
 		}
-		return types.array_new(elem, 2, allocator), true
+		return array_new(elem, 2, allocator), true
 	case reflect.Type_Info_Quaternion:
-		elem: ^types.Type
+		elem: ^Type
 		switch ti.size {
 		case 16:
-			elem = types.t_f32
+			elem = t_f32
 		case 32:
-			elem = types.t_f64
+			elem = t_f64
 		case:
 			return
 		}
-		return types.array_new(elem, 4, allocator), true
+		return array_new(elem, 4, allocator), true
 	case reflect.Type_Info_String:
 		return
 	case reflect.Type_Info_Boolean:
 		switch ti.size {
 		case 1:
-			return types.t_bool, true
+			return t_bool, true
 		case 2:
-			return types.t_i16, true
+			return t_i16, true
 		case 4:
-			return types.t_i32, true
+			return t_i32, true
 		case 8:
-			return types.t_i64, true
+			return t_i64, true
 		case:
 			return
 		}
@@ -1409,7 +1404,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 	case reflect.Type_Info_Procedure:
 		return
 	case reflect.Type_Info_Array:
-		return types.array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
+		return array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
 	case reflect.Type_Info_Enumerated_Array:
 		unimplemented()
 	case reflect.Type_Info_Dynamic_Array, reflect.Type_Info_Fixed_Capacity_Dynamic_Array:
@@ -1421,59 +1416,73 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 	case reflect.Type_Info_Struct:
 		if .raw_union in v.flags {
 			if v.field_count != 2 {
-					return
+				return
 			}
 			if ti.size != 8 {
-					return
+				return
 			}
 			tag, ok := reflect.struct_tag_lookup(auto_cast v.tags[1], "hephaistos")
 			if !ok {
-					return
+				return
 			}
 			if tag != "buffer_device_address" {
-					return
+				return
 			}
 			ptr  := v.types[1].variant.(reflect.Type_Info_Pointer)
 			elem := type_info_to_type(ptr.elem, allocator) or_return
-			return types.buffer_new(elem, true, allocator), true
+			return buffer_new(elem, true, allocator), true
 		}
-		fields := make([]types.Field, v.field_count, allocator)
+
+		fields := make([]^Entity, v.field_count, allocator)
+		scope  := scope_new(nil, .Struct, allocator)
 		for &f, i in fields {
+			f        = new(Entity, allocator)
+			f.kind   = .Struct_Field
 			f.name   = v.names[i]
 			f.type   = type_info_to_type(v.types[i], allocator) or_return
-			f.offset = int(v.offsets[i])
+			f.offset = i64(v.offsets[i])
+			f.flags  = { .Resolved, }
+
+			scope.entities[f.name] = f
 		}
-		s       := types.new(.Struct, types.Struct, allocator)
+		s       := type_new(.Struct, Type_Struct, allocator)
 		s.size   = ti.size
 		s.align  = ti.align
 		s.fields = fields
+		s.scope  = scope
 		return s, true
 	case reflect.Type_Info_Union:
 		return
 	case reflect.Type_Info_Enum:
-		e      := types.new(.Enum, types.Enum, allocator)
-		values := make([]types.Enum_Value, len(v.values), allocator)
-		for value, i in v.values {
-			values[i] = {
-				value = i64(value),
-				name  = v.names[i],
-			}
+		e      := type_new(.Enum, Type_Enum, allocator)
+		values := make([]^Entity, len(v.values), allocator)
+		scope  := scope_new(nil, .Enum, allocator)
+		for &value, i in values {
+			value       = new(Entity, allocator)
+			value.kind  = .Enum_Value
+			value.value = i64(v.values[i])
+			value.name  = v.names[i]
+			value.flags = { .Resolved, }
+			value.type  = e
+
+			scope.entities[value.name] = value
 		}
 		e.backing = type_info_to_type(v.base, allocator) or_return
 		e.size    = e.backing.size
 		e.align   = e.backing.align
 		e.values  = values
+		e.scope   = scope
 		return e, true
 	case reflect.Type_Info_Map:
 		return
 	case reflect.Type_Info_Bit_Set:
 		return type_info_to_type(v.underlying, allocator)
 	case reflect.Type_Info_Simd_Vector:
-		return types.array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
+		return array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
 	case reflect.Type_Info_Matrix:
 		elem := type_info_to_type(v.elem, allocator) or_return
-		col  := types.array_new(elem, v.row_count, allocator)
-		return types.matrix_new(col, v.column_count, allocator), true
+		col  := array_new(elem, v.row_count, allocator)
+		return matrix_new(col, v.column_count, allocator), true
 	case reflect.Type_Info_Soa_Pointer:
 		return
 	case reflect.Type_Info_Bit_Field:
@@ -1483,8 +1492,8 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 }
 
 @(require_results)
-shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.allocator) -> (ts: map[string]^types.Type) {
-	ts = make(map[string]^types.Type, allocator)
+shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.allocator) -> (ts: map[string]^Type) {
+	ts = make(map[string]^Type, allocator)
 	for t in typeids {
 		ti            := type_info_of(t)
 		named         := ti.variant.(reflect.Type_Info_Named) or_else panic("only named types can be shared")
@@ -1496,35 +1505,35 @@ shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.alloca
 
 @(require_results)
 check :: proc(
-	stmts:     []^ast.Stmt,
-	defines:   map[string]types.Const_Value = {},
+	stmts:     []^Ast_Stmt,
+	defines:   map[string]Const_Value = {},
 	types:     []typeid                     = {},
-	libraries: map[string]ast.Library       = {},
-	flags:     Flags                        = {},
+	libraries: map[string]Library       = {},
+	flags:     Checker_Flags                        = {},
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
-) -> (checker: Checker, errors: []tokenizer.Error) {
+) -> (checker: Checker, errors: []Error) {
 	shared_types := shared_types_from_typeids(types, allocator)
 	return check_with_types(stmts, defines, shared_types, libraries, flags, allocator, error_allocator)
 }
 
 @(require_results)
 check_with_types :: proc(
-	stmts:     []^ast.Stmt,
-	defines:   map[string]types.Const_Value = {},
-	types:     map[string]^types.Type       = {},
-	libraries: map[string]ast.Library       = {},
-	flags:     Flags                        = {},
+	stmts:     []^Ast_Stmt,
+	defines:   map[string]Const_Value = {},
+	types:     map[string]^Type       = {},
+	libraries: map[string]Library       = {},
+	flags:     Checker_Flags                        = {},
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
-) -> (checker: Checker, errors: []tokenizer.Error) {
+) -> (checker: Checker, errors: []Error) {
 	checker_init(&checker, defines, types, libraries, flags, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
 	return checker, checker.errors[:]
 }
 
 @(require_results)
-op_is_relation :: proc(token_kind: tokenizer.Token_Kind) -> bool {
+op_is_relation :: proc(token_kind: Token_Kind) -> bool {
 	#partial switch token_kind {
 	case .Equal, .Not_Equal, .Less_Equal, .Greater_Equal, .Less, .Greater:
 		return true
@@ -1533,15 +1542,15 @@ op_is_relation :: proc(token_kind: tokenizer.Token_Kind) -> bool {
 }
 
 @(require_results)
-evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: types.Const_Value, expr: ^ast.Expr_Binary) -> types.Const_Value {
+evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: Const_Value, expr: ^Expr_Binary) -> Const_Value {
 	assert(lhs != nil)
 	assert(rhs != nil)
 
 	lhs := lhs
 	rhs := rhs
 
-	lhs_tag := (^intrinsics.type_union_tag_type(types.Const_Value))(uintptr(&lhs) + intrinsics.type_union_tag_offset(types.Const_Value))^
-	rhs_tag := (^intrinsics.type_union_tag_type(types.Const_Value))(uintptr(&rhs) + intrinsics.type_union_tag_offset(types.Const_Value))^
+	lhs_tag := (^intrinsics.type_union_tag_type(Const_Value))(uintptr(&lhs) + intrinsics.type_union_tag_offset(Const_Value))^
+	rhs_tag := (^intrinsics.type_union_tag_type(Const_Value))(uintptr(&rhs) + intrinsics.type_union_tag_offset(Const_Value))^
 
 	// Const_Value :: union {
 	// 	i64,  tag = 1
@@ -1673,33 +1682,29 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: types.Const_Value,
 }
 
 @(require_results)
-check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc {
+check_proc_type :: proc(checker: ^Checker, p: ^Expr_Proc_Sig) -> ^Type_Proc {
 	@(require_results)
-	check_field_list :: proc(checker: ^Checker, fields: []ast.Field, usage: string) -> (out_fields: [dynamic]types.Field) {
+	check_field_list :: proc(checker: ^Checker, fields: []Ast_Field, args: bool, scope: ^Scope) -> (out_fields: [dynamic]^Entity) {
 		out_fields.allocator = checker.allocator
 		reserve(&out_fields, len(fields))
 
-		locations          := make(map[int]string,      context.temp_allocator)
-		names_seen         := make(map[string]struct{}, context.temp_allocator)
+		locations          := make(map[i64]string, context.temp_allocator)
 		explicit_locations := false
+
+		usage := "input" if args else "output"
 
 		for i := 0; i < len(fields); {
 			start := i
-			type: ^types.Type
+			type: ^Type
 			for i < len(fields) {
 				defer i += 1
 				field := fields[i]
 				ident: string
 				if field.name != nil {
 					ident = field.name.text
-					if ident in names_seen {
-						error(checker, field.name, "duplicate name: '%s'", ident)
-						return
-					}
-					names_seen[ident] = {}
 				}
 
-				location := i
+				location := i64(i)
 				if field.location != nil {
 					// TODO: matrices with mutliple locations
 
@@ -1713,7 +1718,7 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 							error(checker, field.location, "location specifiers have to be specified for either all or none of the %ss", usage)
 						}
 
-						location = int(l)
+						location = l
 
 						if prev, prev_found := locations[location]; prev_found {
 							error(checker, field.location, "duplicate location specifier: location %v is already used by '%s'", location, prev)
@@ -1728,12 +1733,10 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 					}
 				}
 
-				append(&out_fields, types.Field {
-					name     = ident,
-					type     = nil, // patched later
-					location = location,
-					flags    = field.flags,
-				})
+				e := entity_new(checker, .Proc_Param if args else .Proc_Return, field.name, t_invalid, flags = field.flags | { .Resolved, })
+				e.location = (location)
+				scope_insert_entity(checker, e, scope)
+				append(&out_fields, e)
 
 				if field.type == nil {
 					if field.value != nil {
@@ -1754,7 +1757,7 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 				}
 
 				value := check_expr(checker, field.value)
-				if !types.implicitly_castable(value.type, type) {
+				if !implicitly_castable(value.type, type) {
 					error(
 						checker,
 						field.name.start,
@@ -1770,7 +1773,7 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 			for i in start ..< i {
 				if type == nil {
 					error(checker, fields[i].name, "field is missing a type")
-					out_fields[i].type = types.t_invalid
+					out_fields[i].type = t_invalid
 				} else {
 					out_fields[i].type = type
 				}
@@ -1780,10 +1783,11 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 		return
 	}
 
-	args    := check_field_list(checker, p.args,    "input")
-	returns := check_field_list(checker, p.returns, "output")
+	scope   := scope_new(nil, .Proc_Sig, checker.allocator)
+	args    := check_field_list(checker, p.args,    true,  scope)
+	returns := check_field_list(checker, p.returns, false, scope)
 
-	t          := types.new(.Proc, types.Proc, checker.allocator)
+	t          := type_new(.Proc, Type_Proc, checker.allocator)
 	t.args      = args[:]
 	t.returns   = returns[:]
 	t.diverging = p.diverging
@@ -1791,7 +1795,7 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 	if len(returns) == 1 {
 		t.return_type = returns[0].type
 	} else {
-		return_type       := types.new(.Tuple, types.Struct, checker.allocator)
+		return_type       := type_new(.Tuple, Type_Struct, checker.allocator)
 		return_type.fields = returns[:]
 		t.return_type      = return_type
 	}
@@ -1802,14 +1806,14 @@ check_proc_type :: proc(checker: ^Checker, p: ^ast.Expr_Proc_Sig) -> ^types.Proc
 @(require_results)
 check_expr_internal :: proc(
 	checker:           ^Checker,
-	expr:              ^ast.Expr,
-	attributes:        []ast.Field,
-	type_hint:         ^types.Type = nil,
+	expr:              ^Ast_Expr,
+	attributes:        []Ast_Field,
+	type_hint:         ^Type = nil,
 	check_proc_bodies: bool        = true,
 ) -> (operand: Operand) {
 	operand.expr = expr
 	operand.mode = .Invalid
-	operand.type = types.t_invalid
+	operand.type = t_invalid
 
 	defer {
 		expr.type        = operand.type
@@ -1817,52 +1821,52 @@ check_expr_internal :: proc(
 	}
 
 	switch v in expr.derived_expr {
-	case ^ast.Expr_Constant:
+	case ^Expr_Constant:
 		switch val in v.value {
 		case i64:
-			operand.type  = types.t_int
+			operand.type  = t_int
 			operand.value = val
 		case f64:
-			operand.type  = types.t_float
+			operand.type  = t_float
 			operand.value = val
 		case bool:
-			operand.type  = types.t_bool
+			operand.type  = t_bool
 			operand.value = val
 		case string:
-			operand.type  = types.t_invalid
+			operand.type  = t_invalid
 			operand.value = val
 		}
 
 		operand.mode = .RValue
 		switch v.imaginary {
 		case .i:
-			operand.type = types.t_complex64
+			operand.type = t_complex64
 		case .j, .k:
-			operand.type = types.t_quaternion128
+			operand.type = t_quaternion128
 		case .real:
 			operand.mode = .Const
 		}
 
 		return
 
-	case ^ast.Expr_Binary:
+	case ^Expr_Binary:
 		lhs := check_expr(checker, v.lhs, type_hint = type_hint)
 		rhs := check_expr(checker, v.rhs, type_hint = lhs.type)
 
-		operand.type = types.op_result_type(lhs.type, rhs.type, v.op == .Multiply, checker.allocator)
+		operand.type = op_result_type(lhs.type, rhs.type, v.op == .Multiply, checker.allocator)
 		if operand.type.kind == .Invalid {
 			error(checker, expr, "mismatched types in binary expression: %v vs %v", lhs.type, rhs.type)
 			operand.mode = .Invalid
 			return
 		}
 
-		if v.op != .Multiply || !(types.is_matrix(lhs.type) || types.is_matrix(rhs.type)) {
+		if v.op != .Multiply || !(type_is_matrix(lhs.type) || type_is_matrix(rhs.type)) {
 			v.lhs.type = operand.type
 			v.rhs.type = operand.type
 		}
 
-		if !types.operator_applicable(operand.type, v.op) {
-			error(checker, v, "operator `%v` is not defined for `%v %v %v`", tokenizer.to_string(v.op), lhs.type, tokenizer.to_string(v.op), rhs.type)
+		if !operator_applicable(operand.type, v.op) {
+			error(checker, v, "operator `%v` is not defined for `%v %v %v`", token_to_string(v.op), lhs.type, token_to_string(v.op), rhs.type)
 			return
 		}
 
@@ -1873,29 +1877,29 @@ check_expr_internal :: proc(
 		}
 
 		if op_is_relation(v.op) {
-			operand.type = types.t_bool
+			operand.type = t_bool
 			operand.mode = .RValue
 		}
 
-	case ^ast.Expr_Ident:
+	case ^Expr_Ident:
 		if v.text == "_" {
 			error(checker, v, "invalid use of blank identifier ('_')")
 			return
 		}
-		e, ok := resolve_ident(checker, v)
+		e, ok := check_ident(checker, v)
 		if !ok {
-			operand.type = types.t_invalid
+			operand.type = t_invalid
 			operand.mode = .Invalid
 			return
 		}
 		entity_to_operand(checker, e, &operand)
 		return
 
-	case ^ast.Expr_Interface:
+	case ^Expr_Interface:
 		if info, ok := interface_infos[v.ident.text]; ok {
 			switch info.usage[checker.shader_stage] {
 			case nil:
-				error(checker, v.ident, "builtin %s can not be used in %s", v.ident.text, ast.shader_stage_names[checker.shader_stage])
+				error(checker, v.ident, "builtin %s can not be used in %s", v.ident.text, shader_stage_names[checker.shader_stage])
 				operand.mode = .LValue
 			case .In:
 				operand.mode = .RValue
@@ -1903,13 +1907,14 @@ check_expr_internal :: proc(
 				operand.mode = .LValue
 			}
 			operand.type = info.type
+			assert(info.type != nil)
 		} else {
 			error(checker, v.ident, "unknown builtin: '%s'", v.ident.text)
 			return
 		}
 
-	case ^ast.Expr_Proc_Lit:
-		type: ^types.Proc
+	case ^Expr_Proc_Lit:
+		type: ^Type_Proc
 		if v.type == nil {
 			type = check_proc_type(checker, v)
 		} else {
@@ -1927,20 +1932,12 @@ check_expr_internal :: proc(
 		scope_push(checker, .Proc).proc_type = type
 		defer scope_pop(checker)
 
-		for arg, i in type.args {
-			if arg.name != "" {
-				expr     := v.args[i].name
-				expr.type = arg.type
-				scope_insert_entity(checker, entity_new(checker, .Var, expr, arg.type, flags = { .Resolved, }))
-			}
+		for arg in type.args {
+			scope_insert_entity(checker, arg)
 		}
 
-		for ret, i in type.returns {
-			if ret.name != "" {
-				expr     := v.returns[i].name
-				expr.type = ret.type
-				scope_insert_entity(checker, entity_new(checker, .Var, expr, ret.type, flags = { .Resolved, }))
-			}
+		for ret in type.returns {
+			scope_insert_entity(checker, ret)
 		}
 
 		v.scope = scope_push(checker, .Block)
@@ -1948,14 +1945,14 @@ check_expr_internal :: proc(
 
 		check_stmt_list(checker, v.body)
 
-	case ^ast.Expr_Proc_Sig:
+	case ^Expr_Proc_Sig:
 		operand.type = check_proc_type(checker, v)
 		operand.mode = .Type
 
-	case ^ast.Expr_Proc_Group:
-		members := make([]^types.Proc, len(v.members), checker.allocator)
+	case ^Expr_Proc_Group:
+		members := make([]^Type_Proc, len(v.members), checker.allocator)
 		for member, i in v.members {
-			if _, ok := member.derived.(^ast.Expr_Proc_Lit); ok {
+			if _, ok := member.derived.(^Expr_Proc_Lit); ok {
 				error(checker, member, "members of procedure groups need to be named, got procedure literal")
 				continue
 			}
@@ -1964,43 +1961,34 @@ check_expr_internal :: proc(
 			if m.mode != .Proc {
 				error(checker, m, "expected a procedure as proc group member")
 			} else {
-				members[i] = m.type.variant.(^types.Proc)
+				members[i] = m.type.variant.(^Type_Proc)
 			}
 		}
 
 		// TODO: check for duplicates in members
 
-		type        := types.new(.Proc_Group, types.Proc_Group, checker.allocator)
+		type        := type_new(.Proc_Group, Type_Proc_Group, checker.allocator)
 		type.members = members
 
 		operand.mode = .Proc_Group
 		operand.type = type
 		return
-	case ^ast.Expr_Paren:
+	case ^Expr_Paren:
 		return check_expr_internal(checker, v.expr, {}, type_hint)
 
-	case ^ast.Expr_Ellipsis:
+	case ^Expr_Ellipsis:
 		operand := check_expr_internal(checker, v.expr, {})
-		if types.is_array(operand.type) {
+		if type_is_array(operand.type) {
 			operand.mode = .Ellipsis
 		} else {
 			error(checker, operand, "'..' can only be applied to arrays, got %v", operand.type)
 			operand.mode = .Invalid
-			operand.type = types.t_invalid
+			operand.type = t_invalid
 		}
 		return operand
 
-	case ^ast.Expr_Selector:
+	case ^Expr_Selector:
 		defer v.selector.type = operand.type
-
-		assign_entity :: proc(checker: ^Checker, ident: ^ast.Expr_Ident, entity: ^Entity) {
-			ident.entity = entity
-			if .Enable_References in checker.flags && entity != nil {
-				append(&entity.references, ident)
-			}
-		}
-
-		selector := v.selector.text
 
 		if v.lhs == nil {
 			if type_hint == nil {
@@ -2008,24 +1996,21 @@ check_expr_internal :: proc(
 				return
 			}
 
-			base := types.base_type(type_hint)
+			base := base_type(type_hint)
 
 			if base.kind != .Enum {
 				error(checker, v, "implicit selectors can only be used for enum types, got '%v'", type_hint)
 				return
 			}
 
-			for val in base.variant.(^types.Enum).values {
-				if val.name == selector {
-					operand.type  = type_hint
-					operand.value = i64(val.value)
-					operand.mode  = .Const
-					assign_entity(checker, v.selector, (^Entity)(val.entity))
-					return
-				}
+			entity, ok := check_ident(checker, v.selector, base.variant.(^Type_Enum).scope)
+			if !ok {
+				return
 			}
 
-			error(checker, v, "%s is not a variant of the enum type %v", selector, type_hint)
+			operand.type  = type_hint
+			operand.value = entity.value
+			operand.mode  = .Const
 			return
 		}
 
@@ -2041,17 +2026,19 @@ check_expr_internal :: proc(
 		}
 
 		if lhs.mode == .Library {
-			if e, ok := lhs.library.entities[selector]; ok {
+			if e, ok := lhs.library.entities[v.selector.text]; ok {
 				entity_to_operand(checker, e, &operand)
-				assign_entity(checker, v.selector, e)
-				return
+				v.selector.entity = e
+				if .Enable_References in checker.flags && e!= nil {
+					append(&e.references, v.selector)
+				}
 			} else {
-				error(checker, v.selector, "'%s' is not declared by library", selector)
-				return
+				error(checker, v.selector, "'%s' is not declared by library", v.selector.text)
 			}
+			return
 		}
 
-		base := types.base_type(lhs.type)
+		base := base_type(lhs.type)
 
 		if lhs.mode == .Type {
 			if base.kind != .Enum {
@@ -2059,25 +2046,23 @@ check_expr_internal :: proc(
 				return
 			}
 
-			for val in base.variant.(^types.Enum).values {
-				if val.name == selector {
-					operand.type  = lhs.type
-					operand.value = i64(val.value)
-					operand.mode  = .Const
-					assign_entity(checker, v.selector, (^Entity)(val.entity))
-					return
-				}
+
+			entity, ok := check_ident(checker, v.selector, base.variant.(^Type_Enum).scope)
+			if !ok {
+				return
 			}
 
-			error(checker, v, "'%s' is not a variant of the enum type '%v'", selector, lhs.type)
+			operand.type  = lhs.type
+			operand.value = entity.value
+			operand.mode  = .Const
 			return
 		}
 
 		#partial switch base.kind {
 		case .Array:
-			array := base.variant.(^types.Array)
-
-			indices := make([dynamic]u32, 0, len(selector), checker.allocator)
+			array    := base.variant.(^Type_Array)
+			selector := v.selector.text
+			indices  := make([dynamic]u32, 0, len(selector), checker.allocator)
 
 			duplicates := false
 			seen: [4]bool
@@ -2119,31 +2104,34 @@ check_expr_internal :: proc(
 			case array.count:
 				operand.type = array
 			case:
-				operand.type = types.array_new(array.elem, len(selector), checker.allocator)
+				operand.type = array_new(array.elem, len(selector), checker.allocator)
 			}
 
 			return
 		case .Struct:
-			for field, i in base.variant.(^types.Struct).fields {
-				if field.name == selector {
-					operand.type  = field.type
-					operand.mode  = lhs.mode
+			type         := base.variant.(^Type_Struct)
+			entity       := check_ident(checker, v.selector, type.scope) or_break
+			v.field_index = -1
+			for field, i in type.fields {
+				if field == entity {
 					v.field_index = i
-					assign_entity(checker, v.selector, (^Entity)(field.entity))
-					return
+					break
 				}
 			}
+			assert(v.field_index != -1)
+			operand.type  = entity.type
+			operand.mode  = lhs.mode
 		case:
-			error(checker, v, "expression of type %v has no field called '%s'", lhs.type, selector)
+			error(checker, v, "expression of type %v has no field called '%s'", lhs.type, v.selector.text)
 		}
 
-	case ^ast.Expr_Call:
-		if directive, ok := v.lhs.derived_expr.(^ast.Expr_Directive); ok {
+	case ^Expr_Call:
+		if directive, ok := v.lhs.derived_expr.(^Expr_Directive); ok {
 			v.is_directive = true
-			operand.type   = types.t_invalid
+			operand.type   = t_invalid
 			switch directive.directive {
 			case .Invalid:
-				operand.type = types.t_invalid
+				operand.type = t_invalid
 				operand.mode = .Invalid
 			case .Assert:
 				cond:    bool
@@ -2202,7 +2190,7 @@ check_expr_internal :: proc(
 				}
 
 				name: string
-				if ident, ok := v.args[0].value.derived_expr.(^ast.Expr_Ident); ok {
+				if ident, ok := v.args[0].value.derived_expr.(^Expr_Ident); ok {
 					name = ident.text
 				} else {
 					error(checker, v.args[0].value, "expected an identifier as the name of the config variable")
@@ -2213,7 +2201,7 @@ check_expr_internal :: proc(
 				if !ok {
 					error(checker, v.args[0].value, "unknown shared type: %s", name)
 					operand.mode = .Type
-					operand.type = types.t_invalid
+					operand.type = t_invalid
 					return
 				}
 
@@ -2240,7 +2228,7 @@ check_expr_internal :: proc(
 				operand.mode = .Const
 
 				name: string
-				if ident, ok := v.args[0].value.derived_expr.(^ast.Expr_Ident); ok {
+				if ident, ok := v.args[0].value.derived_expr.(^Expr_Ident); ok {
 					name = ident.text
 				} else {
 					error(checker, v.args[0].value, "expected an identifier as the name of the config variable")
@@ -2278,19 +2266,19 @@ check_expr_internal :: proc(
 				return
 			}
 			value := check_expr(checker, v.args[0].value)
-			if !types.castable(value.type, fn.type) {
+			if !castable(value.type, fn.type) {
 				error(checker, v, "can not cast expression from type %v to %v", value.type, fn.type)
 			}
 			operand.type = fn.type
 			operand.mode = .RValue
 		case .Proc_Group:
-			group      := fn.type.variant.(^types.Proc_Group)
-			candidates := make([dynamic]^types.Proc, len(group.members), context.temp_allocator)
+			group      := fn.type.variant.(^Type_Proc_Group)
+			candidates := make([dynamic]^Type_Proc, len(group.members), context.temp_allocator)
 			copy(candidates[:], group.members[:])
 
 			arg_index := 0
 			for arg in v.args {
-				type_hint: ^types.Type
+				type_hint: ^Type
 				if len(candidates) == 1 {
 					candidate := candidates[0]
 					if arg_index < len(candidate.args) {
@@ -2298,7 +2286,7 @@ check_expr_internal :: proc(
 					}
 				}
 
-				args := []^types.Type{ check_expr(checker, arg.value, type_hint = type_hint).type, }
+				args := []^Type{ check_expr(checker, arg.value, type_hint = type_hint).type, }
 				deconstruct_tuple(checker, &args)
 
 				for arg in args {
@@ -2316,7 +2304,7 @@ check_expr_internal :: proc(
 							continue
 						}
 
-						if !types.implicitly_castable(arg, candidate.args[arg_index].type) {
+						if !implicitly_castable(arg, candidate.args[arg_index].type) {
 							remove = true
 							continue
 						}
@@ -2349,10 +2337,10 @@ check_expr_internal :: proc(
 					fn := candidates[0]
 					arg_index := 0
 					for arg in v.args {
-						type_hint: ^types.Type
+						type_hint: ^Type
 						type_hint = fn.args[arg_index].type
 
-						args := []^types.Type{ check_expr(checker, arg.value, type_hint = type_hint).type, }
+						args := []^Type{ check_expr(checker, arg.value, type_hint = type_hint).type, }
 						deconstruct_tuple(checker, &args)
 
 						if len(args) == 1 {
@@ -2370,7 +2358,7 @@ check_expr_internal :: proc(
 				error(checker, fn, "ambigous overloads in procedure group: %v", group)
 			}
 
-			operand.type = types.t_invalid
+			operand.type = t_invalid
 			operand.mode = .Invalid
 			operand.is_call = true
 			return
@@ -2381,16 +2369,16 @@ check_expr_internal :: proc(
 				return
 			}
 
-			proc_type := fn.type.variant.(^types.Proc)
+			proc_type := fn.type.variant.(^Type_Proc)
 			arg_index := 0
 			for e in v.args {
-				type_hint: ^types.Type
+				type_hint: ^Type
 				if arg_index < len(proc_type.args) {
 					type_hint = proc_type.args[arg_index].type
 				}
 				value := check_expr(checker, e.value, type_hint = type_hint)
 
-				arg_types: []^types.Type = { value.type, }
+				arg_types: []^Type = { value.type, }
 				deconstruct_tuple(checker, &arg_types)
 
 				for arg_type in arg_types {
@@ -2398,7 +2386,7 @@ check_expr_internal :: proc(
 					if arg_index >= len(proc_type.args) {
 						continue
 					}
-					if !types.implicitly_castable(arg_type, proc_type.args[arg_index].type) {
+					if !implicitly_castable(arg_type, proc_type.args[arg_index].type) {
 						error(checker, value, "mismatched type at argument %d: expected %v, got %v", arg_index, proc_type.args[arg_index].type, arg_type)
 					}
 					if .By_Ptr in proc_type.args[arg_index].flags && value.mode != .LValue {
@@ -2422,10 +2410,10 @@ check_expr_internal :: proc(
 			operand.is_call   = true
 			operand.diverging = proc_type.diverging
 		}
-	case ^ast.Expr_Compound:
+	case ^Expr_Compound:
 		defer v.constant = operand.constant_compound
 
-		type: ^types.Type
+		type: ^Type
 		if v.type_expr != nil {
 			type = check_type(checker, v.type_expr)
 		} else {
@@ -2460,11 +2448,11 @@ check_expr_internal :: proc(
 		}
 		v.named = named
 
-		base := types.base_type(type)
+		base := base_type(type)
 
 		#partial switch base.kind {
 		case .Struct:
-			type := base.variant.(^types.Struct)
+			type := base.variant.(^Type_Struct)
 
 			operand.constant_compound = true
 
@@ -2481,35 +2469,12 @@ check_expr_internal :: proc(
 					}
 					seen[name] = {}
 
-					find_struct_field :: proc(type: ^types.Struct, name: string) -> (^types.Field, int) {
-						for &field, i in type.fields {
-							if field.name == name {
-								return &field, i
-							}
-						}
-						return nil, -1
-					}
+					entity := check_ident(checker, field.name, type.scope) or_continue
 
-					struct_field, field_index := find_struct_field(type, name)
-					if struct_field == nil {
-						error(checker, field.name, "struct type %v has no field %s", type, name)
-						continue
-					}
-
-					entity := (^Entity)(struct_field.entity)
-
-					field.value.type   = struct_field.type
-					field.name.entity  = entity
-					field.member_index = field_index
-
-					if .Enable_References in checker.flags && entity != nil {
-						append(&entity.references, field.name)
-					}
-
-					field_operand := check_expr(checker, field.value, type_hint = struct_field.type)
+					field_operand := check_expr(checker, field.value, type_hint = entity.type)
 					operand.constant_compound &&= field_operand.mode == .Const
-					if !types.implicitly_castable(field_operand.type, struct_field.type) {
-						error(checker, field.value, "expected value of type %v but got %v", struct_field.type, field_operand.type)
+					if !implicitly_castable(field_operand.type, entity.type) {
+						error(checker, field.value, "expected value of type %v but got %v", entity.type, field_operand.type)
 						return
 					}
 				}
@@ -2524,7 +2489,7 @@ check_expr_internal :: proc(
 
 					field_operand := check_expr(checker, field.value, type_hint = struct_field.type)
 					operand.constant_compound &&= field_operand.mode == .Const
-					if !types.implicitly_castable(field_operand.type, struct_field.type) {
+					if !implicitly_castable(field_operand.type, struct_field.type) {
 						error(checker, field.value, "expected value of type %v but got %v", struct_field.type, field_operand.type)
 						return
 					}
@@ -2534,7 +2499,7 @@ check_expr_internal :: proc(
 		case .Array:
 			operand.constant_compound = true
 
-			type := base.variant.(^types.Array)
+			type := base.variant.(^Type_Array)
 			if named {
 				if type.count > 4 {
 					error(checker, v, "swizzled initializers are only supported for arrays with up to 4 elements.")
@@ -2573,18 +2538,18 @@ check_expr_internal :: proc(
 						coords[i]   = index
 					}
 
-					expected_type: ^types.Type
+					expected_type: ^Type
 					if n == 1 {
 						expected_type = type.elem
 					} else {
-						expected_type = types.array_new(type.elem, n, checker.allocator)
+						expected_type = array_new(type.elem, n, checker.allocator)
 					}
 
 					field.name.type = expected_type
 
 					value := check_expr(checker, field.value, type_hint = expected_type)
 					operand.constant_compound &&= value.mode == .Const
-					if !types.implicitly_castable(value.type, expected_type) {
+					if !implicitly_castable(value.type, expected_type) {
 						error(checker, field.value, "expected value of type %v but got %v", expected_type, value.type)
 						return
 					}
@@ -2599,7 +2564,7 @@ check_expr_internal :: proc(
 				f := check_expr(checker, field.value, type_hint = type.elem, allow_ellipsis = true)
 				t := f.type
 				if f.mode == .Ellipsis {
-					v        := f.type.variant.(^types.Array)
+					v        := f.type.variant.(^Type_Array)
 					t         = v.elem
 					n_values += v.count
 
@@ -2607,7 +2572,7 @@ check_expr_internal :: proc(
 				} else {
 					operand.constant_compound &&= f.mode == .Const || f.constant_compound
 
-					if types.is_tuple(t) {
+					if type_is_tuple(t) {
 						error(checker, field.value, "multi valued expression found where single value was expected")
 						n_values += 1
 					} else {
@@ -2616,7 +2581,7 @@ check_expr_internal :: proc(
 					}
 				}
 
-				if !types.implicitly_castable(t, type.elem) {
+				if !implicitly_castable(t, type.elem) {
 					error(checker, field.value, "expected value of type %v but got %v", type.elem, f.type)
 				}
 			}
@@ -2626,7 +2591,7 @@ check_expr_internal :: proc(
 				return
 			}
 		case .Matrix:
-			type := type.variant.(^types.Matrix)
+			type := type.variant.(^Type_Matrix)
 			if named {
 				error(checker, v, "named values are not supported for matrix literals")
 				return
@@ -2637,14 +2602,14 @@ check_expr_internal :: proc(
 			}
 			for field in v.fields {
 				f := check_expr(checker, field.value, type_hint = type.col_type.elem)
-				if !types.implicitly_castable(f.type, type.col_type.elem) {
+				if !implicitly_castable(f.type, type.col_type.elem) {
 					error(checker, field.value, "expected value of type %v but got %v", type.col_type.elem, f.type)
 					return
 				}
 				field.value.type = type.col_type.elem
 			}
 		case .Bit_Set:
-			type := type.variant.(^types.Bit_Set)
+			type := type.variant.(^Type_Bit_Set)
 			if named {
 				error(checker, v, "named values are not supported for bit_set literals")
 				return
@@ -2653,7 +2618,7 @@ check_expr_internal :: proc(
 			const_value: i64
 			for field in v.fields {
 				value := check_expr(checker, field.value, type_hint = type.enum_type)
-				if !types.implicitly_castable(value.type, type.enum_type) {
+				if !implicitly_castable(value.type, type.enum_type) {
 					error(checker, field.value, "expected value of type %v but got %v", type.enum_type, value.type)
 					return
 				}
@@ -2676,33 +2641,33 @@ check_expr_internal :: proc(
 
 		return
 
-	case ^ast.Expr_Index:
+	case ^Expr_Index:
 		lhs := check_expr(checker, v.lhs)
 		rhs := check_expr(checker, v.rhs)
-		v.rhs.type = types.default_type(rhs.type)
+		v.rhs.type = default_type(rhs.type)
 
 		operand.mode = lhs.mode
-		operand.type = types.t_invalid
+		operand.type = t_invalid
 		#partial switch lhs.type.kind {
 		case .Matrix:
-			if !types.is_integer(rhs.type) {
+			if !type_is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = types.matrix_elem(lhs.type)
+			operand.type = matrix_elem(lhs.type)
 		case .Array:
-			if !types.is_integer(rhs.type) {
+			if !type_is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = types.array_elem(lhs.type)
+			operand.type = array_elem(lhs.type)
 		case .Buffer:
-			if !types.is_integer(rhs.type) {
+			if !type_is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = types.buffer_elem(lhs.type)
+			operand.type = buffer_elem(lhs.type)
 		case .Sampler:
-			sampler := lhs.type.variant.(^types.Image)
+			sampler := lhs.type.variant.(^Type_Image)
 			if sampler.dimensions == 1 {
-				if !types.is_numeric(rhs.type) {
+				if !type_is_numeric(rhs.type) {
 					error(
 						checker,
 						rhs,
@@ -2712,7 +2677,7 @@ check_expr_internal :: proc(
 					)
 				}
 			} else {
-				if !types.is_array(rhs.type) || types.array_len(rhs.type) != sampler.dimensions {
+				if !type_is_array(rhs.type) || array_len(rhs.type) != sampler.dimensions {
 					error(
 						checker,
 						rhs,
@@ -2727,9 +2692,9 @@ check_expr_internal :: proc(
 			operand.type = sampler.texel_type
 			operand.mode = .RValue
 		case .Image:
-			image := lhs.type.variant.(^types.Image)
+			image := lhs.type.variant.(^Type_Image)
 			if image.dimensions == 1 {
-				if !types.is_integer(rhs.type) {
+				if !type_is_integer(rhs.type) {
 					error(
 						checker,
 						rhs,
@@ -2739,9 +2704,9 @@ check_expr_internal :: proc(
 					)
 				}
 			} else {
-				if types.is_integer(rhs.type) {
-					v.rhs.type = types.array_new(types.default_type(rhs.type), image.dimensions, checker.allocator)
-				} else if !types.is_array(rhs.type) || !types.is_numeric(types.array_elem(rhs.type)) || types.array_len(rhs.type) != image.dimensions {
+				if type_is_integer(rhs.type) {
+					v.rhs.type = array_new(default_type(rhs.type), image.dimensions, checker.allocator)
+				} else if !type_is_array(rhs.type) || !type_is_numeric(array_elem(rhs.type)) || array_len(rhs.type) != image.dimensions {
 					error(
 						checker,
 						rhs,
@@ -2761,15 +2726,16 @@ check_expr_internal :: proc(
 			return
 		}
 
-	case ^ast.Expr_Cast:
+	case ^Expr_Cast:
 		value       := check_expr(checker, v.value)
 		operand.type = check_type(checker, v.type_expr)
-		if !types.castable(value.type, operand.type) {
+		if !castable(value.type, operand.type) {
 			error(checker, v, "can not cast expression from type %v to %v", value.type, operand.type)
 		}
 		operand.mode = .RValue
-	case ^ast.Expr_Unary:
-		is_valid_unary_operator :: proc(op: tokenizer.Token_Kind) -> bool {
+	case ^Expr_Unary:
+		@(require_results)
+		is_valid_unary_operator :: proc(op: Token_Kind) -> bool {
 			#partial switch op {
 			case .Xor, .Not, .Add, .Subtract:
 				return true
@@ -2777,8 +2743,8 @@ check_expr_internal :: proc(
 			return false
 		}
 		expr := check_expr(checker, v.expr)
-		if !types.operator_applicable(expr.type, v.op) && is_valid_unary_operator(v.op) {
-			error(checker, v, "operator `%v` is not defined for `%v%v`", tokenizer.to_string(v.op), tokenizer.to_string(v.op), expr.type)
+		if !operator_applicable(expr.type, v.op) && is_valid_unary_operator(v.op) {
+			error(checker, v, "operator `%v` is not defined for `%v%v`", token_to_string(v.op), token_to_string(v.op), expr.type)
 		}
 		operand.mode  = .RValue
 		operand.type  = expr.type
@@ -2804,7 +2770,7 @@ check_expr_internal :: proc(
 				unreachable()
 			}
 		}
-	case ^ast.Expr_Ternary:
+	case ^Expr_Ternary:
 		cond       := check_expr(checker, v.cond)
 		then_value := check_expr(checker, v.then_expr, type_hint = type_hint)
 		else_value := check_expr(checker, v.else_expr, type_hint = type_hint)
@@ -2814,7 +2780,7 @@ check_expr_internal :: proc(
 			return
 		}
 
-		operand.type = types.default_type(types.op_result_type(then_value.type, else_value.type))
+		operand.type = default_type(op_result_type(then_value.type, else_value.type))
 		operand.mode = .RValue
 		if operand.type.kind == .Invalid {
 			error(checker, cond, "mismatched types in ternary expr: %v vs %v", then_value.type, else_value.type)
@@ -2823,7 +2789,7 @@ check_expr_internal :: proc(
 		v.then_expr.type = operand.type
 		v.else_expr.type = operand.type
 
-	case ^ast.Type_Matrix:
+	case ^Expr_Type_Matrix:
 		rows := check_expr(checker, v.rows)
 		if rows.mode != .Const || (rows.type.kind != .Int && rows.type.kind != .Uint) {
 			error(checker, rows, "expected a constant integer")
@@ -2845,11 +2811,11 @@ check_expr_internal :: proc(
 			return
 		}
 
-		col_type    := types.array_new(types.default_type(elem), int(rows.value.(i64) or_else 0), checker.allocator)
-		operand.type = types.matrix_new(col_type, cols, checker.allocator)
+		col_type    := array_new(default_type(elem), int(rows.value.(i64) or_else 0), checker.allocator)
+		operand.type = matrix_new(col_type, cols, checker.allocator)
 		operand.mode = .Type
-	case ^ast.Type_Array:
-		elem := types.default_type(check_type(checker, v.elem))
+	case ^Expr_Type_Array:
+		elem := default_type(check_type(checker, v.elem))
 		if elem.kind == .Invalid {
 			return
 		}
@@ -2858,7 +2824,7 @@ check_expr_internal :: proc(
 				error(checker, v.elem, "buffer element type must have a non-zero size, got %v", elem)
 				return
 			}
-			operand.type = types.buffer_new(elem, v.physical, checker.allocator)
+			operand.type = buffer_new(elem, v.physical, checker.allocator)
 			operand.mode = .Type
 		} else {
 			count := check_expr(checker, v.count)
@@ -2867,36 +2833,28 @@ check_expr_internal :: proc(
 					error(checker, count, "array size has to be a positive integer, got %d", c)
 					return
 				}
-				operand.type = types.array_new(elem, int(c), checker.allocator)
+				operand.type = array_new(elem, int(c), checker.allocator)
 				operand.mode = .Type
 			} else {
 				error(checker, count, "expected a constant integer as the count of an array")
 			}
 		}
 
-	case ^ast.Type_Struct:
+	case ^Expr_Type_Struct:
 		operand.mode          = .Type
 		operand.type_distinct = true
 
-		type        := types.new(.Struct, types.Struct, checker.allocator)
-		fields      := make([dynamic]types.Field, 0, len(v.fields), checker.allocator)
-		fields_seen := make(map[string]struct{}, context.temp_allocator)
+		type        := type_new(.Struct, Type_Struct, checker.allocator)
+		fields      := make([dynamic]^Entity, 0, len(v.fields), checker.allocator)
+		scope       := scope_new(nil, .Struct, checker.allocator)
 		offset      := 0
 		align       := 1
 		for i := 0; i < len(v.fields); {
 			start := i
-			type: ^types.Type
+			type: ^Type
 			for ; i < len(v.fields); i += 1 {
 				field := v.fields[i]
-				name  := field.name.text
 
-				if name in fields_seen {
-					error(checker, field.name, "duplicate field name: '%s'", name)
-					operand.mode = .Type
-					operand.type = types.t_invalid
-					return
-				}
-				fields_seen[name] = {}
 				if field.type == nil {
 					continue
 				}
@@ -2908,7 +2866,7 @@ check_expr_internal :: proc(
 			if type == nil && i == len(v.fields) {
 				error(checker, v.fields[len(v.fields) - 1].name, "struct field is missing a type")
 				operand.mode = .Type
-				operand.type = types.t_invalid
+				operand.type = t_invalid
 				return
 			}
 
@@ -2918,48 +2876,38 @@ check_expr_internal :: proc(
 
 			align = max(align, type.align)
 			for i in start ..< i {
-				name   := v.fields[i].name.text
-				entity := entity_new(checker, .Struct_Field, v.fields[i].name, type)
-				append(&fields, types.Field {
-					name   = name,
-					type   = type,
-					offset = offset,
-					entity = entity,
-				})
+				entity       := entity_new(checker, .Struct_Field, v.fields[i].name, type, flags = { .Resolved, })
+				entity.offset = i64(offset)
+				append(&fields, entity)
+				scope_insert_entity(checker, entity, scope)
 
 				offset += type.size
 				offset  = mem.align_forward_int(offset, align)
 			}
 		}
 
-		offset = mem.align_forward_int(offset, align)
+		offset       = mem.align_forward_int(offset, align)
 
-		type.fields = fields[:]
-		type.size   = offset
-		type.align  = align
+		type.fields  = fields[:]
+		type.size    = offset
+		type.align   = align
+		type.scope   = scope
 
 		operand.type = type
 		operand.mode = .Type
-	case ^ast.Type_Enum:
+	case ^Expr_Type_Enum:
 		operand.mode          = .Type
 		operand.type_distinct = true
 
-		type       := types.new(.Enum, types.Enum, checker.allocator)
-		values     := make([dynamic]types.Enum_Value, 0, len(v.values), checker.allocator)
-		names_seen := make(map[string]struct{}, context.temp_allocator)
+		type   := type_new(.Enum, Type_Enum, checker.allocator)
+		values := make([dynamic]^Entity, 0, len(v.values), checker.allocator)
+		scope  := scope_new(nil, .Enum, checker.allocator)
 
 		max_value: i64
 		min_value: i64
 		current_value: i64
 
 		for value in v.values {
-			name := value.name.text
-
-			if name in names_seen {
-				error(checker, value.name, "duplicate enum value name: '%s'", name)
-			}
-			names_seen[name] = {}
-
 			val: i64
 			if value.value == nil {
 				val            = current_value
@@ -2978,28 +2926,27 @@ check_expr_internal :: proc(
 				}
 			}
 
-			append(&values, types.Enum_Value {
-				name   = name,
-				value  = val,
-				entity = entity_new(checker, .Enum_Value, value.name, type, value = i64(current_value)),
-			})
+			entity := entity_new(checker, .Enum_Value, value.name, type, value = i64(current_value), flags = { .Resolved, })
+			append(&values, entity)
+			scope_insert_entity(checker, entity, scope)
 		}
 
-		backing: ^types.Type
+		backing: ^Type
 		if v.backing != nil {
 			backing = check_type(checker, v.backing)
 		} else {
-			backing = types.t_i32
+			backing = t_i32
 		}
 
 		type.values  = values[:]
 		type.size    = backing.size
 		type.align   = backing.align
 		type.backing = backing
+		type.scope   = scope
 
 		operand.type = type
 		operand.mode = .Type
-	case ^ast.Type_Image:
+	case ^Expr_Type_Image:
 		dimensions := check_expr(checker, v.dimensions)
 		dim, ok := dimensions.value.(i64)
 		if !ok {
@@ -3025,38 +2972,38 @@ check_expr_internal :: proc(
 			}
 		}
 
-		texel_type := types.default_type(check_type(checker, v.texel_type))
-		if !(types.is_numeric(texel_type) || types.is_array(texel_type)) {
+		texel_type := default_type(check_type(checker, v.texel_type))
+		if !(type_is_numeric(texel_type) || type_is_array(texel_type)) {
 			error(checker, v.texel_type, "texel type of sampler has to be either a numeric type or a vector, got: %v", texel_type)
 			return
 		}
 
 		if v.is_sampler {
-			operand.type = types.sampler_new(texel_type, int(dim), checker.allocator)
+			operand.type = sampler_new(texel_type, int(dim), checker.allocator)
 		} else {
-			operand.type = types.image_new(texel_type, int(dim), v.format.text, checker.allocator)
+			operand.type = image_new(texel_type, int(dim), v.format.text, checker.allocator)
 		}
 		operand.mode = .Type
-	case ^ast.Type_Bit_Set:
+	case ^Expr_Type_Bit_Set:
 		enum_type   := check_type(checker, v.enum_type)
 		backing     := check_type(checker, v.backing)
-		operand.type = types.bit_set_new(enum_type, backing, checker.allocator)
+		operand.type = bit_set_new(enum_type, backing, checker.allocator)
 		operand.mode = .Type
 
-	case ^ast.Type_Opaque:
-		backing: ^types.Type
+	case ^Expr_Type_Opaque:
+		backing: ^Type
 		if v.backing != nil {
 			backing = check_type(checker, v.backing)
 		}
-		operand.type = types.opaque_new(v.name.text, backing, checker.allocator)
+		operand.type = opaque_new(v.name.text, backing, checker.allocator)
 		operand.mode = .Type
 
-	case ^ast.Type_Distinct:
+	case ^Expr_Type_Distinct:
 		operand.type          = check_type(checker, v.backing)
 		operand.mode          = .Type
 		operand.type_distinct = true
 
-	case ^ast.Expr_Directive:
+	case ^Expr_Directive:
 		error(checker, v, "invalid use of directive")
 	}
 
@@ -3077,12 +3024,12 @@ image_format_names: [spv.ImageFormat]string
 @(require_results)
 check_expr_or_type :: proc(
 	checker:           ^Checker,
-	expr:              ^ast.Expr,
-	attributes:        []ast.Field = {},
-	type_hint:         ^types.Type = nil,
-	check_proc_bodies: bool        = true,
-	allow_proc_groups: bool        = false,
-	allow_ellipsis:    bool        = false,
+	expr:              ^Ast_Expr,
+	attributes:        []Ast_Field = {},
+	type_hint:         ^Type       = nil,
+	check_proc_bodies: bool            = true,
+	allow_proc_groups: bool            = false,
+	allow_ellipsis:    bool            = false,
 ) -> (operand: Operand) {
 	operand = check_expr_internal(checker, expr, attributes, type_hint, check_proc_bodies)
 	switch operand.mode {
@@ -3112,16 +3059,16 @@ check_expr_or_type :: proc(
 
 
 	operand.mode = .Invalid
-	operand.type = types.t_invalid
+	operand.type = t_invalid
 	return
 }
 
 @(require_results)
 check_expr :: proc(
 	checker:        ^Checker,
-	expr:           ^ast.Expr,
-	attributes:     []ast.Field = {},
-	type_hint:      ^types.Type = nil,
+	expr:           ^Ast_Expr,
+	attributes:     []Ast_Field = {},
+	type_hint:      ^Type       = nil,
 	allow_no_value: bool        = false,
 	allow_ellipsis: bool        = false,
 ) -> (operand: Operand) {
@@ -3152,12 +3099,12 @@ check_expr :: proc(
 	}
 
 	operand.mode = .Invalid
-	operand.type = types.t_invalid
+	operand.type = t_invalid
 	return
 }
 
 @(require_results)
-check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field = {}) -> ^types.Type {
+check_type :: proc(checker: ^Checker, expr: ^Ast_Expr, attributes: []Ast_Field = {}) -> ^Type {
 	operand := check_expr_internal(checker, expr, attributes)
 	switch operand.mode {
 	case .RValue, .LValue, .Const, .Proc, .Proc_Group, .Ellipsis:
@@ -3176,58 +3123,7 @@ check_type :: proc(checker: ^Checker, expr: ^ast.Expr, attributes: []ast.Field =
 	case .Invalid:
 	}
 
-	return types.t_invalid
-}
-
-error_operand :: proc(checker: ^Checker, operand: Operand, message: string, args: ..any) {
-	append(&checker.errors, tokenizer.Error {
-		location = operand.expr.start,
-		end     = operand.expr.end,
-		message = fmt.aprintf(message, ..args, allocator = checker.error_allocator),
-	})
-}
-
-error_location :: proc(checker: ^Checker, location: tokenizer.Location, message: string, args: ..any) {
-	append(&checker.errors, tokenizer.Error {
-		location = location,
-		end      = location,
-		message  = fmt.aprintf(message, ..args, allocator = checker.error_allocator),
-	})
-}
-
-error_start_end :: proc(checker: ^Checker, start, end: tokenizer.Location, message: string, args: ..any) {
-	append(&checker.errors, tokenizer.Error {
-		location = start,
-		end      = end,
-		message  = fmt.aprintf(message, ..args, allocator = checker.error_allocator),
-	})
-}
-
-error_token :: proc(checker: ^Checker, token: tokenizer.Token, message: string, args: ..any) {
-	end        := token.location
-	end.offset += i32(len(token.text))
-	end.column += i32(len(token.text))
-	append(&checker.errors, tokenizer.Error {
-		location = token.location,
-		end      = end,
-		message  = fmt.aprintf(message, ..args, allocator = checker.error_allocator),
-	})
-}
-
-error_ast_node :: proc(checker: ^Checker, ast_node: ^ast.Node, message: string, args: ..any) {
-	append(&checker.errors, tokenizer.Error {
-		location = ast_node.start,
-		end      = ast_node.end,
-		message  = fmt.aprintf(message, ..args, allocator = checker.error_allocator),
-	})
-}
-
-error :: proc {
-	error_operand,
-	error_location,
-	error_token,
-	error_ast_node,
-	error_start_end,
+	return t_invalid
 }
 
 entity_to_operand :: proc(checker: ^Checker, e: ^Entity, operand: ^Operand) {
@@ -3258,19 +3154,25 @@ entity_to_operand :: proc(checker: ^Checker, e: ^Entity, operand: ^Operand) {
 	case .Label:
 		operand.mode  = .Label
 		operand.scope = e.scope
+	case .Proc_Param:
+		operand.mode = .RValue
+		operand.type = e.type
+	case .Proc_Return:
+		operand.mode = .LValue
+		operand.type = e.type
 	case .Struct_Field, .Enum_Value:
 		unreachable()
 	}
 }
 
-deconstruct_tuple :: proc(checker: ^Checker, ts: ^[]^types.Type) -> bool {
+deconstruct_tuple :: proc(checker: ^Checker, ts: ^[]^Type) -> bool {
 	type := ts[0]
 	if type.kind != .Tuple {
 		return false
 	}
 
-	tuple := type.variant.(^types.Struct)
-	ts^    = make([]^types.Type, len(tuple.fields), context.temp_allocator)
+	tuple := type.variant.(^Type_Struct)
+	ts^    = make([]^Type, len(tuple.fields), context.temp_allocator)
 	for field, i in tuple.fields {
 		ts[i] = field.type
 	}
@@ -3279,7 +3181,7 @@ deconstruct_tuple :: proc(checker: ^Checker, ts: ^[]^types.Type) -> bool {
 }
 
 @(require_results)
-check_attribute_matches :: proc(checker: ^Checker, a: ast.Field, name: string) -> bool {
+check_attribute_matches :: proc(checker: ^Checker, a: Ast_Field, name: string) -> bool {
 	name := name
 	extension: string
 	if dot := strings.index(name, "."); dot >= 0 {
@@ -3290,7 +3192,7 @@ check_attribute_matches :: proc(checker: ^Checker, a: ast.Field, name: string) -
 	return name == a.name.text
 
 	// if a.location != nil {
-	// 	library := check_ident(checker, a.location) or_else panic("")
+	// 	library := expect_ident(checker, a.location) or_else panic("")
 	// 	e, ok := scope_lookup(checker, { text = library, location = a.location.start, })
 	// 	if ok && e.kind != .Library {
 	// 		error(checker, a.location, "expected a library")

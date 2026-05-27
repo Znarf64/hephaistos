@@ -9,103 +9,14 @@ import "core:reflect"
 import "core:strings"
 import "core:terminal/ansi"
 
-import "ast"
-import "cg"
-import "checker"
-import "parser"
-import "tokenizer"
-import "types"
-
 import spv "spirv-odin"
 
-Token              :: tokenizer.Token
-Error              :: tokenizer.Error
-tokenize           :: tokenizer.tokenize
-Location           :: tokenizer.Location
+import vk "vendor:vulkan"
 
-parse              :: parser.parse
-
-check              :: checker.check
-check_with_types   :: checker.check_with_types
-Checker            :: checker.Checker
-Checker_Flag       :: checker.Flag
-Checker_Flags      :: checker.Flags
-Buffer_Address     :: checker.Buffer_Address
-Reflection_Info    :: checker.Reflection_Info
-Entry_Point_Info   :: checker.Entry_Point_Info
-type_info_to_type  :: checker.type_info_to_type
-
-Const_Value        :: types.Const_Value
-Type               :: types.Type
-
-cg_generate        :: cg.generate
-
-Library             :: ast.Library
-
-Ast_Node            :: ast.Node
-Ast_Expr            :: ast.Expr
-Ast_Stmt            :: ast.Stmt
-Ast_Decl            :: ast.Decl
-
-Ast_Field           :: ast.Field
-Ast_Switch_Case     :: ast.Switch_Case
-Ast_Directive       :: ast.Directive
-Ast_Shader_Stage    :: ast.Shader_Stage
-Ast_Builtin_Id      :: ast.Builtin_Id
-Ast_Interface_Kind  :: ast.Interface_Kind
-
-Ast_Expr_Binary     :: ast.Expr_Binary
-Ast_Expr_Unary      :: ast.Expr_Unary
-Ast_Expr_Ternary    :: ast.Expr_Ternary
-Ast_Expr_Constant   :: ast.Expr_Constant
-Ast_Expr_Ident      :: ast.Expr_Ident
-Ast_Expr_Interface  :: ast.Expr_Interface
-Ast_Expr_Directive  :: ast.Expr_Directive
-Ast_Expr_Proc_Lit   :: ast.Expr_Proc_Lit
-Ast_Expr_Proc_Sig   :: ast.Expr_Proc_Sig
-Ast_Expr_Proc_Group :: ast.Expr_Proc_Group
-Ast_Expr_Call       :: ast.Expr_Call
-Ast_Expr_Paren      :: ast.Expr_Paren
-Ast_Expr_Selector   :: ast.Expr_Selector
-Ast_Expr_Compound   :: ast.Expr_Compound
-Ast_Expr_Index      :: ast.Expr_Index
-Ast_Expr_Cast       :: ast.Expr_Cast
-Ast_Expr_Ellipsis   :: ast.Expr_Ellipsis
-
-Ast_Type_Struct     :: ast.Type_Struct
-Ast_Type_Array      :: ast.Type_Array
-Ast_Type_Matrix     :: ast.Type_Matrix
-Ast_Type_Image      :: ast.Type_Image
-Ast_Type_Enum       :: ast.Type_Enum
-Ast_Type_Bit_Set    :: ast.Type_Bit_Set
-
-Ast_Decl_Value      :: ast.Decl_Value
-Ast_Decl_Import     :: ast.Decl_Import
-
-Ast_Stmt_Return     :: ast.Stmt_Return
-Ast_Stmt_Break      :: ast.Stmt_Break
-Ast_Stmt_Continue   :: ast.Stmt_Continue
-Ast_Stmt_For_Range  :: ast.Stmt_For_Range
-Ast_Stmt_For        :: ast.Stmt_For
-Ast_Stmt_Block      :: ast.Stmt_Block
-Ast_Stmt_If         :: ast.Stmt_If
-Ast_Stmt_When       :: ast.Stmt_When
-Ast_Stmt_Switch     :: ast.Stmt_Switch
-Ast_Stmt_Assign     :: ast.Stmt_Assign
-Ast_Stmt_Expr       :: ast.Stmt_Expr
-
-Ast_Any_Node        :: ast.Any_Node
-Ast_Any_Expr        :: ast.Any_Expr
-Ast_Any_Decl        :: ast.Any_Decl
-Ast_Any_Stmt        :: ast.Any_Stmt
-
-Ast_Entity          :: ast.Entity
-Ast_Entity_Kind     :: ast.Entity_Kind
-Ast_Entity_Flag     :: ast.Entity_Flag
-Ast_Entity_Flags    :: ast.Entity_Flags
-
-Ast_Scope           :: ast.Scope
-Ast_Scope_Kind      :: ast.Scope_Kind
+Buffer_Address :: struct($T: typeid) #raw_union {
+	address: vk.DeviceAddress,
+	_:       ^T `hephaistos:"buffer_device_address"`,
+}
 
 SPIR_V_VERSION_CURRENT :: spv.VERSION
 SPIR_V_VERSION_1_0     :: 0x00010000 // use with OpenGL
@@ -115,6 +26,13 @@ SPIR_V_VERSION_1_3     :: 0x00010300
 SPIR_V_VERSION_1_4     :: 0x00010400
 SPIR_V_VERSION_1_5     :: 0x00010500
 SPIR_V_VERSION_1_6     :: 0x00010600
+
+_prev_assertion_failure_proc := runtime.default_assertion_failure_proc
+
+_assertion_failure_proc :: proc(prefix, message: string, loc: runtime.Source_Code_Location) -> ! {
+	runtime.print_string("This is a hephaistos compiler bug, please report this.\n")
+	_prev_assertion_failure_proc(prefix, message, loc)
+}
 
 @(require_results)
 check_library :: proc(
@@ -126,7 +44,10 @@ check_library :: proc(
 	file_id:       i32                    = -1,
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
-) -> (library: ast.Library, errors: []Error) {
+) -> (library: Library, errors: []Error) {
+	_prev_assertion_failure_proc   = context.assertion_failure_proc
+	context.assertion_failure_proc = _assertion_failure_proc
+
 	tokens: []Token
 	tokens, errors = tokenize(source, false, file_id, context.temp_allocator, error_allocator)
 	if len(errors) != 0 {
@@ -161,6 +82,9 @@ compile_shader :: proc(
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (code: []u32, errors: []Error) {
+	_prev_assertion_failure_proc   = context.assertion_failure_proc
+	context.assertion_failure_proc = _assertion_failure_proc
+
 	tokens: []Token
 	tokens, errors = tokenize(source, false, allocator = context.temp_allocator, error_allocator = error_allocator)
 	if len(errors) != 0 {
@@ -179,7 +103,7 @@ compile_shader :: proc(
 		return
 	}
 
-	code = cg_generate(&checker, stmts, path, source, spirv_version, allocator = allocator)
+	code = cg_file(&checker, stmts, path, source, spirv_version, allocator = allocator)
 
 	return
 }
@@ -195,7 +119,7 @@ when !HEPHAISTOS_NO_TYPE_FORMATTER {
 
 		formatter :: proc(fi: ^fmt.Info, arg: any, verb: rune) -> bool {
 			#no_type_assert t := arg.(^Type)
-			types.print_writer(fi.writer, t)
+			type_print_writer(fi.writer, t)
 			return true
 		}
 

@@ -1,6 +1,6 @@
 Acceleration_Structure :: opaque(TypeAccelerationStructureKHR)
 
-Ray_Flags :: bit_set[enum {
+Ray_Flag_Bits :: enum {
 	Opaque                     = 0,
 	NoOpaque                   = 1,
 	TerminateOnFirstHit        = 2,
@@ -12,7 +12,9 @@ Ray_Flags :: bit_set[enum {
 	SkipTriangles              = 8,
 	SkipAABBs                  = 9,
 	ForceOpacityMicromap2State = 10,
-}; i32]
+}
+
+Ray_Flags :: bit_set[Ray_Flag_Bits; i32]
 
 Hit_Kind :: enum u32 {
 	Front = 0xFE,

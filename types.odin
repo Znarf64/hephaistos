@@ -1,4 +1,4 @@
-package hephaistos_types
+package hephaistos
 
 import "base:runtime"
 
@@ -6,34 +6,6 @@ import "core:fmt"
 import "core:io"
 import "core:mem"
 import "core:strings"
-import "core:slice"
-
-import "../tokenizer"
-
-Field_Flag :: enum {
-	Const,
-	By_Ptr,
-	// Any_Int,
-	// Any_Float,
-}
-
-Field_Flags :: bit_set[Field_Flag]
-
-Field :: struct {
-	name:     string,
-	type:    ^Type,
-	value:    Const_Value,
-	offset:   int,
-	location: int,
-	flags:    Field_Flags,
-	entity:   rawptr,
-}
-
-Enum_Value :: struct {
-	name:   string,
-	value:  i64,
-	entity: rawptr,
-}
 
 Const_Value :: union {
 	i64,
@@ -42,80 +14,83 @@ Const_Value :: union {
 	string,
 }
 
-Struct :: struct {
+Type_Struct :: struct {
 	using base: Type,
-	fields:     []Field,
+	fields:     []^Entity,
+	scope:      ^Scope,
 }
 
-Array :: struct {
+Type_Array :: struct {
 	using base: Type,
 	count:      int,
 	elem:       ^Type,
 }
 
-Complex :: struct {
+Type_Complex :: struct {
 	using base: Type,
-	array:     ^Array,
+	array:     ^Type_Array,
 }
 
-Buffer :: struct {
+Type_Buffer :: struct {
 	using base: Type,
 	elem:       ^Type,
 	physical:   bool,
 }
 
-Matrix :: struct {
+Type_Matrix :: struct {
 	using base: Type,
 	cols:       int,
-	col_type:   ^Array,
+	col_type:   ^Type_Array,
 }
 
-Proc :: struct {
-	using base:  Type,
-	args:        []Field,
-	returns:     []Field,
+Type_Proc :: struct {
+	using base:   Type,
+	args:      []^Entity,
+	returns:   []^Entity,
 	return_type: ^Type,
-	diverging:   bool,
+	diverging:    bool,
+	scope:       ^Scope,
 }
 
-Proc_Group :: struct {
+Type_Proc_Group :: struct {
 	using base:  Type,
-	members:     []^Proc,
+	members:     []^Type_Proc,
 }
 
-Image :: struct {
+Type_Image :: struct {
 	using base: Type,
 	dimensions: int,
 	texel_type: ^Type,
 	format:     string,
 }
 
-Enum :: struct {
+Type_Enum :: struct {
 	using base: Type,
-	values:     []Enum_Value,
-	backing:    ^Type,
+	values:  []^Entity,
+	scope:     ^Scope,
+	backing:   ^Type,
 }
 
-Bit_Set :: struct {
+Type_Bit_Set :: struct {
 	using base: Type,
-	enum_type:  ^Type,
-	backing:    ^Type,
+	enum_type: ^Type,
+	backing:   ^Type,
 }
 
 // A deliberately opaque type such as OpTypeAccelerationStructureKHR
-Opaque :: struct {
+Type_Opaque :: struct {
 	using base: Type,
 	name:       string,
 	backing:   ^Type,
 }
 
-Named :: struct {
+Type_Named :: struct {
 	using base: Type,
 	name:       string,
 	type:      ^Type,
 }
 
-Kind :: enum {
+Type_Kind :: enum {
 	Invalid,
 
 	Uint,
@@ -143,43 +118,27 @@ Kind :: enum {
 }
 
 Type :: struct {
-	kind:    Kind,
+	kind:    Type_Kind,
 	size:    int,
 	align:   int,
 	variant: union {
-		^Struct,
-		^Matrix,
-		^Array,
-		^Buffer,
-		^Proc,
-		^Proc_Group,
-		^Image,
-		^Enum,
-		^Bit_Set,
-		^Complex,
-		^Opaque,
-		^Named,
+		^Type_Struct,
+		^Type_Matrix,
+		^Type_Array,
+		^Type_Buffer,
+		^Type_Proc,
+		^Type_Proc_Group,
+		^Type_Image,
+		^Type_Enum,
+		^Type_Bit_Set,
+		^Type_Complex,
+		^Type_Opaque,
+		^Type_Named,
 	},
 }
 
 @(require_results)
-new_any :: proc(allocator: mem.Allocator) -> ^Type {
-	size := max(
-		size_of(Struct),
-		size_of(Matrix),
-		size_of(Array),
-		size_of(Buffer),
-		size_of(Proc),
-		size_of(Image),
-		size_of(Enum),
-		size_of(Bit_Set),
-	)
-	p, _ := mem.alloc(size, allocator = allocator)
-	return (^Type)(p)
-}
-
-@(require_results)
-new :: proc(kind: Kind, $T: typeid, allocator: mem.Allocator) -> ^T {
+type_new :: proc(kind: Type_Kind, $T: typeid, allocator: mem.Allocator) -> ^T {
 	t, _ := mem.new(T, allocator)
 	t.kind    = kind
 	t.variant = t
@@ -219,10 +178,7 @@ t_Hit_Kind:          ^Type
 t_Ray_Flags:         ^Type
 // t_Intersection_Type: ^Type
 
-@(init)
-_base_types_init :: proc "contextless" () {
-	context = runtime.default_context()
-
+_base_types_init :: proc() {
 	@(static)
 	arena_mem: [1 << 12]byte
 	arena: mem.Arena
@@ -243,39 +199,53 @@ _base_types_init :: proc "contextless" () {
 	t_quaternion128 = quaternion_new(t_f32, allocator)
 	t_quaternion256 = quaternion_new(t_f64, allocator)
 
-	t_mat4x3 = matrix_new(t_vec3.variant.(^Array), 4, allocator)
+	t_mat4x3 = matrix_new(t_vec3.variant.(^Type_Array), 4, allocator)
 
-	e := new(.Enum, Enum, allocator)
-	e.backing = t_u32
-	e.values  = slice.clone([]Enum_Value {
-		{ "Front", 0xFE, nil, },
-		{ "Back",  0xFF, nil, },
-	}, allocator)
-	t_Hit_Kind = e
+	@(require_results)
+	make_enum :: proc(values: []struct { name: string, value: i64, }, backing: ^Type, allocator: mem.Allocator) -> ^Type_Enum {
+		e        := type_new(.Enum, Type_Enum, allocator)
+		e.backing = backing
 
-	ray_flags_bits := new(.Enum, Enum, allocator)
-	ray_flags_bits.backing = t_i32
-	ray_flags_bits.values  = slice.clone([]Enum_Value {
-		{ "Opaque",                      0, nil, },
-		{ "NoOpaque",                    1, nil, },
-		{ "TerminateOnFirstHit",         2, nil, },
-		{ "SkipClosestHitShader",        3, nil, },
-		{ "CullBackFacingTriangles",     4, nil, },
-		{ "CullFrontFacingTriangles",    5, nil, },
-		{ "CullOpaque",                  6, nil, },
-		{ "CullNoOpaque",                7, nil, },
-		{ "SkipTriangles",               8, nil, },
-		{ "SkipAABBs",                   9, nil, },
-		{ "ForceOpacityMicromap2State", 10, nil, },
-	}, allocator)
+		entities  := make([dynamic]^Entity, allocator)
+		scope     := new(Scope, allocator)
+		scope.kind = .Enum
+		for value in values {
+			e                         := new(Entity, allocator)
+			e.name                     = value.name
+			e.value                    = value.value
+			e.kind                     = .Enum_Value
+			scope.entities[value.name] = e
 
-	set          := new(.Bit_Set, Bit_Set, allocator)
-	set.enum_type = ray_flags_bits
-	set.backing   = t_i32
-	t_Ray_Flags   = set
+			append(&entities, e)
+		}
+		e.values = entities[:]
+
+		return e
+	}
+
+	t_Hit_Kind = make_enum({
+		{ "Front", 0xFE, },
+		{ "Back",  0xFF, },
+	}, t_u32, allocator)
+
+	ray_flags_bits := make_enum({
+		{ "Opaque",                      0, },
+		{ "NoOpaque",                    1, },
+		{ "TerminateOnFirstHit",         2, },
+		{ "SkipClosestHitShader",        3, },
+		{ "CullBackFacingTriangles",     4, },
+		{ "CullFrontFacingTriangles",    5, },
+		{ "CullOpaque",                  6, },
+		{ "CullNoOpaque",                7, },
+		{ "SkipTriangles",               8, },
+		{ "SkipAABBs",                   9, },
+		{ "ForceOpacityMicromap2State", 10, },
+	}, t_i32, allocator)
+
+	t_Ray_Flags = bit_set_new(ray_flags_bits, t_i32, allocator)
 }
 
-print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
+type_print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 	if type == nil {
 		fmt.wprint(w, "<nil>")
 		return
@@ -285,7 +255,7 @@ print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 	case .Invalid:
 		fmt.wprint(w, "invalid type")
 	case .Struct:
-		s := type.variant.(^Struct)
+		s := type.variant.(^Type_Struct)
 		if len(s.fields) == 0 {
 			fmt.wprint(w, "struct {}")
 			return
@@ -306,7 +276,7 @@ print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 
 			fmt.wprint(w, field.name)
 			fmt.wprint(w, ": ")
-			print_writer(w, field.type, indent + 1)
+			type_print_writer(w, field.type, indent + 1)
 
 			if indent >= 0 {
 				fmt.wprint(w, ",\n")
@@ -319,7 +289,7 @@ print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 
 		fmt.wprint(w, "}")
 	case .Enum:
-		e := type.variant.(^Enum)
+		e := type.variant.(^Type_Enum)
 		if len(e.values) == 0 {
 			fmt.wprint(w, "enum {}")
 			return
@@ -353,28 +323,36 @@ print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 
 		fmt.wprint(w, "}")
 	case .Matrix:
-		m := type.variant.(^Matrix)
+		m := type.variant.(^Type_Matrix)
 		c := m.col_type
 		fmt.wprintf(w, "matrix[%d, %d]", m.cols, c.count)
-		print_writer(w, c.elem, indent)
+		type_print_writer(w, c.elem, indent)
 	case .Array:
-		v := type.variant.(^Array)
+		v := type.variant.(^Type_Array)
 		fmt.wprintf(w, "[%d]", v.count)
-		print_writer(w, v.elem, indent)
+		type_print_writer(w, v.elem, indent)
 	case .Buffer:
-		v := type.variant.(^Buffer)
+		v := type.variant.(^Type_Buffer)
 		fmt.wprintf(w, "[^]")
-		print_writer(w, v.elem, indent)
+		type_print_writer(w, v.elem, indent)
 	case .Proc:
-		b := type.variant.(^Proc)
+		b := type.variant.(^Type_Proc)
 		fmt.wprint(w, "proc(")
 		for arg, i in b.args {
 			if i > 0 {
 				fmt.wprint(w, ", ")
 			}
+			for flag in arg.flags {
+				#partial switch flag {
+				case .By_Ptr:
+					fmt.wprint(w, "#by_ptr ")
+				case .Const:
+					fmt.wprint(w, "#const ")
+				}
+			}
 			fmt.wprint(w, arg.name)
 			fmt.wprint(w, ": ")
-			print_writer(w, arg.type)
+			type_print_writer(w, arg.type)
 		}
 		fmt.wprint(w, ")")
 
@@ -392,14 +370,14 @@ print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 				fmt.wprint(w, ret.name)
 				fmt.wprint(w, ": ")
 			}
-			print_writer(w, ret.type)
+			type_print_writer(w, ret.type)
 		}
 		fmt.wprint(w, ")")
 	case .Proc_Group:
-		g := type.variant.(^Proc_Group)
+		g := type.variant.(^Type_Proc_Group)
 		fmt.wprint(w, "proc{ ")
 		for member in g.members {
-			print_writer(w, member)
+			type_print_writer(w, member)
 			fmt.wprint(w, ", ")
 		}
 		fmt.wprint(w, "}")
@@ -425,43 +403,43 @@ print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 		fmt.wprintf(w, "quaternion%d", type.size * 8)
 	case .Tuple:
 		fmt.wprint(w, "(")
-		for type, i in type.variant.(^Struct).fields {
+		for type, i in type.variant.(^Type_Struct).fields {
 			if i > 0 {
 				fmt.wprint(w, ", ")
 			}
-			print_writer(w, type.type, indent)
+			type_print_writer(w, type.type, indent)
 		}
 		fmt.wprint(w, ")")
 	case .Sampler:
-		type := type.variant.(^Image)
+		type := type.variant.(^Type_Image)
 		fmt.wprintf(w, "sampler[%d]", type.dimensions)
-		print_writer(w, type.texel_type, indent)
+		type_print_writer(w, type.texel_type, indent)
 	case .Image:
-		type := type.variant.(^Image)
+		type := type.variant.(^Type_Image)
 		fmt.wprintf(w, "image[%d]", type.dimensions)
-		print_writer(w, type.texel_type, indent)
+		type_print_writer(w, type.texel_type, indent)
 	case .Bit_Set:
-		type := type.variant.(^Bit_Set)
+		type := type.variant.(^Type_Bit_Set)
 		fmt.wprintf(w, "bit_set[")
-		print_writer(w, type.enum_type, indent)
+		type_print_writer(w, type.enum_type, indent)
 		fmt.wprintf(w, "; ")
-		print_writer(w, type.backing, indent)
+		type_print_writer(w, type.backing, indent)
 		fmt.wprintf(w, "]")
 	case .Opaque:
-		type := type.variant.(^Opaque)
-		fmt.wprintf(w, `"%v"`, type.name)
+		type := type.variant.(^Type_Opaque)
+		fmt.wprintf(w, `opaque("%v")`, type.name)
 	case .Any:
 		fmt.wprintf(w, "any")
 	case .Named:
-		type := type.variant.(^Named)
+		type := type.variant.(^Type_Named)
 		fmt.wprint(w, type.name)
 	}
 }
 
 @(require_results)
-to_string :: proc(type: ^Type, pretty := false, allocator := context.allocator) -> string {
+type_to_string :: proc(type: ^Type, pretty := false, allocator := context.allocator) -> string {
 	b := strings.builder_make(allocator)
-	print_writer(strings.to_writer(&b), type, pretty ? 0 : min(int))
+	type_print_writer(strings.to_writer(&b), type, pretty ? 0 : min(int))
 	return strings.to_string(b)
 }
 
@@ -484,16 +462,13 @@ equal :: proc(a, b: ^Type) -> bool {
 		return a.size == b.size && a.align == b.align
 
 	case .Struct:
-		a := a.variant.(^Struct)
-		b := b.variant.(^Struct)
+		a := a.variant.(^Type_Struct)
+		b := b.variant.(^Type_Struct)
 		if len(a.fields) != len(b.fields) {
 			return false
 		}
 
 		for i in 0 ..< len(a.fields) {
-			if a.fields[i].offset != b.fields[i].offset {
-				return false
-			}
 			if a.fields[i].location != b.fields[i].location {
 				return false
 			}
@@ -505,8 +480,8 @@ equal :: proc(a, b: ^Type) -> bool {
 		return true
 
 	case .Matrix:
-		a := a.variant.(^Matrix)
-		b := b.variant.(^Matrix)
+		a := a.variant.(^Type_Matrix)
+		b := b.variant.(^Type_Matrix)
 
 		if a.cols != b.cols {
 			return false
@@ -514,8 +489,8 @@ equal :: proc(a, b: ^Type) -> bool {
 
 		return equal(a.col_type, b.col_type)
 	case .Array:
-		a := a.variant.(^Array)
-		b := b.variant.(^Array)
+		a := a.variant.(^Type_Array)
+		b := b.variant.(^Type_Array)
 
 		if a.count != b.count {
 			return false
@@ -523,8 +498,8 @@ equal :: proc(a, b: ^Type) -> bool {
 
 		return equal(a.elem, b.elem)
 	case .Proc:
-		a := a.variant.(^Proc)
-		b := b.variant.(^Proc)
+		a := a.variant.(^Type_Proc)
+		b := b.variant.(^Type_Proc)
 		if len(a.args) != len(b.args) {
 			return false
 		}
@@ -553,8 +528,8 @@ equal :: proc(a, b: ^Type) -> bool {
 		return true
 
 	case .Sampler, .Image:
-		a := a.variant.(^Image)
-		b := b.variant.(^Image)
+		a := a.variant.(^Type_Image)
+		b := b.variant.(^Type_Image)
 
 		if a.dimensions != b.dimensions {
 			return false
@@ -570,8 +545,8 @@ equal :: proc(a, b: ^Type) -> bool {
 	case .Invalid, .Any, .Tuple:
 		return true
 	case .Buffer:
-		a := a.variant.(^Buffer)
-		b := b.variant.(^Buffer)
+		a := a.variant.(^Type_Buffer)
+		b := b.variant.(^Type_Buffer)
 
 		if a.physical != b.physical {
 			return false
@@ -579,8 +554,8 @@ equal :: proc(a, b: ^Type) -> bool {
 
 		return equal(a.elem, b.elem)
 	case .Proc_Group:
-		a := a.variant.(^Proc_Group)
-		b := b.variant.(^Proc_Group)
+		a := a.variant.(^Type_Proc_Group)
+		b := b.variant.(^Type_Proc_Group)
 
 		if len(a.members) != len(b.members) {
 			return false
@@ -594,8 +569,8 @@ equal :: proc(a, b: ^Type) -> bool {
 
 		return true
 	case .Enum:
-		a := a.variant.(^Enum)
-		b := b.variant.(^Enum)
+		a := a.variant.(^Type_Enum)
+		b := b.variant.(^Type_Enum)
 
 		for i in 0 ..< len(a.values) {
 			if a.values[i].value != b.values[i].value {
@@ -608,18 +583,18 @@ equal :: proc(a, b: ^Type) -> bool {
 
 		return true
 	case .Bit_Set:
-		a := a.variant.(^Bit_Set)
-		b := b.variant.(^Bit_Set)
+		a := a.variant.(^Type_Bit_Set)
+		b := b.variant.(^Type_Bit_Set)
 
 		return equal(a.backing, b.backing) && equal(a.enum_type, b.enum_type)
 	case .Complex, .Quaternion:
-		a := a.variant.(^Complex)
-		b := b.variant.(^Complex)
+		a := a.variant.(^Type_Complex)
+		b := b.variant.(^Type_Complex)
 
 		return equal(a.array, b.array)
 	case .Named:
-		a := a.variant.(^Named)
-		b := b.variant.(^Named)
+		a := a.variant.(^Type_Named)
+		b := b.variant.(^Type_Named)
 
 		return a.name == b.name
 	case:
@@ -628,33 +603,32 @@ equal :: proc(a, b: ^Type) -> bool {
 }
 
 @(require_results)
-core_type :: proc(type: ^Type, keep_complex := false) -> ^Type {
+core_type :: proc(type: ^Type, complex_to_array := false) -> ^Type {
 	type := type
 	for {
 		#partial switch type.kind {
 		case .Enum:
-			type = type.variant.(^Enum).backing
+			type = type.variant.(^Type_Enum).backing
 		case .Bit_Set:
-			type = type.variant.(^Bit_Set).backing
-		case .Quaternion, .Complex:
-			if keep_complex {
+			type = type.variant.(^Type_Bit_Set).backing
+		case .Named:
+			type = type.variant.(^Type_Named).type
+		case .Complex, .Quaternion:
+			if !complex_to_array {
 				return type
 			}
-			type = type.variant.(^Complex).array
-		case .Named:
-			type = type.variant.(^Named).type
+			type = type.variant.(^Type_Complex).array
 		case:
 			return type
 		}
 	}
-	return type
 }
 
 @(require_results)
 base_type :: proc(type: ^Type) -> ^Type {
 	type := type
 	for type.kind == .Named {
-		type = type.variant.(^Named).type
+		type = type.variant.(^Type_Named).type
 	}
 	return type
 }
@@ -669,12 +643,12 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 		return true
 	}
 
-	if !is_numeric(from) {
+	if !type_is_numeric(from) {
 		return false
 	}
 
-	if from.size == 0 && is_numeric(to) {
-		if is_integer(to) && from.kind == .Float {
+	if from.size == 0 && type_is_numeric(to) {
+		if type_is_integer(to) && from.kind == .Float {
 			return false
 		}
 		return true
@@ -698,7 +672,7 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 
 @(require_results)
 op_result_type :: proc(a, b: ^Type, is_multiply: bool = false, allocator: mem.Allocator = {}) -> ^Type {
-	if is_multiply && (is_matrix(a) || is_matrix(b)) {
+	if is_multiply && (type_is_matrix(a) || type_is_matrix(b)) {
 		assert(allocator.procedure != nil)
 		return matrix_multiply_type(a, b, allocator)
 	}
@@ -741,6 +715,13 @@ castable :: proc(from, to: ^Type) -> bool {
 	from := core_type(from)
 	to   := core_type(to)
 
+	if v, ok := from.variant.(^Type_Complex); ok {
+		from = v.array
+	}
+	if v, ok := to.variant.(^Type_Complex); ok {
+		to = v.array
+	}
+
 	if equal(from, to) {
 		return true
 	}
@@ -749,81 +730,53 @@ castable :: proc(from, to: ^Type) -> bool {
 		return true
 	}
 
-	if is_numeric(from) && is_numeric(to) {
+	if type_is_numeric(from) && type_is_numeric(to) {
 		return true
 	}
 
-	if is_boolean(from) && is_integer(to) {
+	if type_is_bool(from) && type_is_integer(to) {
 		return true
 	}
 
-	if is_numeric(from) && is_array(to) {
+	if type_is_numeric(from) && type_is_array(to) {
 		return true
 	}
 
-	if is_array(from) && is_array(to) {
-		return array_len(from) == array_len(to)
+	if type_is_array(from) && type_is_array(to) {
+		return array_len(from) == array_len(to) && castable(array_elem(from), array_elem(to))
 	}
 
-	if is_opaque(to) && opaque_backing(to) != nil {
+	if type_is_opaque(to) && opaque_backing(to) != nil {
 		return castable(from, opaque_backing(to))
 	}
 
 	return false
 }
 
-@(require_results)
-is_array :: proc(type: ^Type) -> bool {
-	return type.kind == .Array
-}
+@(require_results) type_is_invalid    :: proc(type: ^Type) -> bool { return type.kind == .Invalid    }
+@(require_results) type_is_uint       :: proc(type: ^Type) -> bool { return type.kind == .Uint       }
+@(require_results) type_is_int        :: proc(type: ^Type) -> bool { return type.kind == .Int        }
+@(require_results) type_is_bool       :: proc(type: ^Type) -> bool { return type.kind == .Bool       }
+@(require_results) type_is_float      :: proc(type: ^Type) -> bool { return type.kind == .Float      }
+@(require_results) type_is_any        :: proc(type: ^Type) -> bool { return type.kind == .Any        }
+@(require_results) type_is_struct     :: proc(type: ^Type) -> bool { return type.kind == .Struct     }
+@(require_results) type_is_matrix     :: proc(type: ^Type) -> bool { return type.kind == .Matrix     }
+@(require_results) type_is_array      :: proc(type: ^Type) -> bool { return type.kind == .Array      }
+@(require_results) type_is_buffer     :: proc(type: ^Type) -> bool { return type.kind == .Buffer     }
+@(require_results) type_is_proc       :: proc(type: ^Type) -> bool { return type.kind == .Proc       }
+@(require_results) type_is_proc_group :: proc(type: ^Type) -> bool { return type.kind == .Proc_Group }
+@(require_results) type_is_sampler    :: proc(type: ^Type) -> bool { return type.kind == .Sampler    }
+@(require_results) type_is_image      :: proc(type: ^Type) -> bool { return type.kind == .Image      }
+@(require_results) type_is_enum       :: proc(type: ^Type) -> bool { return type.kind == .Enum       }
+@(require_results) type_is_bit_set    :: proc(type: ^Type) -> bool { return type.kind == .Bit_Set    }
+@(require_results) type_is_complex    :: proc(type: ^Type) -> bool { return type.kind == .Complex    }
+@(require_results) type_is_quaternion :: proc(type: ^Type) -> bool { return type.kind == .Quaternion }
+@(require_results) type_is_opaque     :: proc(type: ^Type) -> bool { return type.kind == .Opaque     }
+@(require_results) type_is_named      :: proc(type: ^Type) -> bool { return type.kind == .Named      }
+@(require_results) type_is_tuple      :: proc(type: ^Type) -> bool { return type.kind == .Tuple      }
 
 @(require_results)
-is_complex :: proc(type: ^Type) -> bool {
-	return type.kind == .Complex
-}
-
-@(require_results)
-is_quaternion :: proc(type: ^Type) -> bool {
-	return type.kind == .Quaternion
-}
-
-@(require_results)
-is_tuple :: proc(type: ^Type) -> bool {
-	return type.kind == .Tuple
-}
-
-@(require_results)
-is_buffer :: proc(type: ^Type) -> bool {
-	return type.kind == .Buffer
-}
-
-@(require_results)
-is_matrix :: proc(type: ^Type) -> bool {
-	return type.kind == .Matrix
-}
-
-@(require_results)
-is_struct :: proc(type: ^Type) -> bool {
-	return type.kind == .Struct
-}
-
-@(require_results)
-is_boolean :: proc(type: ^Type) -> bool {
-	return type.kind == .Bool
-}
-
-@(require_results)
-is_float :: proc(type: ^Type) -> bool {
-	return type.kind == .Float
-}
-
-@(require_results)
-is_opaque :: proc(type: ^Type) -> bool {
-	return type.kind == .Opaque
-}
-
-@(require_results)
-is_numeric :: proc(type: ^Type) -> bool {
+type_is_numeric :: proc(type: ^Type) -> bool {
 	#partial switch type.kind {
 	case .Float, .Int, .Uint:
 		return true
@@ -832,7 +785,7 @@ is_numeric :: proc(type: ^Type) -> bool {
 }
 
 @(require_results)
-is_integer :: proc(type: ^Type) -> bool {
+type_is_integer :: proc(type: ^Type) -> bool {
 	#partial switch type.kind {
 	case .Int, .Uint:
 		return true
@@ -842,32 +795,32 @@ is_integer :: proc(type: ^Type) -> bool {
 
 @(require_results)
 array_len :: proc(type: ^Type) -> int {
-	return type.variant.(^Array).count
+	return type.variant.(^Type_Array).count
 }
 
 @(require_results)
 array_elem :: proc(type: ^Type) -> ^Type {
-	return type.variant.(^Array).elem
+	return type.variant.(^Type_Array).elem
 }
 
 @(require_results)
 complex_elem :: proc(type: ^Type) -> ^Type {
-	return type.variant.(^Complex).array.elem
+	return type.variant.(^Type_Complex).array.elem
 }
 
 @(require_results)
 buffer_elem :: proc(type: ^Type) -> ^Type {
-	return type.variant.(^Buffer).elem
+	return type.variant.(^Type_Buffer).elem
 }
 
 @(require_results)
 opaque_name :: proc(type: ^Type) -> string {
-	return type.variant.(^Opaque).name
+	return type.variant.(^Type_Opaque).name
 }
 
 @(require_results)
 opaque_backing :: proc(type: ^Type) -> ^Type {
-	return type.variant.(^Opaque).backing
+	return type.variant.(^Type_Opaque).backing
 }
 
 @(private="file")
@@ -884,8 +837,8 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 	assert(a.kind == .Matrix || b.kind == .Matrix)
 
 	if a.kind == .Matrix && b.kind == .Matrix {
-		a := a.variant.(^Matrix)
-		b := b.variant.(^Matrix)
+		a := a.variant.(^Type_Matrix)
+		b := b.variant.(^Type_Matrix)
 
 		if a.cols != b.col_type.count {
 			return t_invalid
@@ -900,8 +853,8 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 	}
 
 	if a.kind == .Matrix && b.kind == .Array {
-		a := a.variant.(^Matrix)
-		v := b.variant.(^Array)
+		a := a.variant.(^Type_Matrix)
+		v := b.variant.(^Type_Array)
 
 		if a.cols != v.count {
 			return t_invalid
@@ -915,8 +868,8 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 	}
 
 	if a.kind == .Array && b.kind == .Matrix {
-		v := a.variant.(^Array)
-		b := b.variant.(^Matrix)
+		v := a.variant.(^Type_Array)
+		b := b.variant.(^Type_Matrix)
 
 		if v.count != b.col_type.count {
 			return t_invalid
@@ -948,21 +901,21 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 
 @(require_results)
 matrix_elem :: proc(type: ^Type) -> ^Type {
-	return type.variant.(^Matrix).col_type.elem
+	return type.variant.(^Type_Matrix).col_type.elem
 }
 
 @(require_results)
 matrix_is_square :: proc(t: ^Type) -> bool {
-	m := t.variant.(^Matrix)
+	m := t.variant.(^Type_Matrix)
 	return m.col_type.count == m.cols
 }
 
 @(require_results)
-array_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Array {
+array_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Type_Array {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
-	type := new(.Array, Array, allocator)
+	type := type_new(.Array, Type_Array, allocator)
 	type.elem  = elem
 	type.count = count
 	type.align = elem.align
@@ -972,11 +925,11 @@ array_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Array {
 }
 
 @(require_results)
-complex_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Complex {
+complex_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Type_Complex {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
-	type      := new(.Complex, Complex, allocator)
+	type      := type_new(.Complex, Type_Complex, allocator)
 	type.array = array_new(elem, 2, allocator)
 	type.size  = type.array.size
 	type.align = type.array.align
@@ -985,11 +938,11 @@ complex_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Complex {
 }
 
 @(require_results)
-quaternion_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Complex {
+quaternion_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Type_Complex {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
-	type      := new(.Quaternion, Complex, allocator)
+	type      := type_new(.Quaternion, Type_Complex, allocator)
 	type.array = array_new(elem, 4, allocator)
 	type.size  = type.array.size
 	type.align = type.array.align
@@ -998,11 +951,11 @@ quaternion_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Complex {
 }
 
 @(require_results)
-buffer_new :: proc(elem: ^Type, physical: bool, allocator: mem.Allocator) -> ^Buffer {
+buffer_new :: proc(elem: ^Type, physical: bool, allocator: mem.Allocator) -> ^Type_Buffer {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
-	type := new(.Buffer, Buffer, allocator)
+	type := type_new(.Buffer, Type_Buffer, allocator)
 	type.elem     = elem
 	type.size     = 8
 	type.align    = 8
@@ -1012,11 +965,11 @@ buffer_new :: proc(elem: ^Type, physical: bool, allocator: mem.Allocator) -> ^Bu
 }
 
 @(require_results)
-sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator) -> ^Image {
+sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator) -> ^Type_Image {
 	assert(texel_type      != nil)
 	assert(texel_type.size != 0 || texel_type.kind == .Invalid)
 
-	type           := new(.Sampler, Image, allocator)
+	type           := type_new(.Sampler, Type_Image, allocator)
 	type.texel_type = texel_type
 	type.dimensions = dimensions
 
@@ -1024,11 +977,11 @@ sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator
 }
 
 @(require_results)
-image_new :: proc(texel_type: ^Type, dimensions: int, format: string, allocator: mem.Allocator) -> ^Image {
+image_new :: proc(texel_type: ^Type, dimensions: int, format: string, allocator: mem.Allocator) -> ^Type_Image {
 	assert(texel_type      != nil)
 	assert(texel_type.size != 0 || texel_type.kind == .Invalid)
 
-	type           := new(.Image, Image, allocator)
+	type           := type_new(.Image, Type_Image, allocator)
 	type.texel_type = texel_type
 	type.dimensions = dimensions
 	type.format     = format
@@ -1037,11 +990,11 @@ image_new :: proc(texel_type: ^Type, dimensions: int, format: string, allocator:
 }
 
 @(require_results)
-matrix_new :: proc(col_type: ^Array, cols: int, allocator: mem.Allocator) -> ^Matrix {
+matrix_new :: proc(col_type: ^Type_Array, cols: int, allocator: mem.Allocator) -> ^Type_Matrix {
 	assert(col_type      != nil)
 	assert(col_type.size != 0)
 
-	type         := new(.Matrix, Matrix, allocator)
+	type         := type_new(.Matrix, Type_Matrix, allocator)
 	type.col_type = col_type
 	type.cols     = cols
 	type.size     = cols * col_type.size
@@ -1051,8 +1004,8 @@ matrix_new :: proc(col_type: ^Array, cols: int, allocator: mem.Allocator) -> ^Ma
 }
 
 @(require_results)
-opaque_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Opaque {
-	type        := new(.Opaque, Opaque, allocator)
+opaque_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Type_Opaque {
+	type        := type_new(.Opaque, Type_Opaque, allocator)
 	type.name    = name
 	type.backing = backing
 	if backing != nil {
@@ -1064,8 +1017,8 @@ opaque_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^O
 }
 
 @(require_results)
-named_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Named {
-	type      := new(.Named, Named, allocator)
+named_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Type_Named {
+	type      := type_new(.Named, Type_Named, allocator)
 	type.name  = name
 	type.type  = backing
 	type.size  = backing.size
@@ -1075,17 +1028,37 @@ named_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Na
 }
 
 @(require_results)
-bit_set_new :: proc(enum_type: ^Type, backing: ^Type, allocator: mem.Allocator) -> ^Bit_Set {
+bit_set_new :: proc(enum_type: ^Type, backing: ^Type, allocator: mem.Allocator) -> ^Type_Bit_Set {
 	assert(enum_type != nil)
 	assert(backing   != nil)
 
-	type           := new(.Bit_Set, Bit_Set, allocator)
-	type.enum_type  = enum_type
-	type.backing    = backing
-	type.size       = backing.size
-	type.align      = backing.align
+	type          := type_new(.Bit_Set, Type_Bit_Set, allocator)
+	type.enum_type = enum_type
+	type.backing   = backing
+	type.size      = backing.size
+	type.align     = backing.align
 
 	return type
+}
+
+@(require_results)
+type_any_new :: proc(allocator: mem.Allocator) -> ^Type {
+	size := max(
+		size_of(Type_Struct),
+		size_of(Type_Matrix),
+		size_of(Type_Array),
+		size_of(Type_Buffer),
+		size_of(Type_Proc),
+		size_of(Type_Proc_Group),
+		size_of(Type_Image),
+		size_of(Type_Enum),
+		size_of(Type_Bit_Set),
+		size_of(Type_Complex),
+		size_of(Type_Opaque),
+		size_of(Type_Named),
+	)
+	p, _ := mem.alloc(size, allocator = allocator)
+	return (^Type)(p)
 }
 
 @(require_results)
@@ -1098,26 +1071,16 @@ is_comparable :: proc(type: ^Type) -> bool{
 }
 
 @(require_results)
-is_sampler :: proc(type: ^Type) -> bool {
-	return type.kind == .Sampler
-}
-
-@(require_results)
-is_image :: proc(type: ^Type) -> bool {
-	return type.kind == .Image
-}
-
-@(require_results)
-operator_applicable :: proc(type: ^Type, op: tokenizer.Token_Kind) -> bool {
+operator_applicable :: proc(type: ^Type, op: Token_Kind) -> bool {
 	if is_comparable(type) && (op == .Equal || op == .Not_Equal) {
 		return true
 	}
 
-	if is_float(type) && op == .Modulo_Floored {
+	if type_is_float(type) && op == .Modulo_Floored {
 		return false
 	}
 
-	if is_numeric(type) {
+	if type_is_numeric(type) {
 		#partial switch op {
 		case .Less, .Less_Equal, .Greater, .Greater_Equal:
 			return true

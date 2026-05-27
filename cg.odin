@@ -1,4 +1,4 @@
-package hephaistos_cg
+package hephaistos
 
 import "base:runtime"
 
@@ -7,13 +7,8 @@ import "core:reflect"
 import "core:slice"
 import "core:strings"
 
-import "../ast"
-import "../types"
-import "../tokenizer"
-import "../checker"
-
-import spv      "../spirv-odin"
-import spv_glsl "../spirv-odin/spirv_glsl"
+import spv      "spirv-odin"
+import spv_glsl "spirv-odin/spirv_glsl"
 
 Storage_Class :: enum {
 	By_Value = 0,
@@ -46,14 +41,14 @@ Type_Key :: struct {
 	types, annotations: string, // really []u32, but strings can be hashed and compared
 }
 
-get_type_cache_key :: proc(type: ^types.Type, flags: Type_Flags) -> (key: Type_Cache_Key) {
+get_type_cache_key :: proc(type: ^Type, flags: Type_Flags) -> (key: Type_Cache_Key) {
 	#partial switch type.kind {
 	case .Invalid:
 		unreachable()
 	case .Uint, .Int, .Bool, .Float:
 		return { variant = Type_Cache_Key_Basic{ size = type.size, kind = type.kind, }, }
 	case .Array:
-		elem := types.array_elem(type)
+		elem := array_elem(type)
 		#partial switch elem.kind {
 		case .Uint, .Int, .Bool, .Float:
 			return { variant = Type_Cache_Key_Array{ size = type.size, elem_kind = elem.kind, }, }
@@ -68,19 +63,19 @@ get_type_cache_key :: proc(type: ^types.Type, flags: Type_Flags) -> (key: Type_C
 
 Type_Cache_Key_Basic :: struct {
 	size: int,
-	kind: types.Kind,
+	kind: Type_Kind,
 }
 
 Type_Cache_Key_Array :: struct {
 	size:      int, // elem_size * count
-	elem_kind: types.Kind,
+	elem_kind: Type_Kind,
 }
 
 Type_Cache_Key :: struct {
 	variant: union {
 		Type_Cache_Key_Basic,
 		Type_Cache_Key_Array,
-		^types.Type,
+		^Type,
 	},
 	flags: Type_Flags,
 }
@@ -96,19 +91,19 @@ Image_Type :: struct {
 	format:     string,
 	texel_type: struct {
 		size: int,
-		kind: types.Kind,
+		kind: Type_Kind,
 	},
 }
 
 Proc_Lit_Info :: struct {
-	expr:         ^ast.Expr_Proc_Lit,
+	expr:        ^Expr_Proc_Lit,
 	id:           spv.Id,
 	link_name:    string,
-	shader_stage: ast.Shader_Stage,
+	shader_stage: Shader_Stage,
 }
 
 Constant_Key :: struct {
-	value: types.Const_Value,
+	value: Const_Value,
 	type:  spv.Id,
 }
 
@@ -148,20 +143,20 @@ Context :: struct {
 	functions:           spv.Builder,
 
 	current_id:          spv.Id,
-	checker:             ^checker.Checker,
-	scopes:              [dynamic]^Scope,
-	entities:            map[^ast.Entity]Value,
+	checker:             ^Checker,
+	scopes:              [dynamic]^Cg_Scope,
+	entities:            map[^Entity]Cg_Value,
 	name_prefix:         string,
 
 	extensions:          map[string]struct{},
 	capabilities:        map[spv.Capability]struct{},
 	referenced_globals:  map[spv.Id]struct{},
-	interface_variables: map[spv.BuiltIn]Value,
+	interface_variables: map[spv.BuiltIn]Cg_Value,
 
 	procs:               [dynamic]Proc_Lit_Info,
 
 	link_name:           string,
-	shader_stage:        ast.Shader_Stage,
+	shader_stage:        Shader_Stage,
 	debug_file:          spv.Id,
 
 	local_size:          [3]i32,
@@ -169,11 +164,11 @@ Context :: struct {
 	spirv_version:       u32,
 }
 
-Value :: struct {
+Cg_Value :: struct {
 	id:              spv.Id,
 	storage_class:   Storage_Class,
-	type:            ^types.Type,
-	real_type:       ^types.Type, // non swizzled type
+	type:            ^Type,
+	real_type:       ^Type, // non swizzled type
 	swizzle:         []u32,
 	group_members:   []spv.Id,
 	explicit_layout: bool,
@@ -182,30 +177,30 @@ Value :: struct {
 	extension_op:    spv.Op,
 }
 
-Scope_Kind :: enum {
+Cg_Scope_Kind :: enum {
 	Block,
 	Loop,
 	Switch,
 }
 
-Scope :: struct {
-	label:       ^ast.Entity,
+Cg_Scope :: struct {
+	label:       ^Entity,
 	label_id:     spv.Id,
 	end_id:       spv.Id,
 	continue_id:  spv.Id,
 	return_value: spv.Id, // 0 when the return values are shader stage outputs
-	return_type:  ^types.Type,
+	return_type:  ^Type,
 	outputs:      []spv.Id,
-	kind:         Scope_Kind,
+	kind:         Cg_Scope_Kind,
 }
 
 @(require_results)
-cg_lookup_entity :: proc(ctx: ^Context, entity: ^ast.Entity) -> Value {
+cg_lookup_entity :: proc(ctx: ^Context, entity: ^Entity) -> Cg_Value {
 	assert(entity != nil)
 	return ctx.entities[entity] or_else panic("Backend: Failed to find entity value")
 }
 
-cg_insert_entity :: proc(ctx: ^Context, entity: ^ast.Entity, storage_class: Storage_Class, type: ^types.Type, id: spv.Id) {
+cg_insert_entity :: proc(ctx: ^Context, entity: ^Entity, storage_class: Storage_Class, type: ^Type, id: spv.Id) {
 	assert(entity != nil)
 	cg_insert_entity_value(ctx, entity, {
 		type          = type,
@@ -214,7 +209,7 @@ cg_insert_entity :: proc(ctx: ^Context, entity: ^ast.Entity, storage_class: Stor
 	})
 }
 
-cg_insert_entity_value :: proc(ctx: ^Context, entity: ^ast.Entity, value: Value) {
+cg_insert_entity_value :: proc(ctx: ^Context, entity: ^Entity, value: Cg_Value) {
 	assert(entity != nil)
 	if value.id != 0 {
 		spv.OpName(&ctx.debug_b, value.id, strings.concatenate({ ctx.name_prefix, entity.name, }))
@@ -222,8 +217,8 @@ cg_insert_entity_value :: proc(ctx: ^Context, entity: ^ast.Entity, value: Value)
 	ctx.entities[entity] = value
 }
 
-scope_push :: proc(ctx: ^Context, label: ^ast.Expr_Ident = nil, kind: Scope_Kind = .Block) -> (scope: ^Scope) {
-	scope      = new(Scope)
+cg_scope_push :: proc(ctx: ^Context, label: ^Expr_Ident = nil, kind: Cg_Scope_Kind = .Block) -> (scope: ^Cg_Scope) {
+	scope      = new(Cg_Scope)
 	scope.kind = kind
 	if label != nil {
 		scope.label = label.entity
@@ -232,20 +227,20 @@ scope_push :: proc(ctx: ^Context, label: ^ast.Expr_Ident = nil, kind: Scope_Kind
 	return scope
 }
 
-scope_pop :: proc(ctx: ^Context) -> ^Scope {
+cg_scope_pop :: proc(ctx: ^Context) -> ^Cg_Scope {
 	return pop(&ctx.scopes)
 }
 
 cg_scope :: proc(
 	ctx:     ^Context,
 	builder: ^spv.Builder,
-	stmts:   []^ast.Stmt,
-	end:     spv.Id          = 0,
-	label:   ^ast.Expr_Ident = nil,
-	kind:    Scope_Kind      = .Block,
+	stmts:   []^Ast_Stmt,
+	end:     spv.Id        = 0,
+	label:   ^Expr_Ident   = nil,
+	kind:    Cg_Scope_Kind = .Block,
 ) -> (start_label: spv.Id, diverged: bool) {
-	scope := scope_push(ctx, label, kind)
-	defer scope_pop(ctx)
+	scope := cg_scope_push(ctx, label, kind)
+	defer cg_scope_pop(ctx)
 
 	start_label    = spv.OpLabel(builder)
 	scope.label_id = start_label
@@ -258,10 +253,11 @@ cg_scope :: proc(
 	return
 }
 
+@(require_results)
 find_scope_by_label :: proc(
 	ctx:   ^Context,
-	label: ^ast.Entity,
-) -> ^Scope {
+	label: ^Entity,
+) -> ^Cg_Scope {
 	assert(label != nil)
 	#reverse for &scope in ctx.scopes {
 		if scope.label == label {
@@ -271,10 +267,11 @@ find_scope_by_label :: proc(
 	return nil
 }
 
+@(require_results)
 find_scope_by_kind :: proc(
 	ctx:   ^Context,
-	kinds: bit_set[Scope_Kind],
-) -> ^Scope {
+	kinds: bit_set[Cg_Scope_Kind],
+) -> ^Cg_Scope {
 	#reverse for &scope in ctx.scopes {
 		if scope.kind in kinds {
 			return scope
@@ -292,7 +289,7 @@ cg_string :: proc(ctx: ^Context, str: string) -> spv.Id {
 	return id
 }
 
-cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Value, global: bool) {
+cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^Decl_Value, global: bool) {
 	value_builder     := builder
 	decl_builder      := &ctx.functions
 	storage_class     := Storage_Class.Function
@@ -308,7 +305,7 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 		spv_storage_class = .Private
 	}
 
-	v, ok := decl.derived_decl.(^ast.Decl_Value)
+	v, ok := decl.derived_decl.(^Decl_Value)
 	if !ok {
 		return
 	}
@@ -383,8 +380,8 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 
 	if v.mutable {
 		@(require_results)
-		is_blank_ident :: proc(expr: ^ast.Expr) -> bool {
-			ident := expr.derived.(^ast.Expr_Ident) or_return
+		is_blank_ident :: proc(expr: ^Ast_Expr) -> bool {
+			ident := expr.derived.(^Expr_Ident) or_return
 			return ident.text == "_"
 		}
 
@@ -396,7 +393,7 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 
 				type := lhs.type
 
-				if types.is_sampler(type) || types.is_image(type) && v.interface == .Uniform {
+				if type_is_sampler(type) || type_is_image(type) && v.interface == .Uniform {
 					assert(len(v.lhs) == 1)
 					storage_class     = .Uniform_Constant
 					spv_storage_class = .UniformConstant
@@ -404,7 +401,7 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 					annotate          = true
 				}
 
-				if types.is_opaque(type) {
+				if type_is_opaque(type) {
 					has_nil_value = false
 					if v.interface == .Uniform {
 						storage_class     = .Uniform_Constant
@@ -451,8 +448,8 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 				lhs_i: int
 				for value in v.values {
 					init := cg_expr(ctx, value_builder, value)
-					values: []Value = { init, }
-					deconstruct_tuple(ctx, value_builder, value.type, &values)
+					values: []Cg_Value = { init, }
+					cg_deconstruct_tuple(ctx, value_builder, value.type, &values)
 
 					for value in values {
 						defer lhs_i += 1
@@ -495,9 +492,9 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^ast.Decl_Valu
 }
 
 @(require_results)
-generate :: proc(
-	checker:     ^checker.Checker,
-	stmts:       []^ast.Stmt,
+cg_file :: proc(
+	checker:    ^Checker,
+	stmts:    []^Ast_Stmt,
 	file_name:   Maybe(string) = nil,
 	file_source: Maybe(string) = nil,
 	spirv_version := u32(spv.VERSION),
@@ -519,11 +516,11 @@ generate :: proc(
 	append(&ctx.meta.data, 'H' << 0 | 'E' << 8 | 'P' << 16 | 'H' << 24)
 	append(&ctx.meta.data, 4194303)
 	append(&ctx.meta.data, 0)
-	scope_push(&ctx)
+	cg_scope_push(&ctx)
 
 	ctx.type_void              = spv.OpTypeVoid(&ctx.types)
-	void_proc_type            := types.new(.Proc, types.Proc, context.temp_allocator)
-	void_proc_type.return_type = types.new(.Tuple, types.Struct, context.temp_allocator)
+	void_proc_type            := type_new(.Proc, Type_Proc, context.temp_allocator)
+	void_proc_type.return_type = type_new(.Tuple, Type_Struct, context.temp_allocator)
 	ctx.type_void_proc         = cg_type(&ctx, void_proc_type).type
 	spv.OpName(&ctx.debug_b, ctx.type_void,      "$VOID")
 	spv.OpName(&ctx.debug_b, ctx.type_void_proc, "$VOID_PROC")
@@ -545,8 +542,8 @@ generate :: proc(
 	b: spv.Builder = { current_id = &ctx.current_id, }
 
 	for name, lib in checker.libraries {
-		scope_push(&ctx, kind = .Block)
-		defer scope_pop(&ctx)
+		cg_scope_push(&ctx, kind = .Block)
+		defer cg_scope_pop(&ctx)
 
 		ctx.name_prefix = strings.concatenate({ name, "::", })
 
@@ -570,37 +567,37 @@ generate :: proc(
 
 		spv.OpName(&ctx.debug_b, id, fmt.tprintf("$BUILTIN_%v", runtime_proc))
 
-		return_type: ^types.Type
-		arg_types:   []types.Field
+		return_type: ^Type
+		arg_types: []^Entity
 		switch runtime_proc {
 		case .Complex64_Mul, .Complex64_Div:
-			return_type = types.t_complex64
+			return_type = t_complex64
 			arg_types   = {
-				{ type = types.t_complex64, },
-				{ type = types.t_complex64, },
+				&{ type = t_complex64, },
+				&{ type = t_complex64, },
 			}
 		case .Complex128_Mul, .Complex128_Div:
-			return_type = types.t_complex128
+			return_type = t_complex128
 			arg_types   = {
-				{ type = types.t_complex128, },
-				{ type = types.t_complex128, },
+				&{ type = t_complex128, },
+				&{ type = t_complex128, },
 			}
 
 		case .Quaternion128_Mul, .Quaternion128_Div:
-			return_type = types.t_quaternion128
+			return_type = t_quaternion128
 			arg_types   = {
-				{ type = types.t_quaternion128, },
-				{ type = types.t_quaternion128, },
+				&{ type = t_quaternion128, },
+				&{ type = t_quaternion128, },
 			}
 		case .Quaternion256_Mul, .Quaternion256_Div:
-			return_type = types.t_quaternion256
+			return_type = t_quaternion256
 			arg_types   = {
-				{ type = types.t_quaternion256, },
-				{ type = types.t_quaternion256, },
+				&{ type = t_quaternion256, },
+				&{ type = t_quaternion256, },
 			}
 		}
 
-		proc_type            := types.new(.Proc, types.Proc, context.temp_allocator)
+		proc_type            := type_new(.Proc, Type_Proc, context.temp_allocator)
 		proc_type.args        = arg_types
 		proc_type.return_type = return_type
 
@@ -623,9 +620,9 @@ generate :: proc(
 		case .Complex64_Mul, .Complex128_Mul:
 			elem_type: spv.Id
 			if runtime_proc == .Complex64_Mul {
-				elem_type = cg_type(&ctx, types.t_f32).type
+				elem_type = cg_type(&ctx, t_f32).type
 			} else {
-				elem_type = cg_type(&ctx, types.t_f64).type
+				elem_type = cg_type(&ctx, t_f64).type
 			}
 
 			a0    := spv.OpCompositeExtract(&ctx.functions, elem_type, args[0], 0)
@@ -648,9 +645,9 @@ generate :: proc(
 		case .Complex64_Div, .Complex128_Div:
 			elem_type: spv.Id
 			if runtime_proc == .Complex64_Div {
-				elem_type = cg_type(&ctx, types.t_f32).type
+				elem_type = cg_type(&ctx, t_f32).type
 			} else {
-				elem_type = cg_type(&ctx, types.t_f64).type
+				elem_type = cg_type(&ctx, t_f64).type
 			}
 
 			a0       := spv.OpCompositeExtract(&ctx.functions, elem_type, args[0], 0)
@@ -679,9 +676,9 @@ generate :: proc(
 		case .Quaternion128_Mul, .Quaternion256_Mul:
 			elem_type: spv.Id
 			if runtime_proc == .Quaternion128_Mul {
-				elem_type = cg_type(&ctx, types.t_f32).type
+				elem_type = cg_type(&ctx, t_f32).type
 			} else {
-				elem_type = cg_type(&ctx, types.t_f64).type
+				elem_type = cg_type(&ctx, t_f64).type
 			}
 
 			/*
@@ -770,22 +767,22 @@ generate :: proc(
 }
 
 @(require_results)
-cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) -> Value {
+cg_constant :: proc(ctx: ^Context, value: Const_Value, type: ^Type) -> Cg_Value {
 	type := type
 
 	if type == nil {
 		switch v in value {
 		case i64:
-			type = types.t_i32
+			type = t_i32
 		case f64:
-			type = types.t_f32
+			type = t_f32
 		case bool:
-			type = types.t_bool
+			type = t_bool
 		case string:
 			panic("String constant used as value")
 		}
 	} else {
-		type = types.default_type(types.core_type(type))
+		type = default_type(core_type(type))
 		switch type.kind {
 		case .Uint, .Int, .Bool, .Float:
 			// fine
@@ -800,7 +797,6 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 		     .Tuple,
 		     .Enum,
 		     .Bit_Set,
-		     .Complex,
 		     .Quaternion,
 		     .Opaque,
 		     .Any,
@@ -808,9 +804,11 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 			fmt.panicf("Tried to generate constant with type", type)
 
 		case .Matrix:
-			type = types.matrix_elem(type)
+			type = matrix_elem(type)
 		case .Array:
-			type = types.array_elem(type)
+			type = array_elem(type)
+		case .Complex:
+			type = complex_elem(type)
 		}
 	}
 
@@ -832,7 +830,7 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 	case i64:
 		if type.size == 8 {
 			value_bits: u64
-			if types.is_float(type) {
+			if type_is_float(type) {
 				value_bits = transmute(u64)f64(v)
 			} else {
 				value_bits = u64(v)
@@ -840,7 +838,7 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 			id = spv.OpConstant(&ctx.types, ti.type, u32(value_bits), u32(value_bits >> 32))
 		} else {
 			value_bits: u32
-			if types.is_float(type) {
+			if type_is_float(type) {
 				value_bits = transmute(u32)f32(v)
 			} else {
 				value_bits = u32(v)
@@ -850,7 +848,7 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 	case f64:
 		if type.size == 8 {
 			value_bits: u64
-			if types.is_float(type) {
+			if type_is_float(type) {
 				value_bits = transmute(u64)f64(v)
 			} else {
 				value_bits = u64(v)
@@ -858,7 +856,7 @@ cg_constant :: proc(ctx: ^Context, value: types.Const_Value, type: ^types.Type) 
 			id = spv.OpConstant(&ctx.types, ti.type, u32(value_bits), u32(value_bits >> 32))
 		} else {
 			value_bits: u32
-			if types.is_float(type) {
+			if type_is_float(type) {
 				value_bits = transmute(u32)f32(v)
 			} else {
 				value_bits = u32(v)
@@ -894,7 +892,7 @@ cg_nil_value_from_type_info :: proc(ctx: ^Context, type_info: ^Type_Info) -> spv
 }
 
 @(require_results)
-cg_nil_value_from_type :: proc(ctx: ^Context, type: ^types.Type) -> spv.Id {
+cg_nil_value_from_type :: proc(ctx: ^Context, type: ^Type) -> spv.Id {
 	return cg_nil_value_from_type_info(ctx, cg_type(ctx, type))
 }
 
@@ -945,7 +943,7 @@ cg_type_ptr_from_type_info :: proc(ctx: ^Context, type_info: ^Type_Info, storage
 }
 
 @(require_results)
-cg_type_ptr_from_type :: proc(ctx: ^Context, type: ^types.Type, storage_class: Storage_Class) -> spv.Id {
+cg_type_ptr_from_type :: proc(ctx: ^Context, type: ^Type, storage_class: Storage_Class) -> spv.Id {
 	return cg_type_ptr_from_type_info(ctx, cg_type(ctx, type), storage_class)
 }
 
@@ -958,11 +956,11 @@ Type_Flags :: bit_set[Type_Flag]
 
 // NOTE(Franz): This just generates the spirv for the type and hashes the resulting spirv code to deduplicate the types
 @(require_results)
-cg_type :: proc(ctx: ^Context, type: ^types.Type, flags: Type_Flags = {}) -> (info: ^Type_Info) {
+cg_type :: proc(ctx: ^Context, type: ^Type, flags: Type_Flags = {}) -> (info: ^Type_Info) {
 	assert(type != nil)
 	assert(.Block not_in flags || .Explicit_Layout in flags)
 
-	type := types.core_type(type)
+	type := core_type(type)
 
 	cache_key := get_type_cache_key(type, flags)
 
@@ -1000,12 +998,12 @@ cg_type_internal :: proc(
 	ctx:                ^Context,
 	type_builder:       ^spv.Builder,
 	annotation_builder: ^spv.Builder,
-	type:               ^types.Type,
+	type:               ^Type,
 	flags:              Type_Flags,
 ) -> (info: Type_Info) {
 	assert(type != nil)
 	assert(.Block not_in flags || .Explicit_Layout in flags)
-	type := types.core_type(type)
+	type := core_type(type)
 
 	switch type.kind {
 	case .Uint:
@@ -1054,7 +1052,7 @@ cg_type_internal :: proc(
 	case .Bool:
 		info.type = spv.OpTypeBool(type_builder)
 	case .Struct, .Tuple:
-		type := type.variant.(^types.Struct)
+		type := type.variant.(^Type_Struct)
 		if len(type.fields) != 0 {
 			fields := make([]spv.Id, len(type.fields))
 			for &f, i in fields {
@@ -1069,7 +1067,7 @@ cg_type_internal :: proc(
 					continue
 				}
 				spv.OpMemberDecorate(annotation_builder, info.type, u32(i), .Offset, u32(f.offset))
-				type_matrix := type.fields[i].type.variant.(^types.Matrix) or_continue
+				type_matrix := type.fields[i].type.variant.(^Type_Matrix) or_continue
 				spv.OpMemberDecorate(annotation_builder, info.type, i, .MatrixStride, u32(type_matrix.col_type.size))
 				spv.OpMemberDecorate(annotation_builder, info.type, i, .ColMajor)
 			}
@@ -1080,43 +1078,43 @@ cg_type_internal :: proc(
 			info.type = ctx.type_void
 		}
 	case .Array:
-		type := type.variant.(^types.Array)
-		if type.count >= 2 && type.count <= 4 && types.is_numeric(type.elem) {
+		type := type.variant.(^Type_Array)
+		if type.count >= 2 && type.count <= 4 && type_is_numeric(type.elem) {
 			info.type = spv.OpTypeVector(type_builder, cg_type(ctx, type.elem).type, u32(type.count))
 		} else {
 			info.type = spv.OpTypeArray(type_builder, cg_type(ctx, type.elem).type, cg_constant(ctx, i64(type.count), nil).id)
 		}
 	case .Matrix:
-		type     := type.variant.(^types.Matrix)
+		type     := type.variant.(^Type_Matrix)
 		info.type = spv.OpTypeMatrix(type_builder, cg_type(ctx, type.col_type).type, u32(type.cols))
 		ctx.capabilities[.Matrix] = {}
 	case .Proc:
-		type := type.variant.(^types.Proc)
+		type := type.variant.(^Type_Proc)
 		args := make([]spv.Id, len(type.args))
 		for &arg, i in args {
 			arg = cg_type(ctx, type.args[i].type).type
 		}
 		info.type = spv.OpTypeFunction(type_builder, cg_type(ctx, type.return_type).type, ..args)
 	case .Sampler:
-		type := type.variant.(^types.Image)
-		sampled_type: ^types.Type
-		if types.is_numeric(type.texel_type) {
+		type := type.variant.(^Type_Image)
+		sampled_type: ^Type
+		if type_is_numeric(type.texel_type) {
 			sampled_type = type.texel_type
 		} else {
-			assert(types.is_array(type.texel_type))
-			sampled_type = types.array_elem(type.texel_type)
+			assert(type_is_array(type.texel_type))
+			sampled_type = array_elem(type.texel_type)
 		}
 
 		info.image_type = spv.OpTypeImage(type_builder, cg_type(ctx, sampled_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 1, .Unknown)
 		info.type       = spv.OpTypeSampledImage(type_builder, info.image_type)
 	case .Image:
-		type := type.variant.(^types.Image)
-		texel_type: ^types.Type
-		if types.is_numeric(type.texel_type) {
+		type := type.variant.(^Type_Image)
+		texel_type: ^Type
+		if type_is_numeric(type.texel_type) {
 			texel_type = type.texel_type
 		} else {
-			assert(types.is_array(type.texel_type))
-			texel_type = types.array_elem(type.texel_type)
+			assert(type_is_array(type.texel_type))
+			texel_type = array_elem(type.texel_type)
 		}
 
 		image_format: spv.ImageFormat
@@ -1144,7 +1142,7 @@ cg_type_internal :: proc(
 
 		info.type = spv.OpTypeImage(type_builder, cg_type(ctx, texel_type).type, spv.Dim(type.dimensions - 1), 0, 0, 0, 2, image_format)
 	case .Buffer:
-		type := type.variant.(^types.Buffer)
+		type := type.variant.(^Type_Buffer)
 		elem := cg_type(ctx, type.elem, { .Explicit_Layout, })
 		if type.physical {
 			ctx.extensions["SPV_KHR_physical_storage_buffer"] = {}
@@ -1166,33 +1164,24 @@ cg_type_internal :: proc(
 			}
 		}
 	case .Opaque:
-		type   := type.variant.(^types.Opaque)
+		type   := type.variant.(^Type_Opaque)
 		opcode := reflect.enum_from_name(spv.Op, type.name) or_else fmt.panicf("Invalid opaque type: '%s' (this needs a better error message)", type.name)
 		append(&type_builder.data, u32(opcode) | u32(2 << 16))
 		id := spv.next_id(type_builder)
 		append(&type_builder.data, id)
 		info.type = spv.Id(id)
-	case .Invalid, .Enum, .Bit_Set, .Complex, .Quaternion, .Proc_Group, .Any, .Named:
+	case .Complex, .Quaternion:
+		return cg_type_internal(ctx, type_builder, annotation_builder, type.variant.(^Type_Complex).array, flags)
+	case .Invalid, .Enum, .Bit_Set, .Proc_Group, .Any, .Named:
 		unreachable()
 	}
 
 	return
 }
 
-image_format_names: [spv.ImageFormat]string
-
-@(init)
-image_format_table_init :: proc "contextless" () {
-	context = runtime.default_context()
-
-	for &name, image_format in image_format_names {
-		name = strings.to_lower(reflect.enum_name_from_value(image_format) or_else panic(""))
-	}
-}
-
-cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_name: string, shader_stage: ast.Shader_Stage) {
+cg_proc_internal :: proc(ctx: ^Context, p: ^Expr_Proc_Lit, id: spv.Id, link_name: string, shader_stage: Shader_Stage) {
 	ctx.shader_stage  = shader_stage
-	type             := p.type.variant.(^types.Proc)
+	type             := p.type.variant.(^Type_Proc)
 	return_type_info := cg_type(ctx, type.return_type)
 	proc_type_id     := cg_type(ctx, type).type
 	return_type_id   := return_type_info.type
@@ -1211,8 +1200,8 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 		ctx.functions.current_id = &ctx.current_id
 	}
 
-	scope := scope_push(ctx)
-	defer scope_pop(ctx)
+	scope := cg_scope_push(ctx)
+	defer cg_scope_pop(ctx)
 
 	return_value: spv.Id
 	body := spv.Builder { current_id = &ctx.current_id, }
@@ -1229,7 +1218,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 				location = u32(arg.location)
 			}
 			spv.OpDecorate(&ctx.annotations, id, .Location, location)
-			if types.is_integer(arg.type) || (types.is_array(arg.type) && types.is_integer(types.array_elem(arg.type))) {
+			if type_is_integer(arg.type) || (type_is_array(arg.type) && type_is_integer(array_elem(arg.type))) {
 				spv.OpDecorate(&ctx.annotations, id, .Flat)
 			}
 		}
@@ -1252,7 +1241,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 					location = u32(ret.location)
 				}
 				spv.OpDecorate(&ctx.annotations, id, .Location, location)
-				if types.is_integer(ret.type) || (types.is_array(ret.type) && types.is_integer(types.array_elem(ret.type))) {
+				if type_is_integer(ret.type) || (type_is_array(ret.type) && type_is_integer(array_elem(ret.type))) {
 					spv.OpDecorate(&ctx.annotations, id, .Flat)
 				}
 			}
@@ -1357,7 +1346,7 @@ cg_proc_internal :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, id: spv.Id, link_
 }
 
 @(require_results)
-cg_proc_lit :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, shader_stage: ast.Shader_Stage) -> Value {
+cg_proc_lit :: proc(ctx: ^Context, p: ^Expr_Proc_Lit, shader_stage: Shader_Stage) -> Cg_Value {
 	ctx.current_id += 1
 	id := ctx.current_id
 
@@ -1372,7 +1361,7 @@ cg_proc_lit :: proc(ctx: ^Context, p: ^ast.Expr_Proc_Lit, shader_stage: ast.Shad
 }
 
 @(require_results)
-cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Value) -> spv.Id {
+cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Cg_Value) -> spv.Id {
 	if len(value.swizzle) != 0 {
 		id := value.id
 		if value.storage_class != .By_Value {
@@ -1380,8 +1369,8 @@ cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Value) -> spv.Id {
 		}
 		return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, id, id, ..value.swizzle)
 	}
-	if value.explicit_layout && types.is_struct(value.type) {
-		type    := value.type.variant.(^types.Struct)
+	if value.explicit_layout && type_is_struct(value.type) {
+		type    := value.type.variant.(^Type_Struct)
 		members := make([dynamic]spv.Id, 0, len(type.fields), context.temp_allocator)
 		// TODO: handle members that are structs
 		for f, i in type.fields {
@@ -1399,17 +1388,17 @@ cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Value) -> spv.Id {
 	case .Image:
 		ctx.capabilities[.StorageImageReadWithoutFormat] = {}
 
-		texel_type: ^types.Type
+		texel_type: ^Type
 		vector_len: int
-		if types.is_numeric(value.type) {
+		if type_is_numeric(value.type) {
 			vector_len = 1
-			texel_type = types.array_new(value.type, 4, context.temp_allocator)
-		} else if types.is_array(value.type) {
-			vector_len = types.array_len(value.type)
+			texel_type = array_new(value.type, 4, context.temp_allocator)
+		} else if type_is_array(value.type) {
+			vector_len = array_len(value.type)
 			if vector_len == 4 {
 				texel_type = value.type
 			} else {
-				texel_type = types.array_new(types.array_elem(value.type), 4, context.temp_allocator)
+				texel_type = array_new(array_elem(value.type), 4, context.temp_allocator)
 			}
 		} else {
 			panic("")
@@ -1439,27 +1428,27 @@ cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Value) -> spv.Id {
 
 @(require_results)
 cg_expr_binary :: proc(
-	ctx:                  ^Context,
-	builder:              ^spv.Builder,
-	op:                   tokenizer.Token_Kind,
-	lhs_value, rhs_value: Value,
-	type:                ^^types.Type,
+	ctx:                 ^Context,
+	builder:             ^spv.Builder,
+	op:                   Token_Kind,
+	lhs_value, rhs_value: Cg_Value,
+	type:               ^^Type,
 ) -> spv.Id {
 	lhs      := lhs_value.id
 	rhs      := rhs_value.id
 	lhs_type := lhs_value.type
 	rhs_type := rhs_value.type
 
-	if checker.op_is_relation(op) {
-		type^      = types.t_bool
+	if op_is_relation(op) {
+		type^      = t_bool
 		type_info := cg_type(ctx, type^)
 
-		t: ^types.Type
+		t: ^Type
 		if lhs_type.kind == .Float {
-			t   = types.core_type(lhs_type)
+			t   = core_type(lhs_type)
 			rhs = cg_cast(ctx, builder, { id = rhs, type = rhs_type, }, t)
 		} else {
-			t   = types.core_type(rhs_type)
+			t   = core_type(rhs_type)
 			lhs = cg_cast(ctx, builder, { id = lhs, type = lhs_type, }, t)
 		}
 		#partial switch t.kind {
@@ -1519,15 +1508,15 @@ cg_expr_binary :: proc(
 		panic("")
 	}
 
-	type^ = types.op_result_type(lhs_type, rhs_type, op == .Multiply, context.temp_allocator)
+	type^ = op_result_type(lhs_type, rhs_type, op == .Multiply, context.temp_allocator)
 
 	cg_binary_op :: proc(
 		ctx:         ^Context,
 		builder:     ^spv.Builder,
 		result_type: spv.Id,
-		lhs, rhs:    Value,
-		type:        ^types.Type,
-		op:          tokenizer.Token_Kind,
+		lhs, rhs:    Cg_Value,
+		type:        ^Type,
+		op:          Token_Kind,
 	) -> spv.Id {
 		runtime_proc:   Runtime_Proc
 		binary_op_proc: proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id)
@@ -1611,21 +1600,21 @@ cg_expr_binary :: proc(
 			}
 
 			if lhs.type.kind == .Array && rhs.type.kind == .Array {
-				len := types.array_len(lhs.type)
+				len := array_len(lhs.type)
 
 				if len < 4 {
 					return cg_binary_op(
 						ctx,
 						builder,
 						result_type,
-						{ id = lhs.id, type = types.array_elem(lhs.type), },
-						{ id = rhs.id, type = types.array_elem(rhs.type), },
-						types.array_elem(type),
+						{ id = lhs.id, type = array_elem(lhs.type), },
+						{ id = rhs.id, type = array_elem(rhs.type), },
+						array_elem(type),
 						op,
 					)
 				}
 
-				elem    := types.array_elem(type)
+				elem    := array_elem(type)
 				elem_id := cg_type(ctx, elem).type
 
 				values := make([]spv.Id, len, context.temp_allocator)
@@ -1651,20 +1640,20 @@ cg_expr_binary :: proc(
 					ctx,
 					builder,
 					result_type,
-					{ id = lhs.id, type = types.complex_elem(lhs.type), },
-					{ id = rhs.id, type = types.complex_elem(rhs.type), },
-					types.complex_elem(type),
+					{ id = lhs.id, type = complex_elem(lhs.type), },
+					{ id = rhs.id, type = complex_elem(rhs.type), },
+					complex_elem(type),
 					op,
 				)
 			case .Multiply:
-				switch types.complex_elem(type).size {
+				switch complex_elem(type).size {
 				case 4:
 					runtime_proc = .Complex64_Mul
 				case 8:
 					runtime_proc = .Complex128_Mul
 				}
 			case .Divide:
-				switch types.complex_elem(type).size {
+				switch complex_elem(type).size {
 				case 4:
 					runtime_proc = .Complex64_Div
 				case 8:
@@ -1679,20 +1668,20 @@ cg_expr_binary :: proc(
 					ctx,
 					builder,
 					result_type,
-					{ id = lhs.id, type = types.complex_elem(lhs.type), },
-					{ id = rhs.id, type = types.complex_elem(rhs.type), },
-					types.complex_elem(type),
+					{ id = lhs.id, type = complex_elem(lhs.type), },
+					{ id = rhs.id, type = complex_elem(rhs.type), },
+					complex_elem(type),
 					op,
 				)
 			case .Multiply:
-				switch types.complex_elem(type).size {
+				switch complex_elem(type).size {
 				case 4:
 					runtime_proc = .Quaternion128_Mul
 				case 8:
 					runtime_proc = .Quaternion256_Mul
 				}
 			case .Divide:
-				switch types.complex_elem(type).size {
+				switch complex_elem(type).size {
 				case 4:
 					runtime_proc = .Quaternion128_Div
 				case 8:
@@ -1720,10 +1709,10 @@ cg_expr_binary :: proc(
 cg_interface :: proc(
 	ctx:     ^Context,
 	builtin: string,
-) -> (value: Value) {
+) -> (value: Cg_Value) {
 	defer ctx.referenced_globals[value.id] = {}
 
-	info := checker.interface_infos[builtin]
+	info := interface_infos[builtin]
 
 	if cached, ok := ctx.interface_variables[info.id]; ok {
 		return cached
@@ -1749,7 +1738,7 @@ cg_interface :: proc(
 	spv.OpDecorate(&ctx.annotations, value.id, .BuiltIn, u32(info.id))
 
 	if ctx.shader_stage == .Fragment {
-		if types.is_integer(value.type) || (types.is_array(value.type) && types.is_integer(types.array_elem(value.type))) {
+		if type_is_integer(value.type) || (type_is_array(value.type) && type_is_integer(array_elem(value.type))) {
 			spv.OpDecorate(&ctx.annotations, value.id, .Flat)
 		}
 		#partial switch info.id {
@@ -1770,10 +1759,10 @@ cg_interface :: proc(
 cg_expr :: proc(
 	ctx:          ^Context,
 	builder:      ^spv.Builder,
-	expr:         ^ast.Expr,
+	expr:         ^Ast_Expr,
 	deref:        bool             = true,
-	shader_stage: ast.Shader_Stage = nil,
-) -> (value: Value) {
+	shader_stage: Shader_Stage = nil,
+) -> (value: Cg_Value) {
 	assert(expr      != nil)
 	assert(expr.type != nil)
 
@@ -1796,24 +1785,24 @@ cg_expr :: proc(
 cg_cast :: proc(
 	ctx:     ^Context,
 	builder: ^spv.Builder,
-	value:    Value,
-	type:    ^types.Type,
+	value:    Cg_Value,
+	type:    ^Type,
 ) -> spv.Id {
-	type               := types.core_type(type, true)
-	v_type             := types.core_type(value.type)
+	type               := core_type(type)
+	v_type             := core_type(value.type)
 	value              := value
 	value.id            = cg_deref(ctx, builder, value)
 	value.storage_class = nil
 
-	if types.equal(v_type, types.core_type(type)) {
+	if equal(v_type, core_type(type)) {
 		return value.id
 	}
 
 	ti := cg_type(ctx, type)
 
 	Cast_Op_Proc :: proc(builder: ^spv.Builder, result_type: spv.Id, value: spv.Id) -> (result: spv.Id)
-	numeric_cast_op_inst :: proc(from, to: ^types.Type) -> Cast_Op_Proc {
-		if from.size == to.size && types.is_integer(from) && types.is_integer(to) {
+	numeric_cast_op_inst :: proc(from, to: ^Type) -> Cast_Op_Proc {
+		if from.size == to.size && type_is_integer(from) && type_is_integer(to) {
 			return spv.OpBitcast
 		}
 
@@ -1864,11 +1853,14 @@ cg_cast :: proc(
 
 	#partial switch type.kind {
 	case .Complex:
+		if type_is_array(v_type) {
+			return value.id
+		}
 		zero := cg_nil_value(ctx, ti)
 		return spv.OpCompositeInsert(builder, ti.type, value.id, zero, 0)
 	case .Array:
-		type := type.variant.(^types.Array)
-		if types.is_numeric(v_type) {
+		type := type.variant.(^Type_Array)
+		if type_is_numeric(v_type) {
 			values := make([]spv.Id, type.count, context.temp_allocator)
 			casted := cg_cast(ctx, builder, value, type.elem)
 			for &v in values {
@@ -1876,13 +1868,13 @@ cg_cast :: proc(
 			}
 			return spv.OpCompositeConstruct(builder, ti.type, ..values)
 		} else {
-			op_inst := numeric_cast_op_inst(types.array_elem(v_type), type.elem)
+			op_inst := numeric_cast_op_inst(array_elem(v_type), type.elem)
 			assert(op_inst != nil)
 			return op_inst(builder, ti.type, value.id)
 		}
 	case .Matrix:
-		assert(types.is_numeric(v_type))
-		type    := type.variant.(^types.Matrix)
+		assert(type_is_numeric(v_type))
+		type    := type.variant.(^Type_Matrix)
 		cols    := make([]spv.Id, type.cols, context.temp_allocator)
 		col_ti  := cg_type(ctx, type.col_type)
 		elem_ti := cg_type(ctx, type.col_type)
@@ -1910,15 +1902,15 @@ spv_version :: proc(major, minor: u32) -> u32 {
 cg_expr_internal :: proc(
 	ctx:     ^Context,
 	builder: ^spv.Builder,
-	expr:    ^ast.Expr,
-	shader_stage: ast.Shader_Stage = nil,
-) -> (value: Value) {
+	expr:    ^Ast_Expr,
+	shader_stage: Shader_Stage = nil,
+) -> (value: Cg_Value) {
 	assert(expr      != nil)
 	assert(expr.type != nil)
 
 	if expr.const_value != nil {
-		if v, ok := expr.derived_expr.(^ast.Expr_Constant); ok && v.imaginary != nil {
-			val  := cg_constant(ctx, expr.const_value, types.complex_elem(expr.type))
+		if v, ok := expr.derived_expr.(^Expr_Constant); ok && v.imaginary != nil {
+			val  := cg_constant(ctx, expr.const_value, complex_elem(expr.type))
 			ti   := cg_type(ctx, expr.type)
 			zero := cg_nil_value(ctx, ti)
 			index: u32
@@ -1938,7 +1930,7 @@ cg_expr_internal :: proc(
 	}
 
 	@(require_results)
-	cg_ident :: proc(ctx: ^Context, builder: ^spv.Builder, ident: ^ast.Expr_Ident) -> (value: Value) {
+	cg_ident :: proc(ctx: ^Context, builder: ^spv.Builder, ident: ^Expr_Ident) -> (value: Cg_Value) {
 		entity := ident.entity
 		value   = cg_lookup_entity(ctx, entity)
 		#partial switch value.storage_class {
@@ -1954,31 +1946,31 @@ cg_expr_internal :: proc(
 	}
 
 	switch v in expr.derived_expr {
-	case ^ast.Expr_Interface:
+	case ^Expr_Interface:
 		return cg_interface(ctx, v.ident.text)
-	case ^ast.Expr_Constant:
+	case ^Expr_Constant:
 		panic("Constant expr without a constant value")
-	case ^ast.Expr_Binary:
+	case ^Expr_Binary:
 		lhs, rhs := cg_expr(ctx, builder, v.lhs), cg_expr(ctx, builder, v.rhs)
 		value.id  = cg_expr_binary(ctx, builder, v.op, lhs, rhs, &value.type)
 		return
-	case ^ast.Expr_Ident:
+	case ^Expr_Ident:
 		return cg_ident(ctx, builder, v)
-	case ^ast.Expr_Proc_Lit:
+	case ^Expr_Proc_Lit:
 		return cg_proc_lit(ctx, v, shader_stage)
-	case ^ast.Expr_Proc_Sig:
-	case ^ast.Expr_Proc_Group:
+	case ^Expr_Proc_Sig:
+	case ^Expr_Proc_Group:
 		members := make([]spv.Id, len(v.members))
 		for m, i in v.members {
 			members[i] = cg_expr(ctx, builder, m).id
 		}
 		value.group_members = members
 		return
-	case ^ast.Expr_Paren:
+	case ^Expr_Paren:
 		return cg_expr(ctx, builder, v.expr)
-	case ^ast.Expr_Ellipsis:
+	case ^Expr_Ellipsis:
 		return cg_expr(ctx, builder, v.expr)
-	case ^ast.Expr_Selector:
+	case ^Expr_Selector:
 		if v.selector.entity != nil && v.selector.entity.kind != .Enum_Value && v.selector.entity.kind != .Struct_Field {
 			return cg_ident(ctx, builder, v.selector)
 		}
@@ -1986,7 +1978,7 @@ cg_expr_internal :: proc(
 
 		lhs_type := v.lhs.type
 		if lhs.type.kind == .Struct {
-			field_type := lhs_type.variant.(^types.Struct).fields[v.field_index].type
+			field_type := lhs_type.variant.(^Type_Struct).fields[v.field_index].type
 			type_info  := cg_type(ctx, field_type)
 
 			ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, lhs.storage_class), lhs.id, cg_constant(ctx, i64(v.field_index), nil).id)
@@ -1997,10 +1989,10 @@ cg_expr_internal :: proc(
 		assert(lhs.type.kind == .Array)
 
 		if len(v.swizzle) == 1 && lhs.storage_class != .Image {
-			t := types.array_elem(lhs.type)
+			t := array_elem(lhs.type)
 			if lhs.storage_class != nil {
 				id    := spv.OpAccessChain(builder, cg_type_ptr(ctx, t, lhs.storage_class), lhs.id, cg_constant(ctx, i64(v.swizzle[0]), nil).id)
-				value := Value { id = id, storage_class = lhs.storage_class, type = t, }
+				value := Cg_Value { id = id, storage_class = lhs.storage_class, type = t, }
 				return value
 			}
 
@@ -2016,11 +2008,11 @@ cg_expr_internal :: proc(
 			coord         = lhs.coord,
 		}
 
-	case ^ast.Expr_Call:
+	case ^Expr_Call:
 		if v.is_directive {
-			#partial switch v.lhs.derived.(^ast.Expr_Directive).directive {
+			#partial switch v.lhs.derived.(^Expr_Directive).directive {
 			case .Capability:
-				ident := v.args[0].value.derived.(^ast.Expr_Ident)
+				ident := v.args[0].value.derived.(^Expr_Ident)
 				cap   := reflect.enum_from_name(spv.Capability, ident.text) or_else fmt.panicf("Invalid capability: '%s' (this needs a better error message)", ident.text)
 				ctx.capabilities[cap] = {}
 			}
@@ -2036,20 +2028,31 @@ cg_expr_internal :: proc(
 			     .Size_Of,
 			     .Align_Of,
 			     .Type_Of,
-			     .Type_Is_Array,
+			     .Type_Is_Uint,
+			     .Type_Is_Int,
+			     .Type_Is_Bool,
 			     .Type_Is_Float,
-			     .Type_Is_Boolean,
-			     .Type_Is_Integer,
-			     .Type_Is_Numeric,
+			     .Type_Is_Any,
+			     .Type_Is_Struct,
+			     .Type_Is_Matrix,
+			     .Type_Is_Array,
+			     .Type_Is_Buffer,
+			     .Type_Is_Proc,
+			     .Type_Is_Proc_Group,
+			     .Type_Is_Sampler,
+			     .Type_Is_Image,
+			     .Type_Is_Enum,
+			     .Type_Is_Bit_Set,
 			     .Type_Is_Complex,
 			     .Type_Is_Quaternion,
-			     .Type_Is_Matrix:
+			     .Type_Is_Opaque,
+			     .Type_Is_Named:
 				fmt.panicf("invalid builtin: %v", v.builtin)
 			case .Dot:
-				t := types.op_result_type(v.args[0].value.type, v.args[1].value.type)
+				t := op_result_type(v.args[0].value.type, v.args[1].value.type)
 				a := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), t)
 				b := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), t)
-				elem := types.array_elem(t)
+				elem := array_elem(t)
 				elem_ti := cg_type(ctx, elem)
 				id: spv.Id
 				#partial switch elem.kind {
@@ -2066,7 +2069,7 @@ cg_expr_internal :: proc(
 			case .Cross:
 				a   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
 				b   := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[1].value), v.type)
-				e   := types.array_elem(v.type)
+				e   := array_elem(v.type)
 				eti := cg_type(ctx, e)
 				id: spv.Id
 				#partial switch e.kind {
@@ -2094,7 +2097,7 @@ cg_expr_internal :: proc(
 				f: type_of(spv_glsl.OpFMin)
 				elem_type := v.type
 				if v.type.kind == .Array {
-					elem_type = types.array_elem(v.type)
+					elem_type = array_elem(v.type)
 				}
 
 				#partial switch elem_type.kind {
@@ -2167,10 +2170,10 @@ cg_expr_internal :: proc(
 				return { id = spv_glsl.OpFSign(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Abs:
 				t := v.args[0].value.type
-				if types.is_array(t) {
-					t = types.array_elem(t)
+				if type_is_array(t) {
+					t = array_elem(t)
 				}
-				if types.is_integer(t) {
+				if type_is_integer(t) {
 					return { id = spv_glsl.OpSAbs(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 				} else {
 					return { id = spv_glsl.OpFAbs(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
@@ -2184,11 +2187,11 @@ cg_expr_internal :: proc(
 				return { id = spv_glsl.OpNormalize(builder, cg_type(ctx, v.type).type, v.id), }
 			case .Length:
 				v := cg_expr(ctx, builder, v.args[0].value)
-				t: ^types.Type
-				if types.is_array(v.type) {
-					t = types.array_elem(v.type)
+				t: ^Type
+				if type_is_array(v.type) {
+					t = array_elem(v.type)
 				} else {
-					t = types.complex_elem(v.type)
+					t = complex_elem(v.type)
 				}
 				return { id = spv_glsl.OpLength(builder, cg_type(ctx, t).type, v.id), }
 			case .Distance:
@@ -2207,7 +2210,7 @@ cg_expr_internal :: proc(
 			case .Clamp:
 				elem_type := v.type
 				if v.type.kind == .Array {
-					elem_type = types.array_elem(v.type)
+					elem_type = array_elem(v.type)
 				}
 
 				value := cg_cast(ctx, builder, cg_expr(ctx, builder, v.args[0].value), v.type)
@@ -2275,8 +2278,8 @@ cg_expr_internal :: proc(
 				return { id = spv.OpISub(builder, ti.type, bits, ones), }
 			case .Find_Lsb, .Find_Msb, .Count_Leading_Zeros, .Count_Trailing_Zeros, .Count_Leading_Ones, .Count_Trailing_Ones:
 				t := v.type
-				if types.is_array(t) {
-					t = types.array_elem(t)
+				if type_is_array(t) {
+					t = array_elem(t)
 				}
 
 				arg := cg_expr(ctx, builder, v.args[0].value).id
@@ -2299,7 +2302,7 @@ cg_expr_internal :: proc(
 
 					bit_count := cg_constant(ctx, i64(t.size * 8), v.type).id
 					zero      := cg_nil_value(ctx, v.type)
-					is_zero   := spv.OpIEqual(builder, cg_type(ctx, types.t_bool).type, arg, zero)
+					is_zero   := spv.OpIEqual(builder, cg_type(ctx, t_bool).type, arg, zero)
 					return { id = spv.OpSelect(builder, ti.type, is_zero, bit_count, ret), }
 
 				case .Count_Trailing_Ones:
@@ -2309,7 +2312,7 @@ cg_expr_internal :: proc(
 					ret       := spv_glsl.OpFindILsb(builder, ti.type, arg)
 					bit_count := cg_constant(ctx, i64(t.size * 8), v.type).id
 					zero      := cg_nil_value(ctx, v.type)
-					is_zero   := spv.OpIEqual(builder, cg_type(ctx, types.t_bool).type, arg, zero)
+					is_zero   := spv.OpIEqual(builder, cg_type(ctx, t_bool).type, arg, zero)
 					return { id = spv.OpSelect(builder, ti.type, is_zero, bit_count, ret), }
 
 				case .Find_Lsb:
@@ -2345,18 +2348,18 @@ cg_expr_internal :: proc(
 
 		fn_value  := cg_expr(ctx, builder, v.lhs)
 		fn        := fn_value.id
-		proc_type := v.lhs.type.variant.(^types.Proc) or_else nil
+		proc_type := v.lhs.type.variant.(^Type_Proc) or_else nil
 		if member, ok := v.group_member.?; ok {
 			fn        = fn_value.group_members[member]
-			proc_type = v.lhs.type.variant.(^types.Proc_Group).members[member]
+			proc_type = v.lhs.type.variant.(^Type_Proc_Group).members[member]
 		}
 
 		args := make([dynamic]spv.Id, 0, len(v.args))
 		arg_i: int
 		for arg in v.args {
 			value  := cg_expr(ctx, builder, arg.value, deref = .By_Ptr not_in proc_type.args[arg_i].flags)
-			values := []Value{ value, }
-			deconstruct_tuple(ctx, builder, value.type, &values)
+			values := []Cg_Value{ value, }
+			cg_deconstruct_tuple(ctx, builder, value.type, &values)
 
 			for value in values {
 				id := value.id
@@ -2391,7 +2394,7 @@ cg_expr_internal :: proc(
 			id        = ret,
 			diverging = proc_type.diverging,
 		}
-	case ^ast.Expr_Compound:
+	case ^Expr_Compound:
 		if len(v.fields) == 0 {
 			return { id = cg_nil_value(ctx, cg_type(ctx, v.type)), }
 		}
@@ -2399,7 +2402,7 @@ cg_expr_internal :: proc(
 		if v.type.kind == .Matrix {
 			assert(!v.named)
 
-			type := v.type.variant.(^types.Matrix)
+			type := v.type.variant.(^Type_Matrix)
 			elem := type.col_type.elem
 
 			row_type_id := cg_type(ctx, type.col_type).type
@@ -2441,17 +2444,17 @@ cg_expr_internal :: proc(
 			values := make([]spv.Id, len(v.fields), context.temp_allocator)
 			i: int
 			for field in v.fields {
-				type: ^types.Type
+				type: ^Type
 				#partial switch v.type.kind {
 				case .Array:
-					type = types.array_elem(v.type)
+					type = array_elem(v.type)
 				case .Matrix:
-					type = types.matrix_elem(v.type)
+					type = matrix_elem(v.type)
 				case .Struct:
-					type = v.type.variant.(^types.Struct).fields[i].type
+					type = v.type.variant.(^Type_Struct).fields[i].type
 				}
 				value := cg_expr(ctx, builder, field.value)
-				if types.is_array(value.type) && types.is_array(v.type) {
+				if type_is_array(value.type) && type_is_array(v.type) {
 					values[i] = cg_deref(ctx, builder, value)
 				} else {
 					values[i] = cg_cast(ctx, builder, value, type)
@@ -2465,7 +2468,7 @@ cg_expr_internal :: proc(
 			}
 		}
 
-		if vector, ok := v.type.variant.(^types.Array); ok {
+		if vector, ok := v.type.variant.(^Type_Array); ok {
 			elem_type_id := cg_type(ctx, vector.elem).type
 			values       := make([]spv.Id, vector.count, context.temp_allocator)
 			for field in v.fields {
@@ -2473,7 +2476,7 @@ cg_expr_internal :: proc(
 				if len(field.swizzle) == 1 {
 					values[field.swizzle[0]] = cg_cast(ctx, builder, val, vector.elem)
 				} else {
-					vec := types.array_new(vector.elem, len(field.swizzle), context.temp_allocator)
+					vec := array_new(vector.elem, len(field.swizzle), context.temp_allocator)
 					val := cg_cast(ctx, builder, val, vec)
 
 					for dst_coord, src_coord in field.swizzle {
@@ -2491,7 +2494,7 @@ cg_expr_internal :: proc(
 			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values), }
 		}
 
-		fields := v.type.variant.(^types.Struct).fields
+		fields := v.type.variant.(^Type_Struct).fields
 		values := make([]spv.Id, len(fields), context.temp_allocator)
 		for field in v.fields {
 			index        := field.member_index
@@ -2506,27 +2509,27 @@ cg_expr_internal :: proc(
 			values[i] = cg_nil_value(ctx, cg_type(ctx, field.type))
 		}
 			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values), }
-	case ^ast.Expr_Index:
+	case ^Expr_Index:
 		lhs := cg_expr(ctx, builder, v.lhs, false)
 		rhs := cg_expr(ctx, builder, v.rhs)
 
-		if types.is_array(lhs.type) && len(lhs.swizzle) != 0 {
+		if type_is_array(lhs.type) && len(lhs.swizzle) != 0 {
 			lhs.id            = cg_deref(ctx, builder, lhs)
 			lhs.storage_class = {}
 			lhs.swizzle       = {}
 		}
 
-		if types.is_sampler(lhs.type) {
-			sampler    := lhs.type.variant.(^types.Image)
+		if type_is_sampler(lhs.type) {
+			sampler    := lhs.type.variant.(^Type_Image)
 			count      := 1
 			texel_type := sampler.texel_type
-			if v, ok := sampler.texel_type.variant.(^types.Array); ok {
+			if v, ok := sampler.texel_type.variant.(^Type_Array); ok {
 				count = v.count
 				if v.count != 4 {
-					texel_type = types.array_new(v.elem, 4, context.temp_allocator)
+					texel_type = array_new(v.elem, 4, context.temp_allocator)
 				}
 			} else {
-				texel_type = types.array_new(sampler.texel_type, 4, context.temp_allocator)
+				texel_type = array_new(sampler.texel_type, 4, context.temp_allocator)
 			}
 
 			image := cg_deref(ctx, builder, lhs)
@@ -2546,17 +2549,17 @@ cg_expr_internal :: proc(
 			}
 		}
 
-		if types.is_image(lhs.type) {
-			sampler    := lhs.type.variant.(^types.Image)
+		if type_is_image(lhs.type) {
+			sampler    := lhs.type.variant.(^Type_Image)
 			count      := 1
 			texel_type := sampler.texel_type
-			if v, ok := sampler.texel_type.variant.(^types.Array); ok {
+			if v, ok := sampler.texel_type.variant.(^Type_Array); ok {
 				count = v.count
 				if v.count != 4 {
-					texel_type = types.array_new(v.elem, 4, context.temp_allocator)
+					texel_type = array_new(v.elem, 4, context.temp_allocator)
 				}
 			} else {
-				texel_type = types.array_new(sampler.texel_type, 4, context.temp_allocator)
+				texel_type = array_new(sampler.texel_type, 4, context.temp_allocator)
 			}
 
 			return {
@@ -2566,8 +2569,8 @@ cg_expr_internal :: proc(
 			}
 		}
 
-		if types.is_buffer(lhs.type) {
-			buffer := lhs.type.variant.(^types.Buffer)
+		if type_is_buffer(lhs.type) {
+			buffer := lhs.type.variant.(^Type_Buffer)
 			elem   := cg_type(ctx, buffer.elem, { .Explicit_Layout, })
 
 			if buffer.physical {
@@ -2603,17 +2606,17 @@ cg_expr_internal :: proc(
 			}
 		}
 
-		type := types.array_elem(lhs.type.variant.(^types.Array))
+		type := array_elem(lhs.type.variant.(^Type_Array))
 		return {
 			id   = spv.OpVectorExtractDynamic(builder, cg_type(ctx, type).type, lhs.id, rhs.id),
 			type = type,
 		}
 
-	case ^ast.Expr_Cast:
+	case ^Expr_Cast:
 		return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.value), v.type), }
-	case ^ast.Expr_Unary:
+	case ^Expr_Unary:
 		e    := cg_expr(ctx, builder, v.expr)
-		type := types.core_type(expr.type)
+		type := core_type(expr.type, complex_to_array = true)
 		ti   := cg_type(ctx, type)
 		#partial switch v.op {
 		case .Xor:
@@ -2621,14 +2624,14 @@ cg_expr_internal :: proc(
 		case .Subtract:
 			#partial switch type.kind {
 			case .Matrix:
-				#partial switch types.matrix_elem(type).kind {
+				#partial switch matrix_elem(type).kind {
 				case .Int, .Uint:
 					return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
 				case .Float:
 					return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
 				}
 			case .Array:
-				#partial switch types.array_elem(type).kind {
+				#partial switch array_elem(type).kind {
 				case .Int, .Uint:
 					return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
 				case .Float:
@@ -2642,21 +2645,22 @@ cg_expr_internal :: proc(
 		case .Add:
 			return e
 		}
-	case ^ast.Expr_Ternary:
+	case ^Expr_Ternary:
 		cond       := cg_expr(ctx, builder, v.cond).id
 		then_value := cg_expr(ctx, builder, v.then_expr).id
 		else_value := cg_expr(ctx, builder, v.else_expr).id
 		return { id = spv.OpSelect(builder, cg_type(ctx, v.type).type, cond, then_value, else_value), }
-	case ^ast.Type_Struct, ^ast.Type_Array, ^ast.Type_Matrix, ^ast.Type_Image, ^ast.Type_Enum, ^ast.Type_Bit_Set, ^ast.Type_Opaque, ^ast.Type_Distinct:
+	case ^Expr_Type_Struct, ^Expr_Type_Array, ^Expr_Type_Matrix, ^Expr_Type_Image, ^Expr_Type_Enum, ^Expr_Type_Bit_Set, ^Expr_Type_Opaque, ^Expr_Type_Distinct:
 		panic("tried to cg type as expression")
-	case ^ast.Expr_Directive:
+	case ^Expr_Directive:
 		panic("tried to cg directive as expression")
 	}
 
-	fmt.panicf("unimplemented: %v", reflect.union_variant_typeid(expr.derived_expr))
+	fmt.panicf("unimplemented: %v\n", reflect.union_variant_typeid(expr.derived_expr))
 }
 
-cg_lookup_proc_scope :: proc(ctx: ^Context) -> ^Scope {
+@(require_results)
+cg_lookup_proc_scope :: proc(ctx: ^Context) -> ^Cg_Scope {
 	#reverse for &scope in ctx.scopes {
 		if scope.return_type != nil {
 			return scope
@@ -2665,27 +2669,30 @@ cg_lookup_proc_scope :: proc(ctx: ^Context) -> ^Scope {
 	panic("")
 }
 
+@(require_results)
 cg_lookup_return_value :: proc(ctx: ^Context) -> spv.Id {
 	return cg_lookup_proc_scope(ctx).return_value
 }
 
-cg_lookup_return_type :: proc(ctx: ^Context) -> ^types.Type {
+@(require_results)
+cg_lookup_return_type :: proc(ctx: ^Context) -> ^Type {
 	return cg_lookup_proc_scope(ctx).return_type
 }
 
-stmt_requires_line_info :: proc(stmt: ^ast.Stmt) -> bool {
+@(require_results)
+stmt_requires_line_info :: proc(stmt: ^Ast_Stmt) -> bool {
 	#partial switch v in stmt.derived_stmt {
-	case ^ast.Decl_Value:
+	case ^Decl_Value:
 		return v.mutable
-	case ^ast.Stmt_When:
+	case ^Stmt_When:
 		return false
-	case ^ast.Stmt_Block:
+	case ^Stmt_Block:
 		return false
 	}
 	return true
 }
 
-cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global := false) -> (diverged: bool) {
+cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^Ast_Stmt, global := false) -> (diverged: bool) {
 	if stmt == nil {
 		return
 	}
@@ -2697,7 +2704,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 	}
 
 	switch v in stmt.derived_stmt {
-	case ^ast.Stmt_Return:
+	case ^Stmt_Return:
 		if len(v.values) == 0 {
 			proc_scope  := cg_lookup_proc_scope(ctx)
 			return_type := cg_type(ctx, proc_scope.return_type)
@@ -2714,16 +2721,16 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		return_type  := proc_scope.return_type
 
 		if return_value == 0 { // return values are shader stage outputs
-			type_fields: []types.Field
-			if types.is_tuple(return_type) {
-				type_fields = return_type.variant.(^types.Struct).fields
+			type_fields: []^Entity
+			if type_is_tuple(return_type) {
+				type_fields = return_type.variant.(^Type_Struct).fields
 			} else {
-				type_fields = { { type = return_type, }, }
+				type_fields = { &{ type = return_type, }, }
 			}
 			i: int
 			for value in v.values {
-				values := []Value{ cg_expr(ctx, builder, value), }
-				deconstruct_tuple(ctx, builder, value.type, &values)
+				values := []Cg_Value{ cg_expr(ctx, builder, value), }
+				cg_deconstruct_tuple(ctx, builder, value.type, &values)
 
 				for v in values {
 					ptr := proc_scope.outputs[i]
@@ -2735,13 +2742,13 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		} else {
 			return_ti := cg_type(ctx, return_type)
 
-			if types.is_tuple(return_type) {
-				type := return_type.variant.(^types.Struct)
+			if type_is_tuple(return_type) {
+				type := return_type.variant.(^Type_Struct)
 
 				i: int
 				for value in v.values {
-					values := []Value{ cg_expr(ctx, builder, value), }
-					deconstruct_tuple(ctx, builder, value.type, &values)
+					values := []Cg_Value{ cg_expr(ctx, builder, value), }
+					cg_deconstruct_tuple(ctx, builder, value.type, &values)
 
 					for v in values {
 						ptr := spv.OpAccessChain(
@@ -2765,7 +2772,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		}
 
 		return true
-	case ^ast.Stmt_Break:
+	case ^Stmt_Break:
 		target: spv.Id
 		if v.label != nil {
 			target = find_scope_by_label(ctx, v.label.entity).end_id
@@ -2774,7 +2781,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		}
 		spv.OpBranch(builder, target)
 		return true
-	case ^ast.Stmt_Continue:
+	case ^Stmt_Continue:
 		target: spv.Id
 		if v.label != nil {
 			target = find_scope_by_label(ctx, v.label.entity).continue_id
@@ -2783,9 +2790,9 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		}
 		spv.OpBranch(builder, target)
 		return true
-	case ^ast.Stmt_For_Range:
-		scope_push(ctx, v.label)
-		defer scope_pop(ctx)
+	case ^Stmt_For_Range:
+		cg_scope_push(ctx, v.label)
+		defer cg_scope_pop(ctx)
 
 		iter_type := v.variable.type
 		iter_ti   := cg_type(ctx, v.variable.type)
@@ -2815,21 +2822,21 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		#partial switch iter_type.kind {
 		case .Uint:
 			if v.inclusive {
-				condition = spv.OpULessThanEqual(header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+				condition = spv.OpULessThanEqual(header_builder, cg_type(ctx, t_bool).type, iter_value, end_value)
 			} else {
-				condition = spv.OpULessThan     (header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+				condition = spv.OpULessThan     (header_builder, cg_type(ctx, t_bool).type, iter_value, end_value)
 			}
 		case .Int:
 			if v.inclusive {
-				condition = spv.OpSLessThanEqual(header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+				condition = spv.OpSLessThanEqual(header_builder, cg_type(ctx, t_bool).type, iter_value, end_value)
 			} else {
-				condition = spv.OpSLessThan     (header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+				condition = spv.OpSLessThan     (header_builder, cg_type(ctx, t_bool).type, iter_value, end_value)
 			}
 		case .Float:
 			if v.inclusive {
-				condition = spv.OpFOrdLessThanEqual(header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+				condition = spv.OpFOrdLessThanEqual(header_builder, cg_type(ctx, t_bool).type, iter_value, end_value)
 			} else {
-				condition = spv.OpFOrdLessThan     (header_builder, cg_type(ctx, types.t_bool).type, iter_value, end_value)
+				condition = spv.OpFOrdLessThan     (header_builder, cg_type(ctx, t_bool).type, iter_value, end_value)
 			}
 		}
 		assert(condition != 0)
@@ -2858,9 +2865,9 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		append(&builder.data, ..post_builder.data[:])
 		append(&builder.data, ..end_builder.data[:])
 
-	case ^ast.Stmt_For:
-		scope_push(ctx, v.label, .Loop)
-		defer scope_pop(ctx)
+	case ^Stmt_For:
+		cg_scope_push(ctx, v.label, .Loop)
+		defer cg_scope_pop(ctx)
 
 		cg_stmt(ctx, builder, v.init)
 
@@ -2899,7 +2906,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		append(&builder.data, ..post_builder.data[:])
 		append(&builder.data, ..end_builder.data[:])
 
-	case ^ast.Stmt_Block:
+	case ^Stmt_Block:
 		block_builder := spv.Builder{ current_id = &ctx.current_id, }
 		end_builder   := spv.Builder{ current_id = &ctx.current_id, }
 
@@ -2915,9 +2922,9 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		append(&builder.data, ..block_builder.data[:])
 		append(&builder.data, ..end_builder.data[:])
 
-	case ^ast.Stmt_If:
-		scope_push(ctx, v.label)
-		defer scope_pop(ctx)
+	case ^Stmt_If:
+		cg_scope_push(ctx, v.label)
+		defer cg_scope_pop(ctx)
 
 		cg_stmt(ctx, builder, v.init)
 		cond := cg_expr(ctx, builder, v.cond)
@@ -2940,15 +2947,15 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		append(&builder.data, ..then_block.data[:])
 		append(&builder.data, ..else_block.data[:])
 		append(&builder.data, ..end_block.data[:])
-	case ^ast.Stmt_When:
+	case ^Stmt_When:
 		if v.cond.const_value.(bool) {
 			return cg_stmt_list(ctx, builder, v.then_block, global = global)
 		} else {
 			return cg_stmt_list(ctx, builder, v.else_block, global = global)
 		}
-	case ^ast.Stmt_Switch:
-		scope_push(ctx, v.label)
-		defer scope_pop(ctx)
+	case ^Stmt_Switch:
+		cg_scope_push(ctx, v.label)
+		defer cg_scope_pop(ctx)
 
 		cg_stmt(ctx, builder, v.init)
 		cond := cg_expr(ctx, builder, v.cond)
@@ -2994,22 +3001,22 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 		append(&builder.data, ..body_block.data[:])
 		append(&builder.data, ..end_block.data[:])
 
-	case ^ast.Stmt_Assign:
+	case ^Stmt_Assign:
 		lhs_i := 0
 		for value in v.rhs {
-			values := []Value{ cg_expr(ctx, builder, value), }
-			deconstruct_tuple(ctx, builder, value.type, &values)
+			values := []Cg_Value{ cg_expr(ctx, builder, value), }
+			cg_deconstruct_tuple(ctx, builder, value.type, &values)
 
 			for rhs in values {
 				defer lhs_i += 1
-				if ident, ok := v.lhs[lhs_i].derived.(^ast.Expr_Ident); ok && ident.text == "_" {
+				if ident, ok := v.lhs[lhs_i].derived.(^Expr_Ident); ok && ident.text == "_" {
 					continue
 				}
 
 				lhs := cg_expr(ctx, builder, v.lhs[lhs_i], deref = false)
 
 				if lhs.explicit_layout {
-					type := lhs.type.variant.(^types.Struct)
+					type := lhs.type.variant.(^Type_Struct)
 					// TODO: handle members that are structs
 					for f, i in type.fields {
 						assert(f.type.kind != .Struct)
@@ -3027,7 +3034,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 
 				if len(lhs.swizzle) != 0 {
 					type := cg_type(ctx, lhs.real_type)
-					elem := cg_type(ctx, types.array_elem(lhs.real_type))
+					elem := cg_type(ctx, array_elem(lhs.real_type))
 
 					lhs_ptr       := lhs.id
 					storage_class := lhs.storage_class
@@ -3075,7 +3082,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 					continue
 				}
 
-				t: ^types.Type
+				t: ^Type
 				value := cg_expr_binary(
 					ctx,
 					builder,
@@ -3091,33 +3098,33 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^ast.Stmt, global :=
 				}
 			}
 		}
-	case ^ast.Stmt_Expr:
+	case ^Stmt_Expr:
 		e := cg_expr(ctx, builder, v.expr, false)
 		if e.diverging {
 			return true
 		}
 
-	case ^ast.Decl_Value:
+	case ^Decl_Value:
 		cg_value_decl(ctx, builder, v, global)
-	case ^ast.Decl_Import:
-	case ^ast.Decl_Extension:
+	case ^Decl_Import:
+	case ^Decl_Extension:
 		cg_extension(ctx, v)
 	}
 
 	return
 }
 
-cg_extension :: proc(ctx: ^Context, extension: ^ast.Decl_Extension) {
+cg_extension :: proc(ctx: ^Context, extension: ^Decl_Extension) {
 	ctx.extensions[extension.extension.const_value.(string)] = {}
 
 	for decl in extension.body {
-		v      := decl.derived.(^ast.Decl_Value)
+		v      := decl.derived.(^Decl_Value)
 		opcode := reflect.enum_from_name(spv.Op, v.lhs[0].text) or_else fmt.panicf("Invalid extension operation: '%s' (this needs a better error message)", v.lhs[0].text)
 		ctx.entities[v.lhs[0].entity] = { extension_op = opcode, }
 	}
 }
 
-cg_stmt_list :: proc(ctx: ^Context, builder: ^spv.Builder, stmts: []^ast.Stmt, global := false) -> (returned: bool) {
+cg_stmt_list :: proc(ctx: ^Context, builder: ^spv.Builder, stmts: []^Ast_Stmt, global := false) -> (returned: bool) {
 	for stmt in stmts {
 		if cg_stmt(ctx, builder, stmt, global) {
 			returned = true
@@ -3143,12 +3150,12 @@ get_runtime_proc :: proc(ctx: ^Context, runtime_proc: Runtime_Proc) -> spv.Id {
 	return ctx.runtime_procs[runtime_proc]
 }
 
-deconstruct_tuple :: proc(ctx: ^Context, builder: ^spv.Builder, type: ^types.Type, values: ^[]Value) {
+cg_deconstruct_tuple :: proc(ctx: ^Context, builder: ^spv.Builder, type: ^Type, values: ^[]Cg_Value) {
 	if type.kind != .Tuple {
 		return
 	}
 
-	type := type.variant.(^types.Struct)
+	type := type.variant.(^Type_Struct)
 	v    := values[0]
 
 	if len(type.fields) == 1 {
@@ -3159,7 +3166,7 @@ deconstruct_tuple :: proc(ctx: ^Context, builder: ^spv.Builder, type: ^types.Typ
 		return
 	}
 
-	values^ = make([]Value, len(type.fields), context.temp_allocator)
+	values^ = make([]Cg_Value, len(type.fields), context.temp_allocator)
 	for &val, i in values {
 		ti := cg_type(ctx, type.fields[i].type)
 		val = {

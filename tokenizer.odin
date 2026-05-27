@@ -1,4 +1,4 @@
-package hephaistos_tokenizer
+package hephaistos
 
 import "base:runtime"
 
@@ -555,6 +555,6 @@ token_strings := #sparse[Token_Kind]string {
 }
 
 @(require_results)
-to_string :: proc(token_kind: Token_Kind) -> string {
+token_to_string :: proc(token_kind: Token_Kind) -> string {
 	return token_strings[token_kind]
 }

@@ -2,7 +2,7 @@
 
 type_is_vector     :: proc($T: typeid) -> bool ---
 type_is_float      :: proc($T: typeid) -> bool ---
-type_is_boolean    :: proc($T: typeid) -> bool ---
+type_is_bool       :: proc($T: typeid) -> bool ---
 type_is_integer    :: proc($T: typeid) -> bool ---
 type_is_numeric    :: proc($T: typeid) -> bool ---
 type_is_complex    :: proc($T: typeid) -> bool ---

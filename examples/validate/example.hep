@@ -242,7 +242,7 @@ foo_shader :: proc() -> (
 #assert(intrinsics.type_is_float(f32))
 
 t :: bool
-#assert(intrinsics.type_is_boolean(t))
+#assert(intrinsics.type_is_bool(t))
 
 @(uniform, binding = Binding_Location.Image)
 img2: #format(rg8i)image[2][2]i32
@@ -353,7 +353,7 @@ closest_hit_shader :: proc() {
 	launch_id := $LaunchId
 	payload    = incoming_payload
 
-	flags: rt.Ray_Flags = $IncomingRayFlags
+	// flags: rt.Ray_Flags = $IncomingRayFlags
 
 	v:   [4]f32 = { 1, 2, 3, 0, }
 	pos: [3]f32 = $WorldToObject * v

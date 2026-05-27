@@ -1,85 +1,80 @@
-package hephaistos_ast
+package hephaistos
 
 import "base:intrinsics"
 
 @(require)
 import "core:mem"
 
-import "../tokenizer"
-import "../types"
-
-Node :: struct {
-	start, end: tokenizer.Location,
+Ast_Node :: struct {
+	start, end: Location,
 	derived:    Any_Node,
 }
 
-Expr :: struct {
-	using expr_base: Node,
+Ast_Expr :: struct {
+	using expr_base: Ast_Node,
 	derived_expr:    Any_Expr,
-	type:           ^types.Type,
-	const_value:     types.Const_Value,
+	type:           ^Type,
+	const_value:     Const_Value,
 }
 
-Stmt :: struct {
-	using stmt_base: Node,
-	attributes:    []Field,
+Ast_Stmt :: struct {
+	using stmt_base: Ast_Node,
+	attributes:    []Ast_Field,
 	derived_stmt:    Any_Stmt,
 }
 
-Decl :: struct {
-	using decl_base: Stmt,
+Ast_Decl :: struct {
+	using decl_base: Ast_Stmt,
 	derived_decl:    Any_Decl,
 }
 
-Field_Flags :: types.Field_Flags
-
-Field :: struct {
+Ast_Field :: struct {
 	name:        ^Expr_Ident,
-	type:        ^Expr,
-	value:       ^Expr,
-	location:    ^Expr, // location for proc params, libraries for attributes
-	flags:        Field_Flags,
+	type:        ^Ast_Expr,
+	value:       ^Ast_Expr,
+	location:    ^Ast_Expr, // location for proc params, libraries for attributes
+	flags:        Entity_Flags,
 	member_index: int,
 	swizzle:    []u32,
 }
 
 
 Expr_Binary :: struct {
-	using node: Expr,
-	op:         tokenizer.Token_Kind,
-	lhs, rhs:  ^Expr,
+	using node: Ast_Expr,
+	op:         Token_Kind,
+	lhs, rhs:  ^Ast_Expr,
 }
 
 Expr_Unary :: struct {
-	using node: Expr,
-	op:         tokenizer.Token_Kind,
-	expr:      ^Expr,
+	using node: Ast_Expr,
+	op:         Token_Kind,
+	expr:      ^Ast_Expr,
 }
 
 Expr_Ternary :: struct {
-	using node: Expr,
-	cond:      ^Expr,
-	then_expr: ^Expr,
-	else_expr: ^Expr,
+	using node: Ast_Expr,
+	cond:      ^Ast_Expr,
+	then_expr: ^Ast_Expr,
+	else_expr: ^Ast_Expr,
 }
 
 Expr_Constant :: struct {
-	using node: Expr,
-	value:      types.Const_Value,
-	imaginary:  tokenizer.Imaginary,
+	using node: Ast_Expr,
+	value:      Const_Value,
+	imaginary:  Imaginary,
 }
 
 Expr_Ident :: struct {
-	using node: Expr,
+	using node: Ast_Expr,
 	text:       string,
 	entity:    ^Entity,
 	library:    string,
 }
 
 Expr_Interface :: struct {
-	using node: Expr,
-	ident:      tokenizer.Token,
-	library:    tokenizer.Token,
+	using node: Ast_Expr,
+	ident:      Token,
+	library:    Token,
 }
 
 Directive :: enum {
@@ -102,9 +97,9 @@ directive_names: [Directive]string = {
 }
 
 Expr_Directive :: struct {
-	using node: Expr,
+	using node: Ast_Expr,
 	directive:  Directive,
-	token:      tokenizer.Token,
+	token:      Token,
 }
 
 Shader_Stage :: enum {
@@ -141,20 +136,20 @@ shader_stage_names: [Shader_Stage]string = {
 
 Expr_Proc_Lit :: struct {
 	using sig: Expr_Proc_Sig,
-	body:   []^Stmt,
+	body:   []^Ast_Stmt,
 	scope:    ^Scope,
 }
 
 Expr_Proc_Sig :: struct {
-	using node: Expr,
-	args:     []Field,
-	returns:  []Field,
+	using node: Ast_Expr,
+	args:     []Ast_Field,
+	returns:  []Ast_Field,
 	diverging:  bool,
 }
 
 Expr_Proc_Group :: struct {
-	using node: Expr,
-	members: []^Expr,
+	using node: Ast_Expr,
+	members: []^Ast_Expr,
 }
 
 Builtin_Id :: enum {
@@ -226,14 +221,25 @@ Builtin_Id :: enum {
 
 	/* intrinsics */
 
-	Type_Is_Array,
+	Type_Is_Uint,
+	Type_Is_Int,
+	Type_Is_Bool,
 	Type_Is_Float,
-	Type_Is_Boolean,
-	Type_Is_Integer,
-	Type_Is_Numeric,
+	Type_Is_Any,
+	Type_Is_Struct,
+	Type_Is_Matrix,
+	Type_Is_Array,
+	Type_Is_Buffer,
+	Type_Is_Proc,
+	Type_Is_Proc_Group,
+	Type_Is_Sampler,
+	Type_Is_Image,
+	Type_Is_Enum,
+	Type_Is_Bit_Set,
 	Type_Is_Complex,
 	Type_Is_Quaternion,
-	Type_Is_Matrix,
+	Type_Is_Opaque,
+	Type_Is_Named,
 
 	Count_Ones,
 	Count_Zeros,
@@ -249,9 +255,9 @@ Builtin_Id :: enum {
 }
 
 Expr_Call :: struct {
-	using node:   Expr,
-	lhs:         ^Expr,
-	args:       []Field,
+	using node:   Ast_Expr,
+	lhs:         ^Ast_Expr,
+	args:       []Ast_Field,
 	group_member: Maybe(int),
 	builtin:      Builtin_Id,
 	is_cast:      bool,
@@ -259,91 +265,91 @@ Expr_Call :: struct {
 }
 
 Expr_Paren :: struct {
-	using node: Expr,
-	expr:      ^Expr,
+	using node: Ast_Expr,
+	expr:      ^Ast_Expr,
 }
 
 Expr_Selector :: struct {
-	using node:  Expr,
-	lhs:        ^Expr,
+	using node:  Ast_Expr,
+	lhs:        ^Ast_Expr,
 	selector:   ^Expr_Ident,
 	field_index: int,
-	swizzle:     []u32,
+	swizzle:   []u32,
 }
 
 Expr_Compound :: struct {
-	using node: Expr,
-	type_expr: ^Expr,
-	fields:   []Field,
+	using node: Ast_Expr,
+	type_expr: ^Ast_Expr,
+	fields:   []Ast_Field,
 	named:      bool,
 	constant:   bool,
 }
 
 Expr_Index :: struct {
-	using node: Expr,
-	lhs, rhs:  ^Expr,
+	using node: Ast_Expr,
+	lhs, rhs:  ^Ast_Expr,
 }
 
 Expr_Cast :: struct {
-	using node: Expr,
-	value:     ^Expr,
-	type_expr: ^Expr,
+	using node: Ast_Expr,
+	value:     ^Ast_Expr,
+	type_expr: ^Ast_Expr,
 }
 
 Expr_Ellipsis :: struct {
-	using node: Expr,
-	expr:      ^Expr,
+	using node: Ast_Expr,
+	expr:      ^Ast_Expr,
 }
 
 
-Type_Struct :: struct {
-	using node: Expr,
-	fields:   []Field,
+Expr_Type_Struct :: struct {
+	using node: Ast_Expr,
+	fields:   []Ast_Field,
 }
 
-Type_Array :: struct {
-	using node: Expr,
-	count:     ^Expr,
-	elem:      ^Expr,
+Expr_Type_Array :: struct {
+	using node: Ast_Expr,
+	count:     ^Ast_Expr,
+	elem:      ^Ast_Expr,
 	physical:   bool,
 }
 
-Type_Matrix :: struct {
-	using node: Expr,
-	rows:      ^Expr,
-	cols:      ^Expr,
-	elem:      ^Expr,
+Expr_Type_Matrix :: struct {
+	using node: Ast_Expr,
+	rows:      ^Ast_Expr,
+	cols:      ^Ast_Expr,
+	elem:      ^Ast_Expr,
 }
 
-Type_Image :: struct {
-	using node:  Expr,
-	dimensions: ^Expr,
-	texel_type: ^Expr,
+Expr_Type_Image :: struct {
+	using node:  Ast_Expr,
+	dimensions: ^Ast_Expr,
+	texel_type: ^Ast_Expr,
 	is_sampler:  bool,
-	format:      tokenizer.Token,
+	format:      Token,
 }
 
-Type_Enum :: struct {
-	using node: Expr,
-	values:   []Field,
-	backing:   ^Expr,
+Expr_Type_Enum :: struct {
+	using node: Ast_Expr,
+	values:   []Ast_Field,
+	backing:   ^Ast_Expr,
 }
 
-Type_Bit_Set :: struct {
-	using node: Expr,
-	enum_type: ^Expr,
-	backing:   ^Expr,
+Expr_Type_Bit_Set :: struct {
+	using node: Ast_Expr,
+	enum_type: ^Ast_Expr,
+	backing:   ^Ast_Expr,
 }
 
-Type_Opaque :: struct {
-	using node: Expr,
+Expr_Type_Opaque :: struct {
+	using node: Ast_Expr,
 	name:      ^Expr_Ident,
-	backing:   ^Expr,
+	backing:   ^Ast_Expr,
 }
 
-Type_Distinct :: struct {
-	using node: Expr,
-	backing:   ^Expr,
+Expr_Type_Distinct :: struct {
+	using node: Ast_Expr,
+	backing:   ^Ast_Expr,
 }
 
 
@@ -375,15 +381,15 @@ interface_kind_names := [Interface_Kind]string {
 }
 
 Decl_Value :: struct {
-	using node:     Decl,
+	using node:     Ast_Decl,
 	lhs:         []^Expr_Ident,
-	type_expr:     ^Expr,
-	values:      []^Expr,
+	type_expr:     ^Ast_Expr,
+	values:      []^Ast_Expr,
 	mutable:        bool,
 	readonly:       bool,
-	binding:        int,
-	location:       int,
-	descriptor_set: int,
+	binding:        i64,
+	location:       i64,
+	descriptor_set: i64,
 	link_name:      string,
 	local_size:  [3]i32,
 	shader_stage:   Shader_Stage,
@@ -391,110 +397,110 @@ Decl_Value :: struct {
 }
 
 Decl_Import :: struct {
-	using node: Decl,
+	using node: Ast_Decl,
 	path:      ^Expr_Constant,
 	alias:     ^Expr_Ident,
 	name:       string,
 }
 
 Decl_Extension :: struct {
-	using node: Decl,
-	extension: ^Expr,
-	body:    []^Stmt,
+	using node: Ast_Decl,
+	extension: ^Ast_Expr,
+	body:    []^Ast_Stmt,
 }
 
 Stmt_Return :: struct {
-	using node: Stmt,
-	values:  []^Expr,
+	using node: Ast_Stmt,
+	values:  []^Ast_Expr,
 }
 
 Stmt_Break :: struct {
-	using node: Stmt,
+	using node: Ast_Stmt,
 	label:     ^Expr_Ident,
 }
 
 Stmt_Continue :: struct {
-	using node: Stmt,
+	using node: Ast_Stmt,
 	label:     ^Expr_Ident,
 }
 
 Stmt_For_Range :: struct {
-	using node:  Stmt,
+	using node:  Ast_Stmt,
 	label:      ^Expr_Ident,
-	start_expr: ^Expr,
-	end_expr:   ^Expr,
+	start_expr: ^Ast_Expr,
+	end_expr:   ^Ast_Expr,
 	variable:   ^Expr_Ident,
-	body:     []^Stmt,
+	body:     []^Ast_Stmt,
 	inclusive:   bool,
 	init_scope: ^Scope,
 	scope:      ^Scope,
 }
 
 Stmt_For :: struct {
-	using node:  Stmt,
+	using node:  Ast_Stmt,
 	label:      ^Expr_Ident,
-	init:       ^Stmt,
-	cond:       ^Expr,
-	post:       ^Stmt,
-	body:     []^Stmt,
+	init:       ^Ast_Stmt,
+	cond:       ^Ast_Expr,
+	post:       ^Ast_Stmt,
+	body:     []^Ast_Stmt,
 	init_scope: ^Scope,
 	scope:      ^Scope,
 }
 
 Stmt_Block :: struct {
-	using node: Stmt,
+	using node: Ast_Stmt,
 	label:     ^Expr_Ident,
-	body:    []^Stmt,
+	body:    []^Ast_Stmt,
 	scope:     ^Scope,
 }
 
 Stmt_If :: struct {
-	using node:    Stmt,
+	using node:    Ast_Stmt,
 	label:        ^Expr_Ident,
-	init:         ^Stmt,
+	init:         ^Ast_Stmt,
 	init_scope:   ^Scope,
-	cond:         ^Expr,
-	then_block: []^Stmt,
+	cond:         ^Ast_Expr,
+	then_block: []^Ast_Stmt,
 	then_scope:   ^Scope,
-	else_block: []^Stmt,
+	else_block: []^Ast_Stmt,
 	else_scope:   ^Scope,
 }
 
 Stmt_When :: struct {
-	using node:    Stmt,
+	using node:    Ast_Stmt,
 	label:        ^Expr_Ident,
-	cond:         ^Expr,
-	then_block: []^Stmt,
-	else_block: []^Stmt,
+	cond:         ^Ast_Expr,
+	then_block: []^Ast_Stmt,
+	else_block: []^Ast_Stmt,
 	scope:        ^Scope,
 }
 
 Switch_Case :: struct {
-	token:   tokenizer.Token,
-	value:  ^Expr,
-	body: []^Stmt,
+	token:   Token,
+	value:  ^Ast_Expr,
+	body: []^Ast_Stmt,
 	scope:  ^Scope,
 }
 
 Stmt_Switch :: struct {
-	using node:     Stmt,
+	using node:     Ast_Stmt,
 	label:         ^Expr_Ident,
-	init:          ^Stmt,
-	cond:          ^Expr,
+	init:          ^Ast_Stmt,
+	cond:          ^Ast_Expr,
 	cases:        []Switch_Case,
 	constant_cases: bool,
 	scope:         ^Scope,
 }
 
 Stmt_Assign :: struct {
-	using node:  Stmt,
-	lhs, rhs: []^Expr,
-	op:          tokenizer.Token_Kind,
+	using node:  Ast_Stmt,
+	lhs, rhs: []^Ast_Expr,
+	op:          Token_Kind,
 }
 
 Stmt_Expr :: struct {
-	using node: Stmt,
-	expr:      ^Expr,
+	using node: Ast_Stmt,
+	expr:      ^Ast_Expr,
 }
 
 
@@ -517,14 +523,14 @@ Any_Node :: union {
 	^Expr_Ternary,
 	^Expr_Ellipsis,
 
-	^Type_Struct,
-	^Type_Array,
-	^Type_Matrix,
-	^Type_Image,
-	^Type_Enum,
-	^Type_Bit_Set,
-	^Type_Opaque,
-	^Type_Distinct,
+	^Expr_Type_Struct,
+	^Expr_Type_Array,
+	^Expr_Type_Matrix,
+	^Expr_Type_Image,
+	^Expr_Type_Enum,
+	^Expr_Type_Bit_Set,
+	^Expr_Type_Opaque,
+	^Expr_Type_Distinct,
 
 	^Stmt_Return,
 	^Stmt_Break,
@@ -562,14 +568,14 @@ Any_Expr :: union {
 	^Expr_Ternary,
 	^Expr_Ellipsis,
 
-	^Type_Struct,
-	^Type_Array,
-	^Type_Matrix,
-	^Type_Image,
-	^Type_Enum,
-	^Type_Bit_Set,
-	^Type_Opaque,
-	^Type_Distinct,
+	^Expr_Type_Struct,
+	^Expr_Type_Array,
+	^Expr_Type_Matrix,
+	^Expr_Type_Image,
+	^Expr_Type_Enum,
+	^Expr_Type_Bit_Set,
+	^Expr_Type_Opaque,
+	^Expr_Type_Distinct,
 }
 
 Any_Decl :: union {
@@ -596,12 +602,13 @@ Any_Stmt :: union {
 	^Decl_Extension,
 }
 
-new :: proc($T: typeid, start, end: tokenizer.Location, allocator: mem.Allocator) -> ^T {
+@(require_results)
+ast_new :: proc($T: typeid, start, end: Location, allocator: mem.Allocator) -> ^T {
 	n, _ := mem.new(T, allocator)
 	n.start   = start
 	n.end     = end
 	n.derived = n
-	base: ^Node = n // dummy check
+	base: ^Ast_Node = n // dummy check
 	_ = base // "Use" type to make -vet happy
 	when intrinsics.type_has_field(T, "derived_expr") {
 		n.derived_expr = n
@@ -617,62 +624,5 @@ new :: proc($T: typeid, start, end: tokenizer.Location, allocator: mem.Allocator
 
 Library :: struct {
 	entities: map[string]^Entity,
-	stmts: []^Stmt,
-}
-
-Entity :: struct {
-	kind:       Entity_Kind,
-	ident:     ^Expr_Ident,
-	name:       string,
-	type:      ^types.Type,
-	decl:      ^Decl,
-	library:   ^Library,
-	value:      types.Const_Value,
-	builtin_id: Builtin_Id,
-	interface:  Interface_Kind,
-	flags:      Entity_Flags,
-	scope:     ^Scope,
-	references: [dynamic]^Expr_Ident,
-}
-
-Entity_Kind :: enum u32 {
-	Invalid = 0,
-
-	Const,
-	Type,
-	Var,
-	Proc,
-	Proc_Group,
-	Builtin,
-	Library,
-	Label,
-
-	Struct_Field,
-	Enum_Value,
-}
-
-Entity_Flag :: enum {
-	Readonly,
-	Extension_Proc,
-
-	In_Progress,
-	Resolved,
-}
-
-Entity_Flags :: bit_set[Entity_Flag]
-
-Scope :: struct {
-	parent:       ^Scope,
-	entities:      map[string]^Entity,
-	proc_type:    ^types.Proc,
-	kind:          Scope_Kind,
-	allow_imports: bool,
-}
-
-Scope_Kind :: enum {
-	Global,
-	Proc,
-	Block, // if or {}
-	Loop,
-	Switch,
+	stmts: []^Ast_Stmt,
 }
