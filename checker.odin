@@ -1436,12 +1436,13 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 		fields := make([]^Entity, v.field_count, allocator)
 		scope  := scope_new(nil, .Struct, allocator)
 		for &f, i in fields {
-			f        = new(Entity, allocator)
-			f.kind   = .Struct_Field
-			f.name   = v.names[i]
-			f.type   = type_info_to_type(v.types[i], allocator) or_return
-			f.offset = i64(v.offsets[i])
-			f.flags  = { .Resolved, }
+			f             = new(Entity, allocator)
+			f.kind        = .Struct_Field
+			f.name        = v.names[i]
+			f.type        = type_info_to_type(v.types[i], allocator) or_return
+			f.offset      = i64(v.offsets[i])
+			f.flags       = { .Resolved, }
+			f.field_index = i
 
 			scope.entities[f.name] = f
 		}
@@ -2109,18 +2110,10 @@ check_expr_internal :: proc(
 
 			return
 		case .Struct:
-			type         := base.variant.(^Type_Struct)
-			entity       := check_ident(checker, v.selector, type.scope) or_break
-			v.field_index = -1
-			for field, i in type.fields {
-				if field == entity {
-					v.field_index = i
-					break
-				}
-			}
-			assert(v.field_index != -1)
-			operand.type  = entity.type
-			operand.mode  = lhs.mode
+			type        := base.variant.(^Type_Struct)
+			entity      := check_ident(checker, v.selector, type.scope) or_break
+			operand.type = entity.type
+			operand.mode = lhs.mode
 		case:
 			error(checker, v, "expression of type %v has no field called '%s'", lhs.type, v.selector.text)
 		}
@@ -2477,6 +2470,8 @@ check_expr_internal :: proc(
 						error(checker, field.value, "expected value of type %v but got %v", entity.type, field_operand.type)
 						return
 					}
+
+					field.value.type = entity.type
 				}
 			} else {
 				if len(v.fields) != len(type.fields) {
@@ -2876,8 +2871,9 @@ check_expr_internal :: proc(
 
 			align = max(align, type.align)
 			for i in start ..< i {
-				entity       := entity_new(checker, .Struct_Field, v.fields[i].name, type, flags = { .Resolved, })
-				entity.offset = i64(offset)
+				entity            := entity_new(checker, .Struct_Field, v.fields[i].name, type, flags = { .Resolved, })
+				entity.offset      = i64(offset)
+				entity.field_index = i
 				append(&fields, entity)
 				scope_insert_entity(checker, entity, scope)
 
@@ -2886,10 +2882,8 @@ check_expr_internal :: proc(
 			}
 		}
 
-		offset       = mem.align_forward_int(offset, align)
-
 		type.fields  = fields[:]
-		type.size    = offset
+		type.size    = mem.align_forward_int(offset, align)
 		type.align   = align
 		type.scope   = scope
 

@@ -147,7 +147,7 @@ main :: proc() {
 		return
 	}
 
-	code := hep.cg_generate(&checker, stmts, options.input, string(source), spirv_version)
+	code := hep.cg_file(&checker, stmts, options.input, string(source), spirv_version)
 	err   = os.write_entire_file(options.output, slice.to_bytes(code))
 	if err != nil {
 		fmt.eprintln("Failed to write output file")

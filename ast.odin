@@ -273,7 +273,6 @@ Expr_Selector :: struct {
 	using node:  Ast_Expr,
 	lhs:        ^Ast_Expr,
 	selector:   ^Expr_Ident,
-	field_index: int,
 	swizzle:   []u32,
 }
 

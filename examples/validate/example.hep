@@ -437,3 +437,14 @@ Bar :: distinct i32
 do_thing :: proc(foo: Foo, bar: Bar) -> i32 {
 	return i32(foo) + i32(bar)
 }
+
+test_structs :: proc() {
+	S :: struct {
+		a, b: i32,
+	}
+
+	s: S = {
+		a = 1,
+		b = 3,
+	}
+}

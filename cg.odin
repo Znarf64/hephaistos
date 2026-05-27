@@ -1760,7 +1760,7 @@ cg_expr :: proc(
 	ctx:          ^Context,
 	builder:      ^spv.Builder,
 	expr:         ^Ast_Expr,
-	deref:        bool             = true,
+	deref:        bool         = true,
 	shader_stage: Shader_Stage = nil,
 ) -> (value: Cg_Value) {
 	assert(expr      != nil)
@@ -1777,7 +1777,7 @@ cg_expr :: proc(
 
 	value.id            = cg_cast(ctx, builder, value, expr.type)
 	value.storage_class = nil
-	value.type          = expr.type
+	value.type          = base_type(expr.type)
 	return
 }
 
@@ -1971,17 +1971,18 @@ cg_expr_internal :: proc(
 	case ^Expr_Ellipsis:
 		return cg_expr(ctx, builder, v.expr)
 	case ^Expr_Selector:
-		if v.selector.entity != nil && v.selector.entity.kind != .Enum_Value && v.selector.entity.kind != .Struct_Field {
+		e := v.selector.entity
+		if e != nil && e.kind != .Enum_Value && e.kind != .Struct_Field {
 			return cg_ident(ctx, builder, v.selector)
 		}
 		lhs := cg_expr(ctx, builder, v.lhs, false)
 
 		lhs_type := v.lhs.type
 		if lhs.type.kind == .Struct {
-			field_type := lhs_type.variant.(^Type_Struct).fields[v.field_index].type
+			field_type := lhs_type.variant.(^Type_Struct).fields[e.field_index].type
 			type_info  := cg_type(ctx, field_type)
 
-			ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, lhs.storage_class), lhs.id, cg_constant(ctx, i64(v.field_index), nil).id)
+			ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, type_info, lhs.storage_class), lhs.id, cg_constant(ctx, i64(e.field_index), nil).id)
 
 			return { id = ptr, storage_class = lhs.storage_class, type = field_type, }
 		}
@@ -2395,14 +2396,16 @@ cg_expr_internal :: proc(
 			diverging = proc_type.diverging,
 		}
 	case ^Expr_Compound:
+		type := base_type(v.type)
+
 		if len(v.fields) == 0 {
-			return { id = cg_nil_value(ctx, cg_type(ctx, v.type)), }
+			return { id = cg_nil_value(ctx, cg_type(ctx, type)), }
 		}
 
-		if v.type.kind == .Matrix {
+		if type.kind == .Matrix {
 			assert(!v.named)
 
-			type := v.type.variant.(^Type_Matrix)
+			type := type.variant.(^Type_Matrix)
 			elem := type.col_type.elem
 
 			row_type_id := cg_type(ctx, type.col_type).type
@@ -2423,15 +2426,15 @@ cg_expr_internal :: proc(
 				}
 			}
 
-			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..columns[:]), }
+			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, type).type, ..columns[:]), }
 		}
 
-		if v.type.kind == .Bit_Set {
-			bit_set_id := cg_type(ctx, v.type).type
-			value      := cg_nil_value(ctx, v.type)
-			one        := cg_constant(ctx, i64(1), v.type).id
+		if type.kind == .Bit_Set {
+			bit_set_id := cg_type(ctx, type).type
+			value      := cg_nil_value(ctx, type)
+			one        := cg_constant(ctx, i64(1), type).id
 			for field in v.fields {
-				shift := cg_cast(ctx, builder, cg_expr(ctx, builder, field.value), v.type)
+				shift := cg_cast(ctx, builder, cg_expr(ctx, builder, field.value), type)
 				elem  := spv.OpShiftLeftLogical(builder, bit_set_id, one, shift)
 
 				value = spv.OpBitwiseOr(builder, bit_set_id, value, elem)
@@ -2444,31 +2447,31 @@ cg_expr_internal :: proc(
 			values := make([]spv.Id, len(v.fields), context.temp_allocator)
 			i: int
 			for field in v.fields {
-				type: ^Type
-				#partial switch v.type.kind {
+				field_type: ^Type
+				#partial switch type.kind {
 				case .Array:
-					type = array_elem(v.type)
+					field_type = array_elem(type)
 				case .Matrix:
-					type = matrix_elem(v.type)
+					field_type = matrix_elem(type)
 				case .Struct:
-					type = v.type.variant.(^Type_Struct).fields[i].type
+					field_type = type.variant.(^Type_Struct).fields[i].type
 				}
 				value := cg_expr(ctx, builder, field.value)
 				if type_is_array(value.type) && type_is_array(v.type) {
 					values[i] = cg_deref(ctx, builder, value)
 				} else {
-					values[i] = cg_cast(ctx, builder, value, type)
+					values[i] = cg_cast(ctx, builder, value, field_type)
 				}
 				i += 1
 			}
 			if v.constant {
-				return { id = spv.OpConstantComposite(&ctx.types, cg_type(ctx, v.type).type, ..values[:]), }
+				return { id = spv.OpConstantComposite(&ctx.types, cg_type(ctx, type).type, ..values[:]), }
 			} else {
-				return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values[:]), }
+				return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, type).type, ..values[:]), }
 			}
 		}
 
-		if vector, ok := v.type.variant.(^Type_Array); ok {
+		if vector, ok := type.variant.(^Type_Array); ok {
 			elem_type_id := cg_type(ctx, vector.elem).type
 			values       := make([]spv.Id, vector.count, context.temp_allocator)
 			for field in v.fields {
@@ -2491,13 +2494,13 @@ cg_expr_internal :: proc(
 					value = nil_elem
 				}
 			}
-			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values), }
+			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, type).type, ..values), }
 		}
 
-		fields := v.type.variant.(^Type_Struct).fields
+		fields := type.variant.(^Type_Struct).fields
 		values := make([]spv.Id, len(fields), context.temp_allocator)
 		for field in v.fields {
-			index        := field.member_index
+			index        := field.name.entity.field_index
 			value        := cg_expr(ctx, builder, field.value)
 			values[index] = cg_cast(ctx, builder, value, fields[index].type)
 		}
@@ -2508,7 +2511,7 @@ cg_expr_internal :: proc(
 			}
 			values[i] = cg_nil_value(ctx, cg_type(ctx, field.type))
 		}
-			return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, v.type).type, ..values), }
+		return { id = spv.OpCompositeConstruct(builder, cg_type(ctx, type).type, ..values), }
 	case ^Expr_Index:
 		lhs := cg_expr(ctx, builder, v.lhs, false)
 		rhs := cg_expr(ctx, builder, v.rhs)

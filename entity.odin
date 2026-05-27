@@ -1,20 +1,21 @@
 package hephaistos
 
 Entity :: struct {
-	kind:       Entity_Kind,
-	ident:     ^Expr_Ident,
-	name:       string,
-	type:      ^Type,
-	decl:      ^Ast_Decl,
-	library:   ^Library,
-	value:      Const_Value,
-	builtin_id: Builtin_Id,
-	interface:  Interface_Kind,
-	flags:      Entity_Flags,
-	scope:     ^Scope,
-	location:   i64,
-	offset:     i64,
-	references: [dynamic]^Expr_Ident,
+	kind:        Entity_Kind,
+	ident:      ^Expr_Ident,
+	name:        string,
+	type:       ^Type,
+	decl:       ^Ast_Decl,
+	library:    ^Library,
+	value:       Const_Value,
+	builtin_id:  Builtin_Id,
+	interface:   Interface_Kind,
+	flags:       Entity_Flags,
+	scope:      ^Scope,
+	location:    i64,
+	offset:      i64,
+	field_index: int,
+	references:  [dynamic]^Expr_Ident,
 }
 
 Entity_Kind :: enum u32 {
