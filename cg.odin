@@ -2309,7 +2309,7 @@ cg_expr_internal :: proc(
 					lod := cg_expr(ctx, builder, v.args[1].value).id
 					return { id = spv.OpImageQuerySizeLod(builder, cg_type(ctx, v.type).type, image, lod), }
 				}
-			case .Count_Ones:
+			case .Count_Ones, .Card:
 				return { id = spv.OpBitCount(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Count_Zeros:
 				ones := spv.OpBitCount(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id)
@@ -2371,6 +2371,12 @@ cg_expr_internal :: proc(
 			case .Real, .Imag, .Jmag, .Kmag:
 				coord := u32(v.builtin - .Real)
 				return { id = spv.OpCompositeExtract(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id, coord), }
+			case .Conj:
+				zero  := cg_constant(ctx, f64(0), complex_elem(v.type))
+				arg   := cg_expr(ctx, builder, v.args[0].value).id
+				imag  := spv.OpCompositeInsert(builder, ti.type, zero.id, arg, 0)
+				imag2 := spv.OpFAdd(builder, ti.type, imag, imag)
+				return { id = spv.OpFSub(builder, ti.type, arg, imag2), }
 			case .Barrier:
 				scope     := cg_constant(ctx, i64(spv.Scope.Workgroup), nil).id
 				semantics := cg_constant(ctx, i64(spv.MemorySemantics{ .AcquireRelease, .WorkgroupMemory, }), nil).id

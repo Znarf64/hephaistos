@@ -823,11 +823,6 @@ opaque_backing :: proc(type: ^Type) -> ^Type {
 	return type.variant.(^Type_Opaque).backing
 }
 
-@(private="file")
-to_bytes :: proc(v: $P/^$T) -> []byte {
-	return ([^]byte)(v)[:size_of(T)]
-}
-
 @(require_results)
 matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 	if a == nil || b == nil {

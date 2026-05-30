@@ -29,7 +29,7 @@ Checker :: struct {
 	config_vars:      map[string]Const_Value,
 	flags:            Checker_Flags,
 
-	scope:            ^Scope,
+	scope:           ^Scope,
 	shader_stage:     Shader_Stage,
 	current_location: i64,
 	current_binding:  i64,
@@ -205,9 +205,9 @@ check_assignment :: proc(checker: ^Checker, lhs, rhs: ^Type, node: ^Ast_Node, co
 
 	if !implicitly_castable(rhs, lhs) {
 		error(checker, node, "mismatched type in %s: expected %v, got %v", context_, lhs, rhs)
-		ok = true
 	}
 
+	ok = true
 	return
 }
 
@@ -446,9 +446,12 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 					lhs[lhs_i].expr.type = type
 				}
 				check_assignment(checker, lhs[lhs_i].type, type, rhs.expr, "assign statement") or_continue
-				result_type := op_result_type(lhs[lhs_i].type, type)
 				if len(rhs_types) == 1 {
-					r_expr.type = result_type
+					r_expr.type = lhs[lhs_i].type
+				}
+
+				if v.op != .Invalid && !operator_applicable(lhs[lhs_i].type, v.op) {
+					error(checker, v, "operator `%v` is not defined for `%v %v= %v`", token_to_string(v.op), lhs[lhs_i].type, token_to_string(v.op), rhs.type)
 				}
 			}
 		}

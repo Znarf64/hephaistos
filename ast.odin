@@ -200,6 +200,7 @@ Builtin_Id :: enum {
 	Inverse_Sqrt,
 	Abs,
 	Sign,
+	Card,
 
 	Smooth_Step,
 	Lerp,
@@ -208,6 +209,7 @@ Builtin_Id :: enum {
 	Imag,
 	Jmag,
 	Kmag,
+	Conj,
 
 	Texture_Size,
 	Image_Size,

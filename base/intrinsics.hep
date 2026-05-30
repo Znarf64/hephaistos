@@ -1,13 +1,26 @@
 // This is purely for documentation
 
-type_is_vector     :: proc($T: typeid) -> bool ---
-type_is_float      :: proc($T: typeid) -> bool ---
+type_is_invalid    :: proc($T: typeid) -> bool ---
+type_is_uint       :: proc($T: typeid) -> bool ---
+type_is_int        :: proc($T: typeid) -> bool ---
 type_is_bool       :: proc($T: typeid) -> bool ---
-type_is_integer    :: proc($T: typeid) -> bool ---
-type_is_numeric    :: proc($T: typeid) -> bool ---
+type_is_float      :: proc($T: typeid) -> bool ---
+type_is_any        :: proc($T: typeid) -> bool ---
+type_is_struct     :: proc($T: typeid) -> bool ---
+type_is_matrix     :: proc($T: typeid) -> bool ---
+type_is_array      :: proc($T: typeid) -> bool ---
+type_is_buffer     :: proc($T: typeid) -> bool ---
+type_is_proc       :: proc($T: typeid) -> bool ---
+type_is_proc_group :: proc($T: typeid) -> bool ---
+type_is_sampler    :: proc($T: typeid) -> bool ---
+type_is_image      :: proc($T: typeid) -> bool ---
+type_is_enum       :: proc($T: typeid) -> bool ---
+type_is_bit_set    :: proc($T: typeid) -> bool ---
 type_is_complex    :: proc($T: typeid) -> bool ---
 type_is_quaternion :: proc($T: typeid) -> bool ---
-type_is_matrix     :: proc($T: typeid) -> bool ---
+type_is_opaque     :: proc($T: typeid) -> bool ---
+type_is_named      :: proc($T: typeid) -> bool ---
+type_is_tuple      :: proc($T: typeid) -> bool ---
 
 count_ones           :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---
 count_zeros          :: proc(i: $I) where type_is_integer(I) || type_is_vector(I) -> I ---

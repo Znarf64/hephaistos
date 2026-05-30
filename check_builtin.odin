@@ -48,6 +48,8 @@ builtin_names: [Builtin_Id]string = {
 	.Abs                  = "abs",
 	.Sign                 = "sign",
 
+	.Card                 = "card",
+
 	.Smooth_Step          = "smooth_step",
 	.Lerp                 = "lerp",
 
@@ -55,6 +57,7 @@ builtin_names: [Builtin_Id]string = {
 	.Imag                 = "imag",
 	.Jmag                 = "jmag",
 	.Kmag                 = "kmag",
+	.Conj                 = "conj",
 
 	.Texture_Size         = "texture_size",
 	.Image_Size           = "image_size",
@@ -563,6 +566,18 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		}
 		operand.type = complex_elem(type)
 		operand.mode = .RValue
+	case .Conj:
+		if len(v.args) != 1 {
+			error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
+			return
+		}
+		type := args[0].type
+		if !type_is_quaternion(type) {
+			error(checker, v, "builtin '%s' expects a quaternion or complex number, got %v", builtin_names[v.builtin], type)
+			return
+		}
+		operand.type = type
+		operand.mode = .RValue
 	case .Type_Is_Uint,
 	     .Type_Is_Int,
 	     .Type_Is_Bool,
@@ -614,6 +629,18 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 	    case .Type_Is_Opaque:     operand.value = type_is_opaque(args[0].type)
 	    case .Type_Is_Named:      operand.value = type_is_named(args[0].type)
 		}
+	case .Card:
+		if len(v.args) != 1 {
+			error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
+			return
+		}
+		type := args[0].type
+		if !type_is_bit_set(type) {
+			error(checker, v, "builtin '%s' expects a bit_set, got %v", builtin_names[v.builtin], type)
+			return
+		}
+		operand.type = t_i32
+		operand.mode = .RValue
 	}
 
 	return
