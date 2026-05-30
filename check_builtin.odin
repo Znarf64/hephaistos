@@ -572,7 +572,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 			return
 		}
 		type := args[0].type
-		if !type_is_quaternion(type) {
+		if !type_is_quaternion(type) && !type_is_complex(type) {
 			error(checker, v, "builtin '%s' expects a quaternion or complex number, got %v", builtin_names[v.builtin], type)
 			return
 		}

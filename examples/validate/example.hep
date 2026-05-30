@@ -174,7 +174,7 @@ when SHADOW_PASS {
 		c2 := c * c + f
 		c3 := c * f
 		c4 := c / f
-		return c2 + c3
+		return c2 + c3 + conj(c2)
 	}
 
 	test_quaternion :: proc(q: quaternion128) {
@@ -186,7 +186,7 @@ when SHADOW_PASS {
 		j := jmag(q2)
 		k := kmag(q2)
 
-		q3 := q * q
+		q3 := q * q + conj(q)
 	}
 }
 

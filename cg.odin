@@ -2386,11 +2386,11 @@ cg_expr_internal :: proc(
 				coord := u32(v.builtin - .Real)
 				return { id = spv.OpCompositeExtract(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id, coord), }
 			case .Conj:
-				zero  := cg_constant(ctx, f64(0), type_complex_elem(v.type))
-				arg   := cg_expr(ctx, builder, v.args[0].value).id
-				imag  := spv.OpCompositeInsert(builder, ti.type, zero.id, arg, 0)
-				imag2 := spv.OpFAdd(builder, ti.type, imag, imag)
-				return { id = spv.OpFSub(builder, ti.type, arg, imag2), }
+				arg  := cg_expr(ctx, builder, v.args[0].value).id
+				elem := type_complex_elem(v.type)
+				real := spv.OpCompositeExtract(builder, cg_type(ctx, elem).type, arg, 0)
+				neg  := spv.OpFNegate(builder, ti.type, arg)
+				return { id = spv.OpCompositeInsert(builder, ti.type, real, neg, 0), }
 			case .Barrier:
 				scope     := cg_constant(ctx, i64(spv.Scope.Workgroup), nil).id
 				semantics := cg_constant(ctx, i64(spv.MemorySemantics{ .AcquireRelease, .WorkgroupMemory, }), nil).id
