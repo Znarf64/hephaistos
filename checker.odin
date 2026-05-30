@@ -876,8 +876,9 @@ collect_decls :: proc(checker: ^Checker, stmts: []^Ast_Stmt, global: bool, entit
 			return
 		}
 
-		path := v.path.value.(string)
-		name := path
+		path  := v.path.value.(string)
+		name  := path
+		valid := true
 		if v.alias != nil {
 			name = v.alias.text
 		} else {
@@ -886,7 +887,6 @@ collect_decls :: proc(checker: ^Checker, stmts: []^Ast_Stmt, global: bool, entit
 				name = name[cut + 1:]
 			}
 
-			valid := true
 			for char in name {
 				switch char {
 				case '0' ..= '9', 'a' ..= 'z', 'A' ..= 'Z', '_':
@@ -896,25 +896,33 @@ collect_decls :: proc(checker: ^Checker, stmts: []^Ast_Stmt, global: bool, entit
 				break
 			}
 
+			valid &&= len(name) > 0
+
 			if !valid {
 				error(checker, v.path, "'%s' is not a valid package name, consider renaming the imported package: `import foo \"%s\"`", name, path)
 			}
 		}
 
-		if library, ok := &checker.libraries[path]; !ok {
+		library := &checker.libraries[path]
+		if library == nil {
 			error(checker, v.path, "Imported library does not exist: \"%v\"", path)
-		} else {
-			e: ^Entity
-			if v.alias != nil {
-				e = entity_new(checker, .Library, v.alias, t_invalid)
-			} else {
-				e = entity_new_no_ident(checker, .Library, name, t_invalid)
-			}
-			e.library = library
-			e.decl    = v
-			e.flags   = { .Resolved, }
-			scope_insert_entity(checker, e)
+			continue
 		}
+
+		if !valid {
+			continue
+		}
+
+		e: ^Entity
+		if v.alias != nil {
+			e = entity_new(checker, .Library, v.alias, t_invalid)
+		} else {
+			e = entity_new_no_ident(checker, .Library, name, t_invalid)
+		}
+		e.library = library
+		e.decl    = v
+		e.flags   = { .Resolved, }
+		scope_insert_entity(checker, e)
 	}
 
 	for stmt in stmts {
