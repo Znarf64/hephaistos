@@ -393,7 +393,6 @@ Decl_Value :: struct {
 	type_expr:     ^Ast_Expr,
 	values:      []^Ast_Expr,
 	mutable:        bool,
-	readonly:       bool,
 	binding:        i64,
 	location:       i64,
 	descriptor_set: i64,

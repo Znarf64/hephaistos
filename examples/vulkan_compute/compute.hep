@@ -9,13 +9,16 @@ constants: #import(Compute_Constants)
 @(compute_shader, local_size = { 8, 8, 1, })
 main :: proc() {
 	SAMPLES :: #config(SAMPLES, 4)
-	coord      := $GlobalInvocationId.xy
+
+	@(input, builtin = "GlobalInvocationId")
+	coord: [3]i32
+
 	image_size := image_size(output)
 
 	value: f32
 	for x in 0 ..< SAMPLES {
 		for y in 0 ..< SAMPLES {
-			uv   := 2 * (([2]f32)(coord) + [2]f32{ f32(x), f32(y), } / SAMPLES - 0.5) / ([2]f32)(image_size) - 1
+			uv   := 2 * (([2]f32)(coord.xy) + [2]f32{ f32(x), f32(y), } / SAMPLES - 0.5) / ([2]f32)(image_size) - 1
 			uv.y *= f32(image_size.y) / f32(image_size.x)
 			uv    = uv * 0.5 + 0.5
 
@@ -33,9 +36,9 @@ main :: proc() {
 
 	value /= SAMPLES * SAMPLES * 256
 
-	output[coord] = lerp(
+	output[coord.xy] = lerp(
 		constants.background,
 		constants.foreground,
-		value + (noise[coord] - 0.5) * constants.noise,
+		value + (noise[coord.xy] - 0.5) * constants.noise,
 	)
 }

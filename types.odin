@@ -1072,6 +1072,10 @@ is_comparable :: proc(type: ^Type) -> bool{
 
 @(require_results)
 operator_applicable :: proc(type: ^Type, op: Token_Kind) -> bool {
+	if type_is_invalid(type) {
+		return true
+	}
+
 	if is_comparable(type) && (op == .Equal || op == .Not_Equal) {
 		return true
 	}

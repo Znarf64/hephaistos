@@ -193,6 +193,7 @@ parse_proc_signature :: proc(parser: ^Parser) -> (args, returns: []Ast_Field, di
 	return args, returns, diverging, true
 }
 
+@(require_results)
 parse_stmt_list :: proc(
 	parser:          ^Parser,
 	terminator:       Token_Kind = .Close_Brace,
@@ -644,6 +645,7 @@ parse_expr :: proc(parser: ^Parser, min_power := 0, allow_compound_literals := t
 	return lhs, true
 }
 
+@(require_results)
 parse_expr_list :: proc(parser: ^Parser, allow_compound_literals := true) -> (exprs: []^Ast_Expr, ok: bool) {
 	es := make([dynamic]^Ast_Expr, parser.allocator)
 	for token_peek(parser).kind != .EOF {
@@ -771,6 +773,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []Ast_Field = {}, allow_c
 	return
 }
 
+@(require_results)
 parse_attributes :: proc(parser: ^Parser) -> (_attributes: []Ast_Field, ok: bool) {
 	token_expect(parser, .Attribute)
 	attributes := make([dynamic]Ast_Field, parser.allocator)
@@ -858,6 +861,7 @@ literal_to_expression :: proc(token: Token, allocator: runtime.Allocator) -> ^Ex
 	return expr
 }
 
+@(require_results)
 parse_stmt :: proc(parser: ^Parser, label: ^Expr_Ident = nil, attributes: []Ast_Field = {}) -> (stmt: ^Ast_Stmt, ok: bool) {
 	token := token_peek(parser)
 	#partial switch token.kind {
@@ -1119,6 +1123,7 @@ parse_stmt :: proc(parser: ^Parser, label: ^Expr_Ident = nil, attributes: []Ast_
 	return
 }
 
+@(require_results)
 parse :: proc(
 	tokens: []Token,
 	allocator       := context.allocator,

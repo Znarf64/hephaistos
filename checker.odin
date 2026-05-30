@@ -198,6 +198,19 @@ scope_insert_entity :: proc(checker: ^Checker, e: ^Entity, scope: ^Scope = nil) 
 	return true
 }
 
+check_assignment :: proc(checker: ^Checker, lhs, rhs: ^Type, node: ^Ast_Node, context_: string) -> (ok: bool) {
+	if type_is_invalid(lhs) || type_is_invalid(rhs) {
+		return false
+	}
+
+	if !implicitly_castable(rhs, lhs) {
+		error(checker, node, "mismatched type in %s: expected %v, got %v", context_, lhs, rhs)
+		ok = true
+	}
+
+	return
+}
+
 check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 	switch v in stmt.derived_stmt {
 	case ^Stmt_Return:
@@ -222,9 +235,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 			deconstruct_tuple(checker, &ts)
 
 			for type in ts {
-				if !implicitly_castable(type, proc_type.returns[return_index].type) {
-					error(checker, value, "mismatched type in return statement: expected %v, got %v", proc_type.returns[return_index].type, type)
-				}
+				check_assignment(checker, proc_type.returns[return_index].type, type, value.expr, "return statement")
 				if len(ts) == 1 {
 					e.type = proc_type.returns[return_index].type
 				}
@@ -410,7 +421,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 		}
 
 		for &l in lhs {
-			if l.mode != .LValue {
+			if l.mode != .LValue && l.mode != .Invalid {
 				error(checker, l, "cannot assign to %s expression", addressing_mode_string[l.mode])
 			}
 		}
@@ -434,10 +445,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 					lhs[lhs_i].type      = type
 					lhs[lhs_i].expr.type = type
 				}
-				if !implicitly_castable(type, lhs[lhs_i].type) {
-					error(checker, v, "mismatched types in assign statement: %v vs %v", lhs[lhs_i].type, type)
-					continue
-				}
+				check_assignment(checker, lhs[lhs_i].type, type, rhs.expr, "assign statement") or_continue
 				result_type := op_result_type(lhs[lhs_i].type, type)
 				if len(rhs_types) == 1 {
 					r_expr.type = result_type
@@ -462,7 +470,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 			break
 		}
 
-		check_decl_attributes(checker, v, false)
+		flags := check_decl_attributes(checker, v, false)
 
 		values := make([]Operand, len(v.values), checker.allocator)
 
@@ -476,10 +484,8 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 			check_decl_init_value(checker, value, false)
 		}
 
-		flags: Entity_Flags = { .Resolved, }
-		if v.readonly {
-			flags += { .Readonly, }
-		}
+		flags += { .Resolved, }
+
 		if len(values) == 0 {
 			if explicit_type == nil {
 				explicit_type = t_invalid
@@ -520,9 +526,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 						type = default_type(type)
 					}
 				} else {
-					if !implicitly_castable(rhs_type, explicit_type) {
-						error(checker, stmt, "mismatched types in value declaration: %v vs %v", explicit_type, rhs_type)
-					}
+					check_assignment(checker, explicit_type, rhs_type, rhs.expr, "value declaration")
 				}
 				v.lhs[lhs_i].type = type
 				if !tuple {
@@ -653,7 +657,8 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^Decl_Value, type: ^T
 	}
 }
 
-check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bool) {
+@(require_results)
+check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bool) -> (flags: Entity_Flags) {
 	decl.location       = -1
 	decl.binding        = -1
 	decl.descriptor_set = -1
@@ -708,7 +713,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 
 		switch name {
 		case "readonly":
-			decl.readonly = true
+			flags |= { .Readonly, }
 			if a.value != nil {
 				error(checker, a.value, "'%s' attribute does not accept a value", name)
 			}
@@ -789,7 +794,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 			if val, ok := value.value.(string); ok {
 				decl.builtin, ok = reflect.enum_from_name(spv.BuiltIn, val)
 				if !ok {
-					error(checker, value, "'%s' is not a valid storage class", val)
+					error(checker, value, "'%s' is not a valid builtin", val)
 				}
 			} else {
 				error(checker, value, "'%s' attribute value must be a constant string", a.name.text)
@@ -855,6 +860,8 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 	case .Uniform, .Uniform_Buffer, .Storage_Buffer:
 		decl.descriptor_set = 0
 	}
+
+	return
 }
 
 collect_decls :: proc(checker: ^Checker, stmts: []^Ast_Stmt, global: bool, entities: ^[dynamic]^Entity) {
@@ -956,12 +963,8 @@ collect_decls :: proc(checker: ^Checker, stmts: []^Ast_Stmt, global: bool, entit
 			continue
 		}
 
-		check_decl_attributes(checker, d, true)
+		flags := check_decl_attributes(checker, d, true)
 
-		flags: Entity_Flags
-		if d.readonly {
-			flags += { .Readonly, }
-		}
 		entity_kind := Entity_Kind.Invalid
 		for lhs in d.lhs {
 			ident: ^Expr_Ident
@@ -1165,9 +1168,7 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 			type = default_type(type)
 		}
 	} else {
-		if !implicitly_castable(v.type, type) {
-			error(checker, v, "mismatched types in value declaration: %v vs %v", type, v.type)
-		}
+		check_assignment(checker, type, v.type, v.expr, "value declaration")
 	}
 
 	assign_type(e.type, type)
@@ -1695,7 +1696,7 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: Const_Value, expr:
 		}
 	}
 
-	error(checker, expr, "mismatched types in constant binary expression: %v vs %v", lhs, rhs)
+	error(checker, expr, "mismatched types in binary expression: %v vs %v", lhs, rhs)
 	return nil
 }
 
@@ -2435,9 +2436,7 @@ check_expr_internal :: proc(
 					if arg_index >= len(proc_type.args) {
 						continue
 					}
-					if !implicitly_castable(arg_type, proc_type.args[arg_index].type) {
-						error(checker, value, "mismatched type at argument %d: expected %v, got %v", arg_index, proc_type.args[arg_index].type, arg_type)
-					}
+					check_assignment(checker, proc_type.args[arg_index].type, arg_type, value.expr, "procedure argument")
 					if .By_Ptr in proc_type.args[arg_index].flags && value.mode != .LValue {
 						error(checker, value, "argument has '#by_ptr' tag, but the provided value is not addressable")
 					}
@@ -2522,10 +2521,7 @@ check_expr_internal :: proc(
 
 					field_operand := check_expr(checker, field.value, type_hint = entity.type)
 					operand.constant_compound &&= field_operand.mode == .Const
-					if !implicitly_castable(field_operand.type, entity.type) {
-						error(checker, field.value, "expected value of type %v but got %v", entity.type, field_operand.type)
-						return
-					}
+					check_assignment(checker, entity.type, field_operand.type, field.value, "struct literal")
 
 					field.value.type = entity.type
 				}
@@ -2540,10 +2536,8 @@ check_expr_internal :: proc(
 
 					field_operand := check_expr(checker, field.value, type_hint = struct_field.type)
 					operand.constant_compound &&= field_operand.mode == .Const
-					if !implicitly_castable(field_operand.type, struct_field.type) {
-						error(checker, field.value, "expected value of type %v but got %v", struct_field.type, field_operand.type)
-						return
-					}
+					check_assignment(checker, struct_field.type, field_operand.type, field.value, "struct literal")
+
 					field.value.type = struct_field.type
 				}
 			}
@@ -2600,10 +2594,7 @@ check_expr_internal :: proc(
 
 					value := check_expr(checker, field.value, type_hint = expected_type)
 					operand.constant_compound &&= value.mode == .Const
-					if !implicitly_castable(value.type, expected_type) {
-						error(checker, field.value, "expected value of type %v but got %v", expected_type, value.type)
-						return
-					}
+					check_assignment(checker, expected_type, value.type, field.value, "array literal")
 					field.value.type = expected_type
 					field.swizzle    = indices[:]
 				}
@@ -2632,9 +2623,7 @@ check_expr_internal :: proc(
 					}
 				}
 
-				if !implicitly_castable(t, type.elem) {
-					error(checker, field.value, "expected value of type %v but got %v", type.elem, f.type)
-				}
+				check_assignment(checker, type.elem, t, field.value, "array literal")
 			}
 
 			if n_values != type.count {
@@ -2653,10 +2642,7 @@ check_expr_internal :: proc(
 			}
 			for field in v.fields {
 				f := check_expr(checker, field.value, type_hint = type.col_type.elem)
-				if !implicitly_castable(f.type, type.col_type.elem) {
-					error(checker, field.value, "expected value of type %v but got %v", type.col_type.elem, f.type)
-					return
-				}
+				check_assignment(checker, type.col_type.elem, f.type, field.value, "matrix literal")
 				field.value.type = type.col_type.elem
 			}
 		case .Bit_Set:
@@ -2669,10 +2655,7 @@ check_expr_internal :: proc(
 			const_value: i64
 			for field in v.fields {
 				value := check_expr(checker, field.value, type_hint = type.enum_type)
-				if !implicitly_castable(value.type, type.enum_type) {
-					error(checker, field.value, "expected value of type %v but got %v", type.enum_type, value.type)
-					return
-				}
+				check_assignment(checker, type.enum_type, value.type, field.value, "array literal")
 				if value.mode == .Const {
 					bit: i64 = 1 << uint(value.value.(i64))
 					if const_value & bit != 0 {
@@ -2686,6 +2669,7 @@ check_expr_internal :: proc(
 			if operand.mode == .Const {
 				operand.value = const_value
 			}
+		case .Invalid:
 		case:
 			error(checker, v, "illegal type in compound literal: %v", type)
 		}
@@ -2770,6 +2754,8 @@ check_expr_internal :: proc(
 			}
 
 			operand.type = image.texel_type
+		case .Invalid:
+			return
 		}
 
 		if operand.type.kind == .Invalid {
@@ -2831,14 +2817,22 @@ check_expr_internal :: proc(
 			return
 		}
 
-		operand.type = default_type(op_result_type(then_value.type, else_value.type))
 		operand.mode = .RValue
-		if operand.type.kind == .Invalid {
-			error(checker, cond, "mismatched types in ternary expr: %v vs %v", then_value.type, else_value.type)
-			return
+		if then_value.mode == .Invalid {
+			operand.type = else_value.type
+		} else if else_value.mode == .Invalid {
+			operand.type = then_value.type
+		} else {
+			operand.type = default_type(op_result_type(then_value.type, else_value.type))
+
+			if operand.type.kind == .Invalid {
+				error(checker, cond, "mismatched types in ternary expr: %v vs %v", then_value.type, else_value.type)
+				return
+			}
+
+			v.then_expr.type = operand.type
+			v.else_expr.type = operand.type
 		}
-		v.then_expr.type = operand.type
-		v.else_expr.type = operand.type
 
 	case ^Expr_Type_Matrix:
 		rows := check_expr(checker, v.rows)
