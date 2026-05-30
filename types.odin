@@ -1098,7 +1098,7 @@ operator_applicable :: proc(type: ^Type, op: Token_Kind) -> bool {
 		}
 	case .Bit_Set:
 		#partial switch op {
-		case .Bit_Or, .Bit_And, .Xor:
+		case .Bit_Or, .Bit_And, .Xor, .Add, .Subtract:
 			return true
 		}
 	case .Bool:

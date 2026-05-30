@@ -2958,8 +2958,8 @@ check_expr_internal :: proc(
 		values := make([dynamic]^Entity, 0, len(v.values), checker.allocator)
 		scope  := scope_new(nil, .Enum, checker.allocator)
 
-		max_value: i64
-		min_value: i64
+		max_value:     i64
+		min_value:     i64
 		current_value: i64
 
 		for value in v.values {
@@ -2975,13 +2975,13 @@ check_expr_internal :: proc(
 				if val, ok = enum_value.value.(i64); ok {
 					max_value     = max(max_value, val)
 					min_value     = min(min_value, val)
-					current_value = val
+					current_value = val + 1
 				} else {
 					error(checker, enum_value, "enum value has to be a constant integer")
 				}
 			}
 
-			entity := entity_new(checker, .Enum_Value, value.name, type, value = i64(current_value), flags = { .Resolved, })
+			entity := entity_new(checker, .Enum_Value, value.name, type, value = val, flags = { .Resolved, })
 			append(&values, entity)
 			scope_insert_entity(checker, entity, scope)
 		}
