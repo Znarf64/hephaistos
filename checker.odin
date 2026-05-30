@@ -1127,6 +1127,7 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		d.attributes,
 		type,
 		false,
+		is_entry_point = d.shader_stage != nil,
 	)
 
 	switch v.mode {
@@ -1192,7 +1193,7 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 			checker.shader_stage = d.shader_stage
 		}
 		if lit, ok := d.values[value_index].derived.(^Expr_Proc_Lit); ok {
-			_  = check_expr_or_type(checker, lit, d.attributes, type, true)
+			_ = check_expr_or_type(checker, lit, d.attributes, type, true, is_entry_point = d.shader_stage != nil)
 			if d.shader_stage != nil {
 				checker.shader_stage = nil
 			}
@@ -1712,9 +1713,9 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: Const_Value, expr:
 }
 
 @(require_results)
-check_proc_type :: proc(checker: ^Checker, p: ^Expr_Proc_Sig) -> ^Type_Proc {
+check_proc_type :: proc(checker: ^Checker, p: ^Expr_Proc_Sig, is_entry_point: bool) -> ^Type_Proc {
 	@(require_results)
-	check_field_list :: proc(checker: ^Checker, fields: []Ast_Field, args: bool, scope: ^Scope) -> (out_fields: [dynamic]^Entity) {
+	check_field_list :: proc(checker: ^Checker, fields: []Ast_Field, args: bool, scope: ^Scope, is_entry_point: bool) -> (out_fields: [dynamic]^Entity) {
 		out_fields.allocator = checker.allocator
 		reserve(&out_fields, len(fields))
 
@@ -1737,6 +1738,10 @@ check_proc_type :: proc(checker: ^Checker, p: ^Expr_Proc_Sig) -> ^Type_Proc {
 				location := i64(i)
 				if field.location != nil {
 					// TODO: matrices with mutliple locations
+
+					if !is_entry_point {
+						error(checker, field.location, "location specifiers are only allowed on entry points")
+					}
 
 					loc := check_expr(checker, field.location)
 					if l, ok := loc.value.(i64); ok && l != -1 {
@@ -1764,7 +1769,14 @@ check_proc_type :: proc(checker: ^Checker, p: ^Expr_Proc_Sig) -> ^Type_Proc {
 				}
 
 				e := entity_new(checker, .Proc_Param if args else .Proc_Return, field.name, t_invalid, flags = field.flags | { .Resolved, })
-				e.location = (location)
+				e.location = location
+				if is_entry_point {
+					if args {
+						e.interface = .Input
+					} else {
+						e.interface = .Output
+					}
+				}
 				scope_insert_entity(checker, e, scope)
 				append(&out_fields, e)
 
@@ -1814,8 +1826,8 @@ check_proc_type :: proc(checker: ^Checker, p: ^Expr_Proc_Sig) -> ^Type_Proc {
 	}
 
 	scope   := scope_new(nil, .Proc_Sig, checker.allocator)
-	args    := check_field_list(checker, p.args,    true,  scope)
-	returns := check_field_list(checker, p.returns, false, scope)
+	args    := check_field_list(checker, p.args,    true,  scope, is_entry_point)
+	returns := check_field_list(checker, p.returns, false, scope, is_entry_point)
 
 	t          := type_new(.Proc, Type_Proc, checker.allocator)
 	t.args      = args[:]
@@ -1839,7 +1851,8 @@ check_expr_internal :: proc(
 	expr:              ^Ast_Expr,
 	attributes:        []Ast_Field,
 	type_hint:         ^Type = nil,
-	check_proc_bodies: bool        = true,
+	check_proc_bodies: bool  = true,
+	is_entry_point:    bool  = false,
 ) -> (operand: Operand) {
 	operand.expr = expr
 	operand.mode = .Invalid
@@ -1984,7 +1997,7 @@ check_expr_internal :: proc(
 	case ^Expr_Proc_Lit:
 		type: ^Type_Proc
 		if v.type == nil {
-			type = check_proc_type(checker, v)
+			type = check_proc_type(checker, v, is_entry_point)
 		} else {
 			// the type may have already been checked to allow recursion and we don't want to error twice
 			type = v.type.variant.?
@@ -2014,7 +2027,7 @@ check_expr_internal :: proc(
 		check_stmt_list(checker, v.body)
 
 	case ^Expr_Proc_Sig:
-		operand.type = check_proc_type(checker, v)
+		operand.type = check_proc_type(checker, v, false)
 		operand.mode = .Type
 
 	case ^Expr_Proc_Group:
@@ -2042,7 +2055,7 @@ check_expr_internal :: proc(
 		operand.type = type
 		return
 	case ^Expr_Paren:
-		return check_expr_internal(checker, v.expr, {}, type_hint)
+		return check_expr_internal(checker, v.expr, {}, type_hint, check_proc_bodies = check_proc_bodies, is_entry_point = is_entry_point)
 
 	case ^Expr_Ellipsis:
 		operand := check_expr_internal(checker, v.expr, {})
@@ -3082,9 +3095,10 @@ check_expr_or_type :: proc(
 	expr:              ^Ast_Expr,
 	attributes:        []Ast_Field = {},
 	type_hint:         ^Type       = nil,
-	check_proc_bodies: bool            = true,
-	allow_proc_groups: bool            = false,
-	allow_ellipsis:    bool            = false,
+	check_proc_bodies: bool        = true,
+	is_entry_point:    bool        = false,
+	allow_proc_groups: bool        = false,
+	allow_ellipsis:    bool        = false,
 ) -> (operand: Operand) {
 	operand = check_expr_internal(checker, expr, attributes, type_hint, check_proc_bodies)
 	switch operand.mode {
