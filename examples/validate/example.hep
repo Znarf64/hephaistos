@@ -40,7 +40,9 @@ vertex_main :: proc(
 		v_shadow_position = (shadow_position.xyz / shadow_position.w) * 0.5 + 0.5
 	}
 
-	$Position = vs_constants.proj * vs_constants.view * [4]f32{..v_position, 1}
+	@(output, builtin = "Position")
+	gl_Position: [4]f32
+	gl_Position = vs_constants.proj * vs_constants.view * [4]f32{..v_position, 1}
 	return
 }
 
@@ -327,9 +329,13 @@ ray_generation_shader :: proc() {
 
 @(rt.intersection_shader)
 ray_intersection_shader :: proc() {
-	launch_id := $LaunchId
+	@(ray_payload)
+	payload: f32
 
-	if rt.report_intersection(69, .Front) {
+	@(input, builtin = "LaunchIdKHR")
+	launch_id: [3]i32
+
+	if rt.report_intersection(69, .Front) && launch_id.x > 0 {
 
 	}
 }
@@ -353,7 +359,12 @@ closest_hit_shader :: proc() {
 	launch_id := $LaunchId
 	payload    = incoming_payload
 
-	// flags: rt.Ray_Flags = $IncomingRayFlags
+	@(input, builtin = "IncomingRayFlagsKHR")
+	flags: rt.Ray_Flags
+
+	if .SkipAABBs in flags {
+
+	}
 
 	v:   [4]f32 = { 1, 2, 3, 0, }
 	pos: [3]f32 = $WorldToObject * v
@@ -370,7 +381,7 @@ closest_hit_shader :: proc() {
 	a10 := $ObjectToWorld
 	a11 := $WorldToObject
 	a12 := $HitKind
-	a13 := $IncomingRayFlags
+	// a13 := $IncomingRayFlags
 	a14 := $RayGeometryIndex
 
 	attr := barycentrics

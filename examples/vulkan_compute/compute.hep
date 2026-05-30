@@ -8,7 +8,7 @@ constants: #import(Compute_Constants)
 
 @(compute_shader, local_size = { 8, 8, 1, })
 main :: proc() {
-	SAMPLES :: 4
+	SAMPLES :: #config(SAMPLES, 4)
 	coord      := $GlobalInvocationId.xy
 	image_size := image_size(output)
 

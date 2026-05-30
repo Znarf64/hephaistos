@@ -9,6 +9,8 @@ Parser :: struct {
 	tokens:          []Token,
 	errors:          [dynamic]Error,
 	end_location:    Location,
+	doc:             string,
+	allow_in:        bool,
 	allocator:       runtime.Allocator,
 	error_allocator: runtime.Allocator,
 }
@@ -575,6 +577,7 @@ binding_powers: #sparse [Token_Kind]int = #partial {
 	.Less_Equal     = 4,
 	.Greater_Equal  = 4,
 
+	.In             = 5,
 	.Add            = 5,
 	.Subtract       = 5,
 
@@ -596,6 +599,9 @@ parse_expr :: proc(parser: ^Parser, min_power := 0, allow_compound_literals := t
 
 		power := binding_powers[op.kind]
 		if power == 0 || power <= min_power {
+			break
+		}
+		if op.kind == .In && !parser.allow_in {
 			break
 		}
 
@@ -660,7 +666,7 @@ parse_simple_stmt :: proc(parser: ^Parser, attributes: []Ast_Field = {}, allow_c
 		se     := ast_new(Stmt_Expr, token.location, parser.end_location, parser.allocator)
 		se.expr = expr
 		return se, true
-	case .Ident, .Cast, .Open_Paren, .Dollar, .Directive:
+	case .Ident, .Cast, .Open_Paren, .Dollar, .Directive, .Period:
 		lhs := parse_expr_list(parser, allow_compound_literals) or_return
 		#partial switch t := token_peek(parser); t.kind {
 		case .Assign:
@@ -906,7 +912,9 @@ parse_stmt :: proc(parser: ^Parser, label: ^Expr_Ident = nil, attributes: []Ast_
 			if token_peek(parser).kind == .Semicolon {
 				token_advance(parser)
 			} else {
+				parser.allow_in = false
 				s := parse_simple_stmt(parser, allow_compound_literals = false) or_return
+				parser.allow_in = true
 				if expr_stmt, ok := s.derived.(^Stmt_Expr); ok {
 					if token_peek(parser).kind == .In {
 						token_advance(parser)
@@ -1119,6 +1127,7 @@ parse :: proc(
 	parser: Parser = {
 		allocator       = allocator,
 		error_allocator = error_allocator,
+		allow_in        = true,
 		errors          = make([dynamic]Error, error_allocator),
 		tokens          = tokens,
 	}

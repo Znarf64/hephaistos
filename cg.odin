@@ -364,6 +364,20 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^Decl_Value, g
 		spv_storage_class = .IncomingRayPayloadKHR
 		has_nil_value     = false
 		annotate          = true
+	case .Input:
+		value_builder     = nil
+		decl_builder      = &ctx.globals
+		storage_class     = .Input
+		spv_storage_class = .Input
+		has_nil_value     = false
+		annotate          = true
+	case .Output:
+		value_builder     = nil
+		decl_builder      = &ctx.globals
+		storage_class     = .Output
+		spv_storage_class = .Output
+		has_nil_value     = false
+		annotate          = true
 	}
 
 	prev_link_name := ctx.link_name
@@ -430,6 +444,10 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^Decl_Value, g
 						spv.OpDecorate(&ctx.annotations, id, .Location, u32(v.location))
 					}
 				}
+
+				if builtin, ok := decl.builtin.?; ok {
+					spv.OpDecorate(&ctx.annotations, id, .BuiltIn, u32(builtin))
+				}
 			}
 		} else {
 			if global {
@@ -443,6 +461,10 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^Decl_Value, g
 					id        := spv.OpVariable(decl_builder, cg_type_ptr(ctx, type_info, storage_class), spv_storage_class, init)
 					entity    := v.lhs[i].entity
 					cg_insert_entity(ctx, entity, storage_class, type, id)
+
+					if builtin, ok := decl.builtin.?; ok {
+						spv.OpDecorate(&ctx.annotations, id, .BuiltIn, u32(builtin))
+					}
 				}
 			} else {
 				lhs_i: int
@@ -463,6 +485,10 @@ cg_value_decl :: proc(ctx: ^Context, builder: ^spv.Builder, decl: ^Decl_Value, g
 
 						entity := v.lhs[lhs_i].entity
 						cg_insert_entity(ctx, entity, storage_class, value.type, ptr)
+
+						if builtin, ok := decl.builtin.?; ok {
+							spv.OpDecorate(&ctx.annotations, ptr, .BuiltIn, u32(builtin))
+						}
 					}
 				}
 			}
@@ -1439,6 +1465,18 @@ cg_expr_binary :: proc(
 	lhs_type := lhs_value.type
 	rhs_type := rhs_value.type
 
+	if op == .In {
+		type^         = t_bool
+		bool_type_id := cg_type(ctx, type^).type
+		one          := cg_constant(ctx, i64(1), rhs_type).id
+		zero         := cg_constant(ctx, i64(0), rhs_type).id
+		rhs_type_id  := cg_type(ctx, rhs_type).type
+		mask         := spv.OpShiftLeftLogical(builder, rhs_type_id, one, lhs)
+		masked       := spv.OpBitwiseAnd(builder, rhs_type_id, rhs, mask)
+
+		return spv.OpINotEqual(builder, bool_type_id, masked, zero)
+	}
+
 	if op_is_relation(op) {
 		type^      = t_bool
 		type_info := cg_type(ctx, type^)
@@ -1937,7 +1975,7 @@ cg_expr_internal :: proc(
 		case .Push_Constant, .Storage_Buffer, .Uniform, .Uniform_Constant:
 			value.explicit_layout = true
 			fallthrough
-		case .Global, .Ray_Payload, .Hit_Attribute, .Incoming_Ray_Payload:
+		case .Global, .Ray_Payload, .Hit_Attribute, .Incoming_Ray_Payload, .Input, .Output:
 			if ctx.spirv_version > spv_version(1, 3) {
 				ctx.referenced_globals[value.id] = {}
 			}

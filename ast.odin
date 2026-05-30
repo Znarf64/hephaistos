@@ -2,6 +2,8 @@ package hephaistos
 
 import "base:intrinsics"
 
+import spv "spirv-odin"
+
 @(require)
 import "core:mem"
 
@@ -360,6 +362,9 @@ Interface_Kind :: enum {
 	Storage_Buffer,
 	Shared,
 
+	Input,
+	Output,
+
 	Ray_Payload,
 	Incoming_Ray_Payload,
 	Hit_Attribute,
@@ -373,6 +378,9 @@ interface_kind_names := [Interface_Kind]string {
 	.Push_Constant        = "push_constant",
 	.Storage_Buffer       = "storage_buffer",
 	.Shared               = "shared",
+
+	.Input                = "input",
+	.Output               = "output",
 
 	.Ray_Payload          = "raytracing.ray_payload",
 	.Hit_Attribute        = "raytracing.hit_attribute",
@@ -393,6 +401,7 @@ Decl_Value :: struct {
 	local_size:  [3]i32,
 	shader_stage:   Shader_Stage,
 	interface:      Interface_Kind,
+	builtin:        Maybe(spv.BuiltIn),
 }
 
 Decl_Import :: struct {

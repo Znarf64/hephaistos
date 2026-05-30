@@ -566,6 +566,9 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^Decl_Value, type: ^T
 		.Storage_Buffer       = "storage buffer",
 		.Shared               = "shared",
 
+		.Input                = "input",
+		.Output               = "output",
+
 		.Ray_Payload          = "ray payload",
 		.Incoming_Ray_Payload = "incoming ray payload",
 		.Hit_Attribute        = "hit attribute",
@@ -590,7 +593,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^Decl_Value, type: ^T
 		binding_required = true
 	case .Storage_Buffer:
 		binding_required = true
-	case .Push_Constant, .Ray_Payload, .Shared, .Hit_Attribute, .Incoming_Ray_Payload:
+	case .Push_Constant, .Ray_Payload, .Shared, .Hit_Attribute, .Incoming_Ray_Payload, .Input, .Output:
 	case .None:
 		unreachable()
 	}
@@ -629,7 +632,7 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^Decl_Value, type: ^T
 		if type_is_buffer(type) || type_is_struct(type) {
 			error(checker, decl.type_expr, "type of uniform variable can not be a composite type")
 		}
-	case .Shared, .Ray_Payload, .Hit_Attribute, .Incoming_Ray_Payload:
+	case .Shared, .Ray_Payload, .Hit_Attribute, .Incoming_Ray_Payload, .Input, .Output:
 	case .Uniform_Buffer, .Storage_Buffer, .Push_Constant:
 		if !(type_is_buffer(type) || type_is_struct(type)) {
 			error(checker, decl.type_expr, "type of %s variable has to be a composite type", interface_kind_names[decl.interface])
@@ -776,6 +779,20 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 				}
 			} else {
 				error(checker, a.value, "'local_size' attribute value must be a compound literal of three constant integers")
+			}
+		case "builtin":
+			if a.value == nil {
+				error(checker, a.name, "'builtin' attribute requires a value")
+				break
+			}
+			value := check_expr(checker, a.value)
+			if val, ok := value.value.(string); ok {
+				decl.builtin, ok = reflect.enum_from_name(spv.BuiltIn, val)
+				if !ok {
+					error(checker, value, "'%s' is not a valid storage class", val)
+				}
+			} else {
+				error(checker, value, "'%s' attribute value must be a constant string", a.name.text)
 			}
 		case:
 			found: bool
@@ -1851,8 +1868,47 @@ check_expr_internal :: proc(
 		return
 
 	case ^Expr_Binary:
+		if v.op == .In {
+			rhs  := check_expr(checker, v.rhs)
+			base := base_type(rhs.type)
+
+			operand.type = t_bool
+			operand.mode = .RValue
+
+			if !type_is_bit_set(base) {
+				error(checker, v, "in expressions are only allowed for bit sets")
+				return
+			}
+			bits := base.variant.(^Type_Bit_Set)
+			lhs  := check_expr(checker, v.lhs, type_hint = bits.enum_type)
+
+			if !equal(lhs.type, bits.enum_type) {
+				error(checker, v.lhs, "expected expression of type %v, got %v", bits.enum_type, lhs.type)
+			}
+
+			return
+		}
+
 		lhs := check_expr(checker, v.lhs, type_hint = type_hint)
 		rhs := check_expr(checker, v.rhs, type_hint = lhs.type)
+
+		if type_is_invalid(lhs.type) {
+			operand.mode = .RValue
+			operand.type = rhs.type
+			if op_is_relation(v.op) {
+				operand.type = t_bool
+			}
+			return
+		}
+
+		if type_is_invalid(rhs.type) {
+			operand.mode = .RValue
+			operand.type = lhs.type
+			if op_is_relation(v.op) {
+				operand.type = t_bool
+			}
+			return
+		}
 
 		operand.type = op_result_type(lhs.type, rhs.type, v.op == .Multiply, checker.allocator)
 		if operand.type.kind == .Invalid {
@@ -1872,14 +1928,13 @@ check_expr_internal :: proc(
 		}
 
 		operand.mode = .RValue
+		if op_is_relation(v.op) {
+			operand.type = t_bool
+		}
+
 		if lhs.mode == .Const && rhs.mode == .Const {
 			operand.mode  = .Const
 			operand.value = evaluate_const_binary_op(checker, lhs.value, rhs.value, v)
-		}
-
-		if op_is_relation(v.op) {
-			operand.type = t_bool
-			operand.mode = .RValue
 		}
 
 	case ^Expr_Ident:
@@ -2114,6 +2169,7 @@ check_expr_internal :: proc(
 			entity      := check_ident(checker, v.selector, type.scope) or_break
 			operand.type = entity.type
 			operand.mode = lhs.mode
+		case .Invalid:
 		case:
 			error(checker, v, "expression of type %v has no field called '%s'", lhs.type, v.selector.text)
 		}
