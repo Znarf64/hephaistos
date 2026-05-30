@@ -187,7 +187,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		}
 		v.args[0].value.type = type
 		v.args[1].value.type = type
-		operand.type = array_elem(type)
+		operand.type = type_array_elem(type)
 		operand.mode = .RValue
 	case .Cross:
 		if len(v.args) != 2 {
@@ -290,7 +290,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 			error(checker, v, "builtin 'inverse' expects a matrix, got %d", len(args))
 			break
 		}
-		if !matrix_is_square(type) {
+		if !type_matrix_is_square(type) {
 			error(checker, v, "builtin 'inverse' expects a square matrix, got %v", type)
 			break
 		}
@@ -306,9 +306,9 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 			error(checker, v, "builtin 'transpose' expects a matrix, got %d", len(args))
 			break
 		}
-		if !matrix_is_square(type) {
+		if !type_matrix_is_square(type) {
 			m   := type.variant.(^Type_Matrix)
-			type = matrix_new(array_new(matrix_elem(type), m.cols, checker.allocator), m.col_type.count, checker.allocator)
+			type = type_matrix_new(type_array_new(type_matrix_elem(type), m.cols, checker.allocator), m.col_type.count, checker.allocator)
 		}
 		operand.type = type
 		operand.mode = .RValue
@@ -322,11 +322,11 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 			error(checker, v, "builtin 'determinant' expects a matrix, got %v", type)
 			break
 		}
-		if !matrix_is_square(type) {
+		if !type_matrix_is_square(type) {
 			error(checker, v, "builtin 'determinant' expects a square matrix, got %v", type)
 			break
 		}
-		operand.type = matrix_elem(type)
+		operand.type = type_matrix_elem(type)
 		operand.mode = .RValue
 	case .Ddx, .Ddy:
 		if checker.shader_stage != .Fragment {
@@ -379,7 +379,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		type := op_result_type(args[0].type, args[1].type)
 		elem := type
 		if type_is_array(type) {
-			elem = array_elem(type)
+			elem = type_array_elem(type)
 		}
 		if elem.kind == .Invalid || elem.kind != .Float {
 			error(checker, v, "builtin '%s' expects a float or vector, got %v", builtin_names[v.builtin], type)
@@ -397,7 +397,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		type := default_type(args[0].type)
 		t    := type
 		if type_is_array(type) {
-			t = array_elem(type)
+			t = type_array_elem(type)
 		}
 		#partial switch t.kind {
 		case .Float, .Int:
@@ -418,7 +418,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		type      := op_result_type(x.type, y.type)
 		elem_type := type
 		if type_is_array(type) {
-			elem_type = array_elem(type)
+			elem_type = type_array_elem(type)
 		}
 		if type.kind == .Invalid || !type_is_float(elem_type) {
 			error(checker, v, "builtin 'tan' expects two float vectors or scalars, got %v and %v", x.type, y.type)
@@ -435,14 +435,14 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		}
 		x    := args[0]
 		type := core_type(x.type, complex_to_array = true)
-		if !type_is_array(type) || !type_is_float(array_elem(type)) {
+		if !type_is_array(type) || !type_is_float(type_array_elem(type)) {
 			error(checker, x, "builtin '%v' expects a vector of floats, got %v", builtin_names[v.builtin], type)
 			return
 		}
 		operand.mode = .RValue
 		operand.type = x.type
 		if v.builtin == .Length {
-			operand.type = array_elem(type)
+			operand.type = type_array_elem(type)
 		}
 	case .Distance, .Reflect:
 		if len(v.args) != 2 {
@@ -462,7 +462,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		v.args[0].value.type = type
 		v.args[1].value.type = type
 		operand.mode         = .RValue
-		operand.type         = array_elem(type) if v.builtin == .Distance else type
+		operand.type         = type_array_elem(type) if v.builtin == .Distance else type
 	case .Refract:
 		if len(v.args) != 3 {
 			error(checker, v, "builtin '%s' expects three arguments, got %d", builtin_names[v.builtin], len(v.args))
@@ -480,7 +480,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 
 		eta_type := args[2].type
 		if !type_is_float(eta_type) {
-			eta_type = op_result_type(array_elem(type), eta_type)
+			eta_type = op_result_type(type_array_elem(type), eta_type)
 		}
 		if !type_is_float(eta_type) {
 			error(checker, v, "builtin '%s' expects a float as the third argument, got %v", builtin_names[v.builtin], args[2].type)
@@ -512,7 +512,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 			return
 		}
 		sampler     := args[0].type.variant.(^Type_Image)
-		operand.type = array_new(t_i32, sampler.dimensions, checker.allocator)
+		operand.type = type_array_new(t_i32, sampler.dimensions, checker.allocator)
 		operand.mode = .RValue
 	case .Image_Size:
 		if len(v.args) != 1 {
@@ -524,7 +524,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 			return
 		}
 		sampler     := args[0].type.variant.(^Type_Image)
-		operand.type = array_new(t_i32, sampler.dimensions, checker.allocator)
+		operand.type = type_array_new(t_i32, sampler.dimensions, checker.allocator)
 		operand.mode = .RValue
 	case .Count_Ones, .Count_Zeros, .Count_Leading_Zeros, .Count_Trailing_Zeros, .Count_Leading_Ones, .Count_Trailing_Ones, .Find_Lsb, .Find_Msb, .Reverse_Bits:
 		if len(v.args) != 1 {
@@ -533,7 +533,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		}
 		type := args[0].type
 		if type_is_array(type) {
-			type = array_elem(type)
+			type = type_array_elem(type)
 		}
 		type = default_type(type)
 		if !type_is_integer(type) {
@@ -552,7 +552,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 			error(checker, v, "builtin '%s' expects a complex number or quaternion, got %v", builtin_names[v.builtin], type)
 			return
 		}
-		operand.type = complex_elem(type)
+		operand.type = type_complex_elem(type)
 		operand.mode = .RValue
 	case .Jmag, .Kmag:
 		if len(v.args) != 1 {
@@ -564,7 +564,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 			error(checker, v, "builtin '%s' expects a quaternion, got %v", builtin_names[v.builtin], type)
 			return
 		}
-		operand.type = complex_elem(type)
+		operand.type = type_complex_elem(type)
 		operand.mode = .RValue
 	case .Conj:
 		if len(v.args) != 1 {

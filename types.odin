@@ -185,21 +185,21 @@ _base_types_init :: proc() {
 	mem.arena_init(&arena, arena_mem[:])
 	allocator := mem.arena_allocator(&arena)
 
-	t_vec2 = array_new(t_f32, 2, allocator)
-	t_vec3 = array_new(t_f32, 3, allocator)
-	t_vec4 = array_new(t_f32, 4, allocator)
+	t_vec2 = type_array_new(t_f32, 2, allocator)
+	t_vec3 = type_array_new(t_f32, 3, allocator)
+	t_vec4 = type_array_new(t_f32, 4, allocator)
 
-	t_ivec2 = array_new(t_i32, 2, allocator)
-	t_ivec3 = array_new(t_i32, 3, allocator)
-	t_ivec4 = array_new(t_i32, 4, allocator)
+	t_ivec2 = type_array_new(t_i32, 2, allocator)
+	t_ivec3 = type_array_new(t_i32, 3, allocator)
+	t_ivec4 = type_array_new(t_i32, 4, allocator)
 
-	t_complex64  = complex_new(t_f32, allocator)
-	t_complex128 = complex_new(t_f64, allocator)
+	t_complex64  = type_complex_new(t_f32, allocator)
+	t_complex128 = type_complex_new(t_f64, allocator)
 
-	t_quaternion128 = quaternion_new(t_f32, allocator)
-	t_quaternion256 = quaternion_new(t_f64, allocator)
+	t_quaternion128 = type_quaternion_new(t_f32, allocator)
+	t_quaternion256 = type_quaternion_new(t_f64, allocator)
 
-	t_mat4x3 = matrix_new(t_vec3.variant.(^Type_Array), 4, allocator)
+	t_mat4x3 = type_matrix_new(t_vec3.variant.(^Type_Array), 4, allocator)
 
 	@(require_results)
 	make_enum :: proc(values: []struct { name: string, value: i64, }, backing: ^Type, allocator: mem.Allocator) -> ^Type_Enum {
@@ -242,7 +242,7 @@ _base_types_init :: proc() {
 		{ "ForceOpacityMicromap2State", 10, },
 	}, t_i32, allocator)
 
-	t_Ray_Flags = bit_set_new(ray_flags_bits, t_i32, allocator)
+	t_Ray_Flags = type_bit_set_new(ray_flags_bits, t_i32, allocator)
 }
 
 type_print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
@@ -444,7 +444,7 @@ type_to_string :: proc(type: ^Type, pretty := false, allocator := context.alloca
 }
 
 @(require_results)
-equal :: proc(a, b: ^Type) -> bool {
+type_equal :: proc(a, b: ^Type) -> bool {
 	if a == b {
 		return true
 	}
@@ -472,7 +472,7 @@ equal :: proc(a, b: ^Type) -> bool {
 			if a.fields[i].location != b.fields[i].location {
 				return false
 			}
-			if !equal(a.fields[i].type, b.fields[i].type) {
+			if !type_equal(a.fields[i].type, b.fields[i].type) {
 				return false
 			}
 		}
@@ -487,7 +487,7 @@ equal :: proc(a, b: ^Type) -> bool {
 			return false
 		}
 
-		return equal(a.col_type, b.col_type)
+		return type_equal(a.col_type, b.col_type)
 	case .Array:
 		a := a.variant.(^Type_Array)
 		b := b.variant.(^Type_Array)
@@ -496,7 +496,7 @@ equal :: proc(a, b: ^Type) -> bool {
 			return false
 		}
 
-		return equal(a.elem, b.elem)
+		return type_equal(a.elem, b.elem)
 	case .Proc:
 		a := a.variant.(^Type_Proc)
 		b := b.variant.(^Type_Proc)
@@ -511,7 +511,7 @@ equal :: proc(a, b: ^Type) -> bool {
 			if a.args[i].location != b.args[i].location {
 				return false
 			}
-			if !equal(a.args[i].type, b.args[i].type) {
+			if !type_equal(a.args[i].type, b.args[i].type) {
 				return false
 			}
 		}
@@ -520,7 +520,7 @@ equal :: proc(a, b: ^Type) -> bool {
 			if a.returns[i].location != b.returns[i].location {
 				return false
 			}
-			if !equal(a.returns[i].type, b.returns[i].type) {
+			if !type_equal(a.returns[i].type, b.returns[i].type) {
 				return false
 			}
 		}
@@ -539,9 +539,9 @@ equal :: proc(a, b: ^Type) -> bool {
 			return false
 		}
 
-		return equal(a.texel_type, b.texel_type)
+		return type_equal(a.texel_type, b.texel_type)
 	case .Opaque:
-		return opaque_name(a) == opaque_name(b)
+		return type_opaque_name(a) == type_opaque_name(b)
 	case .Invalid, .Any, .Tuple:
 		return true
 	case .Buffer:
@@ -552,7 +552,7 @@ equal :: proc(a, b: ^Type) -> bool {
 			return false
 		}
 
-		return equal(a.elem, b.elem)
+		return type_equal(a.elem, b.elem)
 	case .Proc_Group:
 		a := a.variant.(^Type_Proc_Group)
 		b := b.variant.(^Type_Proc_Group)
@@ -562,7 +562,7 @@ equal :: proc(a, b: ^Type) -> bool {
 		}
 
 		for i in 0 ..< len(a.members) {
-			if !equal(a.members[i], b.members[i]) {
+			if !type_equal(a.members[i], b.members[i]) {
 				return false
 			}
 		}
@@ -586,12 +586,12 @@ equal :: proc(a, b: ^Type) -> bool {
 		a := a.variant.(^Type_Bit_Set)
 		b := b.variant.(^Type_Bit_Set)
 
-		return equal(a.backing, b.backing) && equal(a.enum_type, b.enum_type)
+		return type_equal(a.backing, b.backing) && type_equal(a.enum_type, b.enum_type)
 	case .Complex, .Quaternion:
 		a := a.variant.(^Type_Complex)
 		b := b.variant.(^Type_Complex)
 
-		return equal(a.array, b.array)
+		return type_equal(a.array, b.array)
 	case .Named:
 		a := a.variant.(^Type_Named)
 		b := b.variant.(^Type_Named)
@@ -635,7 +635,7 @@ base_type :: proc(type: ^Type) -> ^Type {
 
 @(require_results)
 implicitly_castable :: proc(from, to: ^Type) -> bool {
-	if equal(from, to) {
+	if type_equal(from, to) {
 		return true
 	}
 
@@ -657,11 +657,11 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 	to_elem: ^Type
 	#partial switch to.kind {
 	case .Array:
-		to_elem = array_elem(to)
+		to_elem = type_array_elem(to)
 	case .Matrix:
-		to_elem = matrix_elem(to)
+		to_elem = type_matrix_elem(to)
 	case .Complex, .Quaternion:
-		to_elem = complex_elem(to)
+		to_elem = type_complex_elem(to)
 	}
 	if to_elem != nil {
 		return implicitly_castable(from, to_elem)
@@ -722,7 +722,7 @@ castable :: proc(from, to: ^Type) -> bool {
 		to = v.array
 	}
 
-	if equal(from, to) {
+	if type_equal(from, to) {
 		return true
 	}
 
@@ -743,11 +743,11 @@ castable :: proc(from, to: ^Type) -> bool {
 	}
 
 	if type_is_array(from) && type_is_array(to) {
-		return array_len(from) == array_len(to) && castable(array_elem(from), array_elem(to))
+		return type_array_len(from) == type_array_len(to) && castable(type_array_elem(from), type_array_elem(to))
 	}
 
-	if type_is_opaque(to) && opaque_backing(to) != nil {
-		return castable(from, opaque_backing(to))
+	if type_is_opaque(to) && type_opaque_backing(to) != nil {
+		return castable(from, type_opaque_backing(to))
 	}
 
 	return false
@@ -794,32 +794,32 @@ type_is_integer :: proc(type: ^Type) -> bool {
 }
 
 @(require_results)
-array_len :: proc(type: ^Type) -> int {
+type_array_len :: proc(type: ^Type) -> int {
 	return type.variant.(^Type_Array).count
 }
 
 @(require_results)
-array_elem :: proc(type: ^Type) -> ^Type {
+type_array_elem :: proc(type: ^Type) -> ^Type {
 	return type.variant.(^Type_Array).elem
 }
 
 @(require_results)
-complex_elem :: proc(type: ^Type) -> ^Type {
+type_complex_elem :: proc(type: ^Type) -> ^Type {
 	return type.variant.(^Type_Complex).array.elem
 }
 
 @(require_results)
-buffer_elem :: proc(type: ^Type) -> ^Type {
+type_buffer_elem :: proc(type: ^Type) -> ^Type {
 	return type.variant.(^Type_Buffer).elem
 }
 
 @(require_results)
-opaque_name :: proc(type: ^Type) -> string {
+type_opaque_name :: proc(type: ^Type) -> string {
 	return type.variant.(^Type_Opaque).name
 }
 
 @(require_results)
-opaque_backing :: proc(type: ^Type) -> ^Type {
+type_opaque_backing :: proc(type: ^Type) -> ^Type {
 	return type.variant.(^Type_Opaque).backing
 }
 
@@ -839,12 +839,12 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 			return t_invalid
 		}
 
-		if !equal(a.col_type.elem, b.col_type.elem) {
+		if !type_equal(a.col_type.elem, b.col_type.elem) {
 			return t_invalid
 		}
 
-		col := array_new(a.col_type.elem, a.col_type.count, allocator)
-		return matrix_new(col, b.cols, allocator)
+		col := type_array_new(a.col_type.elem, a.col_type.count, allocator)
+		return type_matrix_new(col, b.cols, allocator)
 	}
 
 	if a.kind == .Matrix && b.kind == .Array {
@@ -855,11 +855,11 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 			return t_invalid
 		}
 
-		if !equal(v.elem, matrix_elem(a)) {
+		if !type_equal(v.elem, type_matrix_elem(a)) {
 			return t_invalid
 		}
 
-		return array_new(v.elem, a.col_type.count, allocator)
+		return type_array_new(v.elem, a.col_type.count, allocator)
 	}
 
 	if a.kind == .Array && b.kind == .Matrix {
@@ -870,22 +870,22 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 			return t_invalid
 		}
 
-		if !equal(v.elem, matrix_elem(b)) {
+		if !type_equal(v.elem, type_matrix_elem(b)) {
 			return t_invalid
 		}
 
-		return array_new(v.elem, b.cols, allocator)
+		return type_array_new(v.elem, b.cols, allocator)
 	}
 
 	if a.kind == .Float {
-		if op_result_type(a, matrix_elem(b)) == t_invalid {
+		if op_result_type(a, type_matrix_elem(b)) == t_invalid {
 			return t_invalid
 		}
 		return b
 	}
 
 	if b.kind == .Float {
-		if op_result_type(b, matrix_elem(a)) == t_invalid {
+		if op_result_type(b, type_matrix_elem(a)) == t_invalid {
 			return t_invalid
 		}
 		return a
@@ -895,18 +895,18 @@ matrix_multiply_type :: proc(a, b: ^Type, allocator: mem.Allocator) -> ^Type {
 }
 
 @(require_results)
-matrix_elem :: proc(type: ^Type) -> ^Type {
+type_matrix_elem :: proc(type: ^Type) -> ^Type {
 	return type.variant.(^Type_Matrix).col_type.elem
 }
 
 @(require_results)
-matrix_is_square :: proc(t: ^Type) -> bool {
+type_matrix_is_square :: proc(t: ^Type) -> bool {
 	m := t.variant.(^Type_Matrix)
 	return m.col_type.count == m.cols
 }
 
 @(require_results)
-array_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Type_Array {
+type_array_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Type_Array {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
@@ -920,12 +920,12 @@ array_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Type_Ar
 }
 
 @(require_results)
-complex_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Type_Complex {
+type_complex_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Type_Complex {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
 	type      := type_new(.Complex, Type_Complex, allocator)
-	type.array = array_new(elem, 2, allocator)
+	type.array = type_array_new(elem, 2, allocator)
 	type.size  = type.array.size
 	type.align = type.array.align
 
@@ -933,12 +933,12 @@ complex_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Type_Complex {
 }
 
 @(require_results)
-quaternion_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Type_Complex {
+type_quaternion_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Type_Complex {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
 	type      := type_new(.Quaternion, Type_Complex, allocator)
-	type.array = array_new(elem, 4, allocator)
+	type.array = type_array_new(elem, 4, allocator)
 	type.size  = type.array.size
 	type.align = type.array.align
 
@@ -946,7 +946,7 @@ quaternion_new :: proc(elem: ^Type, allocator: mem.Allocator) -> ^Type_Complex {
 }
 
 @(require_results)
-buffer_new :: proc(elem: ^Type, physical: bool, allocator: mem.Allocator) -> ^Type_Buffer {
+type_buffer_new :: proc(elem: ^Type, physical: bool, allocator: mem.Allocator) -> ^Type_Buffer {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
@@ -960,7 +960,7 @@ buffer_new :: proc(elem: ^Type, physical: bool, allocator: mem.Allocator) -> ^Ty
 }
 
 @(require_results)
-sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator) -> ^Type_Image {
+type_sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator) -> ^Type_Image {
 	assert(texel_type      != nil)
 	assert(texel_type.size != 0 || texel_type.kind == .Invalid)
 
@@ -972,7 +972,7 @@ sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator
 }
 
 @(require_results)
-image_new :: proc(texel_type: ^Type, dimensions: int, format: string, allocator: mem.Allocator) -> ^Type_Image {
+type_image_new :: proc(texel_type: ^Type, dimensions: int, format: string, allocator: mem.Allocator) -> ^Type_Image {
 	assert(texel_type      != nil)
 	assert(texel_type.size != 0 || texel_type.kind == .Invalid)
 
@@ -985,7 +985,7 @@ image_new :: proc(texel_type: ^Type, dimensions: int, format: string, allocator:
 }
 
 @(require_results)
-matrix_new :: proc(col_type: ^Type_Array, cols: int, allocator: mem.Allocator) -> ^Type_Matrix {
+type_matrix_new :: proc(col_type: ^Type_Array, cols: int, allocator: mem.Allocator) -> ^Type_Matrix {
 	assert(col_type      != nil)
 	assert(col_type.size != 0)
 
@@ -999,7 +999,7 @@ matrix_new :: proc(col_type: ^Type_Array, cols: int, allocator: mem.Allocator) -
 }
 
 @(require_results)
-opaque_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Type_Opaque {
+type_opaque_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Type_Opaque {
 	type        := type_new(.Opaque, Type_Opaque, allocator)
 	type.name    = name
 	type.backing = backing
@@ -1012,7 +1012,7 @@ opaque_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^T
 }
 
 @(require_results)
-named_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Type_Named {
+type_named_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Type_Named {
 	type      := type_new(.Named, Type_Named, allocator)
 	type.name  = name
 	type.type  = backing
@@ -1023,7 +1023,7 @@ named_new :: proc(name: string, backing: ^Type, allocator: mem.Allocator) -> ^Ty
 }
 
 @(require_results)
-bit_set_new :: proc(enum_type: ^Type, backing: ^Type, allocator: mem.Allocator) -> ^Type_Bit_Set {
+type_bit_set_new :: proc(enum_type: ^Type, backing: ^Type, allocator: mem.Allocator) -> ^Type_Bit_Set {
 	assert(enum_type != nil)
 	assert(backing   != nil)
 
@@ -1057,7 +1057,7 @@ type_any_new :: proc(allocator: mem.Allocator) -> ^Type {
 }
 
 @(require_results)
-is_comparable :: proc(type: ^Type) -> bool{
+type_is_comparable :: proc(type: ^Type) -> bool{
 	#partial switch type.kind {
 	case .Proc, .Tuple:
 		return false
@@ -1071,7 +1071,7 @@ operator_applicable :: proc(type: ^Type, op: Token_Kind) -> bool {
 		return true
 	}
 
-	if is_comparable(type) && (op == .Equal || op == .Not_Equal) {
+	if type_is_comparable(type) && (op == .Equal || op == .Not_Equal) {
 		return true
 	}
 
@@ -1107,13 +1107,13 @@ operator_applicable :: proc(type: ^Type, op: Token_Kind) -> bool {
 			return true
 		}
 	case .Array:
-		return operator_applicable(array_elem(type), op)
+		return operator_applicable(type_array_elem(type), op)
 	case .Complex:
-		return operator_applicable(complex_elem(type), op)
+		return operator_applicable(type_complex_elem(type), op)
 	case .Quaternion:
-		return operator_applicable(complex_elem(type), op)
+		return operator_applicable(type_complex_elem(type), op)
 	case .Matrix:
-		return operator_applicable(matrix_elem(type), op)
+		return operator_applicable(type_matrix_elem(type), op)
 	}
 
 	return false

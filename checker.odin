@@ -1131,7 +1131,7 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		}
 		e.kind = .Type
 		if v.type_distinct {
-			v.type = named_new(e.name, v.type, checker.allocator)
+			v.type = type_named_new(e.name, v.type, checker.allocator)
 		}
 	case .Proc:
 		e.kind = .Proc
@@ -1387,7 +1387,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 		case:
 			return
 		}
-		return array_new(elem, 2, allocator), true
+		return type_array_new(elem, 2, allocator), true
 	case reflect.Type_Info_Quaternion:
 		elem: ^Type
 		switch ti.size {
@@ -1398,7 +1398,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 		case:
 			return
 		}
-		return array_new(elem, 4, allocator), true
+		return type_array_new(elem, 4, allocator), true
 	case reflect.Type_Info_String:
 		return
 	case reflect.Type_Info_Boolean:
@@ -1425,7 +1425,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 	case reflect.Type_Info_Procedure:
 		return
 	case reflect.Type_Info_Array:
-		return array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
+		return type_array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
 	case reflect.Type_Info_Enumerated_Array:
 		unimplemented()
 	case reflect.Type_Info_Dynamic_Array, reflect.Type_Info_Fixed_Capacity_Dynamic_Array:
@@ -1451,7 +1451,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 			}
 			ptr  := v.types[1].variant.(reflect.Type_Info_Pointer)
 			elem := type_info_to_type(ptr.elem, allocator) or_return
-			return buffer_new(elem, true, allocator), true
+			return type_buffer_new(elem, true, allocator), true
 		}
 
 		fields := make([]^Entity, v.field_count, allocator)
@@ -1500,11 +1500,11 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 	case reflect.Type_Info_Bit_Set:
 		return type_info_to_type(v.underlying, allocator)
 	case reflect.Type_Info_Simd_Vector:
-		return array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
+		return type_array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
 	case reflect.Type_Info_Matrix:
 		elem := type_info_to_type(v.elem, allocator) or_return
-		col  := array_new(elem, v.row_count, allocator)
-		return matrix_new(col, v.column_count, allocator), true
+		col  := type_array_new(elem, v.row_count, allocator)
+		return type_matrix_new(col, v.column_count, allocator), true
 	case reflect.Type_Info_Soa_Pointer:
 		return
 	case reflect.Type_Info_Bit_Field:
@@ -1886,7 +1886,7 @@ check_expr_internal :: proc(
 			bits := base.variant.(^Type_Bit_Set)
 			lhs  := check_expr(checker, v.lhs, type_hint = bits.enum_type)
 
-			if !equal(lhs.type, bits.enum_type) {
+			if !type_equal(lhs.type, bits.enum_type) {
 				error(checker, v.lhs, "expected expression of type %v, got %v", bits.enum_type, lhs.type)
 			}
 
@@ -2164,7 +2164,7 @@ check_expr_internal :: proc(
 			case array.count:
 				operand.type = array
 			case:
-				operand.type = array_new(array.elem, len(selector), checker.allocator)
+				operand.type = type_array_new(array.elem, len(selector), checker.allocator)
 			}
 
 			return
@@ -2590,7 +2590,7 @@ check_expr_internal :: proc(
 					if n == 1 {
 						expected_type = type.elem
 					} else {
-						expected_type = array_new(type.elem, n, checker.allocator)
+						expected_type = type_array_new(type.elem, n, checker.allocator)
 					}
 
 					field.name.type = expected_type
@@ -2691,17 +2691,17 @@ check_expr_internal :: proc(
 			if !type_is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = matrix_elem(lhs.type)
+			operand.type = type_matrix_elem(lhs.type)
 		case .Array:
 			if !type_is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = array_elem(lhs.type)
+			operand.type = type_array_elem(lhs.type)
 		case .Buffer:
 			if !type_is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = buffer_elem(lhs.type)
+			operand.type = type_buffer_elem(lhs.type)
 		case .Sampler:
 			sampler := lhs.type.variant.(^Type_Image)
 			if sampler.dimensions == 1 {
@@ -2715,7 +2715,7 @@ check_expr_internal :: proc(
 					)
 				}
 			} else {
-				if !type_is_array(rhs.type) || array_len(rhs.type) != sampler.dimensions {
+				if !type_is_array(rhs.type) || type_array_len(rhs.type) != sampler.dimensions {
 					error(
 						checker,
 						rhs,
@@ -2743,8 +2743,8 @@ check_expr_internal :: proc(
 				}
 			} else {
 				if type_is_integer(rhs.type) {
-					v.rhs.type = array_new(default_type(rhs.type), image.dimensions, checker.allocator)
-				} else if !type_is_array(rhs.type) || !type_is_numeric(array_elem(rhs.type)) || array_len(rhs.type) != image.dimensions {
+					v.rhs.type = type_array_new(default_type(rhs.type), image.dimensions, checker.allocator)
+				} else if !type_is_array(rhs.type) || !type_is_numeric(type_array_elem(rhs.type)) || type_array_len(rhs.type) != image.dimensions {
 					error(
 						checker,
 						rhs,
@@ -2859,8 +2859,8 @@ check_expr_internal :: proc(
 			return
 		}
 
-		col_type    := array_new(default_type(elem), int(rows.value.(i64) or_else 0), checker.allocator)
-		operand.type = matrix_new(col_type, cols, checker.allocator)
+		col_type    := type_array_new(default_type(elem), int(rows.value.(i64) or_else 0), checker.allocator)
+		operand.type = type_matrix_new(col_type, cols, checker.allocator)
 		operand.mode = .Type
 	case ^Expr_Type_Array:
 		elem := default_type(check_type(checker, v.elem))
@@ -2872,7 +2872,7 @@ check_expr_internal :: proc(
 				error(checker, v.elem, "buffer element type must have a non-zero size, got %v", elem)
 				return
 			}
-			operand.type = buffer_new(elem, v.physical, checker.allocator)
+			operand.type = type_buffer_new(elem, v.physical, checker.allocator)
 			operand.mode = .Type
 		} else {
 			count := check_expr(checker, v.count)
@@ -2881,7 +2881,7 @@ check_expr_internal :: proc(
 					error(checker, count, "array size has to be a positive integer, got %d", c)
 					return
 				}
-				operand.type = array_new(elem, int(c), checker.allocator)
+				operand.type = type_array_new(elem, int(c), checker.allocator)
 				operand.mode = .Type
 			} else {
 				error(checker, count, "expected a constant integer as the count of an array")
@@ -3026,15 +3026,15 @@ check_expr_internal :: proc(
 		}
 
 		if v.is_sampler {
-			operand.type = sampler_new(texel_type, int(dim), checker.allocator)
+			operand.type = type_sampler_new(texel_type, int(dim), checker.allocator)
 		} else {
-			operand.type = image_new(texel_type, int(dim), v.format.text, checker.allocator)
+			operand.type = type_image_new(texel_type, int(dim), v.format.text, checker.allocator)
 		}
 		operand.mode = .Type
 	case ^Expr_Type_Bit_Set:
 		enum_type   := check_type(checker, v.enum_type)
 		backing     := check_type(checker, v.backing)
-		operand.type = bit_set_new(enum_type, backing, checker.allocator)
+		operand.type = type_bit_set_new(enum_type, backing, checker.allocator)
 		operand.mode = .Type
 
 	case ^Expr_Type_Opaque:
@@ -3042,7 +3042,7 @@ check_expr_internal :: proc(
 		if v.backing != nil {
 			backing = check_type(checker, v.backing)
 		}
-		operand.type = opaque_new(v.name.text, backing, checker.allocator)
+		operand.type = type_opaque_new(v.name.text, backing, checker.allocator)
 		operand.mode = .Type
 
 	case ^Expr_Type_Distinct:
