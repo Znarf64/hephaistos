@@ -9,7 +9,6 @@ Entity :: struct {
 	library:    ^Library,
 	value:       Const_Value,
 	builtin_id:  Builtin_Id,
-	interface:   Interface_Kind,
 	flags:       Entity_Flags,
 	scope:      ^Scope,
 	location:    i64,
@@ -81,14 +80,18 @@ entity_new :: proc(
 
 	e  = new(Entity, checker.allocator)
 	e^ = {
-		kind       = kind,
-		type       = type,
-		ident      = ident,
-		name       = ident.text,
-		decl       = decl,
-		value      = value,
-		builtin_id = builtin_id,
-		flags      = flags,
+		kind        = kind,
+		type        = type,
+		ident       = ident,
+		name        = ident.text,
+		decl        = decl,
+		value       = value,
+		builtin_id  = builtin_id,
+		flags       = flags,
+
+		location    = -1,
+		offset      = -1,
+		field_index = -1,
 	}
 
 	e.references.allocator = checker.allocator
@@ -114,14 +117,18 @@ entity_new_no_ident :: proc(
 ) -> (e: ^Entity) {
 	e  = new(Entity, checker.allocator)
 	e^ = {
-		kind       = kind,
-		type       = type,
-		ident      = nil,
-		name       = name,
-		decl       = decl,
-		value      = value,
-		builtin_id = builtin_id,
-		flags      = flags,
+		kind        = kind,
+		type        = type,
+		ident       = nil,
+		name        = name,
+		decl        = decl,
+		value       = value,
+		builtin_id  = builtin_id,
+		flags       = flags,
+
+		location    = -1,
+		offset      = -1,
+		field_index = -1,
 	}
 
 	e.references.allocator = checker.allocator

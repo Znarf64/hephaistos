@@ -40,7 +40,7 @@ compile_shader :: proc(
 	error_allocator := context.allocator,
 ) -> (code: []u32, errors: []hep.Error) {
 	tokens: []hep.Token
-	tokens, errors = hep.tokenize(source, false, context.temp_allocator, error_allocator)
+	tokens, errors = hep.tokenize(source, false, allocator = context.temp_allocator, error_allocator = error_allocator)
 	if len(errors) != 0 {
 		return
 	}

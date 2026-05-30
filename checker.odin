@@ -89,7 +89,6 @@ Operand :: struct {
 	mode:              Addressing_Mode,
 	value:             Const_Value,
 	builtin_id:        Builtin_Id,
-	interface:         Interface_Kind,
 	library:          ^Library,
 	scope:            ^Scope,
 	is_call:           bool,
@@ -985,9 +984,8 @@ collect_decls :: proc(checker: ^Checker, stmts: []^Ast_Stmt, global: bool, entit
 				continue
 			}
 
-			type       := type_any_new(checker.allocator)
-			e          := entity_new(checker, entity_kind, ident, type, decl = d, flags = flags)
-			e.interface = d.interface
+			type := type_any_new(checker.allocator)
+			e    := entity_new(checker, entity_kind, ident, type, decl = d, flags = flags)
 			scope_insert_entity(checker, e)
 			append(entities, e)
 		}
@@ -1769,13 +1767,8 @@ check_proc_type :: proc(checker: ^Checker, p: ^Expr_Proc_Sig, is_entry_point: bo
 				}
 
 				e := entity_new(checker, .Proc_Param if args else .Proc_Return, field.name, t_invalid, flags = field.flags | { .Resolved, })
-				e.location = location
 				if is_entry_point {
-					if args {
-						e.interface = .Input
-					} else {
-						e.interface = .Output
-					}
+					e.location = location
 				}
 				scope_insert_entity(checker, e, scope)
 				append(&out_fields, e)
@@ -3196,8 +3189,7 @@ check_type :: proc(checker: ^Checker, expr: ^Ast_Expr, attributes: []Ast_Field =
 }
 
 entity_to_operand :: proc(checker: ^Checker, e: ^Entity, operand: ^Operand) {
-	operand.type      = e.type
-	operand.interface = e.interface
+	operand.type = e.type
 	switch e.kind {
 	case .Invalid:
 	case .Const:
