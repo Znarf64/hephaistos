@@ -110,7 +110,7 @@ parallelogram :: proc(p: [2]f32, wi, he, sk: f32) -> f32 {
 	return sqrt(d.x) * sign(-d.y)
 }
 
-//https://www.shadertoy.com/view/Xl2yDW
+// https://www.shadertoy.com/view/Xl2yDW
 equilateral_triangle :: proc(p: [2]f32, r: f32) -> f32 {
 	p := p
 

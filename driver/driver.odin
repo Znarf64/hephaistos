@@ -70,6 +70,15 @@ main :: proc() {
 		target_env: Target_Env                 `usage:"The target environment."`,
 		defines:    map[string]hep.Const_Value `args:"name=define" usage:"Define compile time constants."`,
 		libraries:  map[string]string          `args:"name=library" usage:"Path to a library."`,
+
+		vet_unused_parameters: bool            `usage:"Checks for unused parameters"`,
+		vet_unused_variables:  bool            `usage:"Checks for unused variables"`,
+		vet_unused_procedures: bool            `usage:"Checks for unused procedures"`,
+		vet_unused_imports:    bool            `usage:"Checks for unused imports"`,
+		vet_unused:            bool            `usage:"Checks for unused declarations"`,
+		vet_shadowing:         bool            `usage:"Checks for shadowing in procedure bodies"`,
+		vet_cast:              bool            `usage:"Checks for casts that do not change the type"`,
+		vet:                   bool            `usage:"Enables all -vet-* checks"`,
 	}
 
 	options: Options
@@ -135,6 +144,34 @@ main :: proc() {
 		flags         = { .Auto_Map_Locations, .Auto_Bind_Uniforms, }
 	case .Vulkan:
 		spirv_version = hep.SPIR_V_VERSION_1_6
+	}
+
+	if options.vet_unused_parameters {
+		flags |= { .Vet_Unused_Parameters, }
+	}
+	if options.vet_unused_variables {
+		flags |= { .Vet_Unused_Variables, }
+	}
+	if options.vet_unused_procedures {
+		flags |= { .Vet_Unused_Procedures, }
+	}
+	if options.vet_unused_imports {
+		flags |= { .Vet_Unused_Imports, }
+	}
+	VET_FLAGS_UNUSED: hep.Checker_Flags : { .Vet_Unused_Parameters, .Vet_Unused_Variables, .Vet_Unused_Procedures, .Vet_Unused_Imports, }
+	if options.vet_unused {
+		flags |= VET_FLAGS_UNUSED
+	}
+
+	if options.vet_cast {
+		flags |= { .Vet_Cast, }
+	}
+	if options.vet_shadowing {
+		flags |= { .Vet_Shadowing, }
+	}
+
+	if options.vet {
+		flags |= VET_FLAGS_UNUSED | { .Vet_Shadowing, .Vet_Cast, }
 	}
 
 	checker: hep.Checker

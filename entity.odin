@@ -44,6 +44,8 @@ Entity_Flag :: enum {
 
 	By_Ptr,
 	Const,
+
+	Used,
 }
 
 Entity_Flags :: bit_set[Entity_Flag]
@@ -154,4 +156,13 @@ Scope_Kind :: enum {
 
 	Enum,
 	Struct,
+}
+
+@(require_results)
+get_entity_node :: proc(e: ^Entity) -> ^Ast_Node {
+	node: ^Ast_Node = e.decl
+	if e.ident != nil {
+		node = e.ident
+	}
+	return node
 }

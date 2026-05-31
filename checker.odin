@@ -6,6 +6,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:reflect"
+import "core:slice"
 import "core:strings"
 
 import spv "spirv-odin"
@@ -13,8 +14,16 @@ import spv "spirv-odin"
 Checker_Flag :: enum {
 	Auto_Map_Locations,
 	Auto_Bind_Uniforms,
+
 	Enable_Reflection,
 	Enable_References,
+
+	Vet_Unused_Procedures,
+	Vet_Unused_Parameters,
+	Vet_Unused_Variables,
+	Vet_Unused_Imports,
+	Vet_Shadowing,
+	Vet_Cast,
 }
 
 Checker_Flags :: bit_set[Checker_Flag]
@@ -120,6 +129,7 @@ check_ident :: proc(checker: ^Checker, name: ^Expr_Ident, scope: ^Scope = nil) -
 			if .Enable_References in checker.flags {
 				append(&e.references, name)
 			}
+			e.flags |= { .Used, }
 			return
 		}
 		s = s.parent
@@ -167,7 +177,47 @@ scope_push :: proc(checker: ^Checker, kind: Scope_Kind, label: ^Expr_Ident = nil
 	return checker.scope
 }
 
+check_scope_end :: proc(checker: ^Checker) {
+	unused_entities := make([dynamic]^Entity, context.temp_allocator)
+	for _, e in checker.scope.entities {
+		if .Used in e.flags || get_entity_node(e) == nil {
+			continue
+		}
+
+		append(&unused_entities, e)
+	}
+
+	slice.sort_by(unused_entities[:], proc(a, b: ^Entity) -> bool {
+		return get_entity_node(a).start.offset < get_entity_node(b).start.offset
+	})
+
+	for e in unused_entities {
+		node := get_entity_node(e)
+		#partial switch e.kind {
+		case .Proc_Param:
+			if .Vet_Unused_Parameters in checker.flags {
+				error(checker, node, "parameter '%s' declared but not used", e.name)
+			}
+		case .Proc:
+			assert(e.decl != nil)
+			if .Vet_Unused_Procedures in checker.flags && (e.decl.derived.(^Decl_Value) or_break).shader_stage == nil {
+				error(checker, node, "procedure '%s' declared but not used", e.name)
+			}
+		case .Var:
+			if .Vet_Unused_Variables in checker.flags {
+				error(checker, node, "variable '%s' declared but not used", e.name)
+			}
+		case .Library:
+			if .Vet_Unused_Imports in checker.flags {
+				error(checker, node, "'%s' imported but not used", e.name)
+			}
+		}
+	}
+}
+
 scope_pop :: proc(checker: ^Checker) -> (s: ^Scope) {
+	check_scope_end(checker)
+
 	s             = checker.scope
 	checker.scope = s.parent
 	return
@@ -189,8 +239,18 @@ scope_insert_entity :: proc(checker: ^Checker, e: ^Entity, scope: ^Scope = nil) 
 
 	assert(e.name != "")
 	if e.name in scope.entities {
-		error(checker, e.ident, "'%s' has already been defined in this scope", e.name)
+		error(checker, get_entity_node(e), "'%s' has already been defined in this scope", e.name)
 		return false
+	}
+
+	if .Vet_Shadowing in checker.flags {
+		for s := scope.parent; s != nil; s = s.parent {
+			old, ok := s.entities[e.name]
+			if ok {
+				error(checker, get_entity_node(e), "declaration of '%s' shadows previous declaration on line %d", e.name, get_entity_node(old).start.line)
+				break
+			}
+		}
 	}
 
 	scope.entities[e.name] = e
@@ -584,54 +644,6 @@ check_decl_interface_type :: proc(checker: ^Checker, decl: ^Decl_Value, type: ^T
 		return
 	}
 
-	location_required := false
-	binding_required  := false
-
-	switch decl.interface {
-	case .Uniform:
-		location_required = true
-
-		if decl.binding != -1 {
-			location_required = false
-			binding_required  = true
-		}
-	case .Uniform_Buffer:
-		binding_required = true
-	case .Storage_Buffer:
-		binding_required = true
-	case .Push_Constant, .Ray_Payload, .Shared, .Hit_Attribute, .Incoming_Ray_Payload, .Input, .Output:
-	case .None:
-		unreachable()
-	}
-
-	if binding_required && decl.binding == -1 {
-		if .Auto_Bind_Uniforms in checker.flags {
-			decl.binding             = checker.current_binding
-			checker.current_binding += 1
-		} else {
-			error(
-				checker,
-				decl,
-				"variable with '%s' attribute requires an explicit binding to be specified",
-				interface_kind_names[decl.interface],
-			)
-		}
-	}
-
-	if location_required && decl.location == -1 {
-		if .Auto_Map_Locations in checker.flags {
-			decl.location             = checker.current_location
-			checker.current_location += 1
-		} else {
-			error(
-				checker,
-				decl,
-				"variable with '%s' attribute requires an explicit location to be specified",
-				interface_kind_names[decl.interface],
-			)
-		}
-	}
-
 	switch decl.interface {
 	case .None:
 	case .Uniform:
@@ -666,6 +678,8 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 	decl.descriptor_set = -1
 	seen := make(map[string]struct{}, context.temp_allocator)
 
+	interface_ident: ^Ast_Expr
+
 	for a in decl.attributes {
 		name, library: string
 		if selector, ok := a.name.derived_expr.(^Expr_Selector); ok {
@@ -697,7 +711,8 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 		interface_kind: Interface_Kind
 		for name, interface in interface_kind_names {
 			if check_attribute_matches(checker, a, name) {
-				interface_kind = interface
+				interface_kind  = interface
+				interface_ident = a.name
 				break
 			}
 		}
@@ -837,6 +852,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 		if decl.descriptor_set != -1 {
 			error(checker, decl, "attribute 'descriptor_set' can only be applied to interface variables")
 		}
+		return
 	} else {
 		if len(decl.values) != 0 {
 			error(
@@ -850,6 +866,56 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 				checker,
 				decl,
 				"attribute '%s' can not be applied to a declaration of multiple variables",
+				interface_kind_names[decl.interface],
+			)
+		}
+	}
+
+	location_required := false
+	binding_required  := false
+
+	switch decl.interface {
+	case .Uniform:
+		location_required = true
+
+		if decl.binding != -1 {
+			location_required = false
+			binding_required  = true
+		}
+	case .Uniform_Buffer:
+		binding_required = true
+	case .Storage_Buffer:
+		binding_required = true
+	case .Input, .Output:
+		location_required = decl.builtin == nil
+	case .Push_Constant, .Ray_Payload, .Shared, .Hit_Attribute, .Incoming_Ray_Payload:
+	case .None:
+		unreachable()
+	}
+
+	if binding_required && decl.binding == -1 {
+		if .Auto_Bind_Uniforms in checker.flags {
+			decl.binding             = checker.current_binding
+			checker.current_binding += 1
+		} else {
+			error(
+				checker,
+				interface_ident,
+				"variable with '%s' attribute requires an explicit binding to be specified",
+				interface_kind_names[decl.interface],
+			)
+		}
+	}
+
+	if location_required && decl.location == -1 {
+		if .Auto_Map_Locations in checker.flags {
+			decl.location             = checker.current_location
+			checker.current_location += 1
+		} else {
+			error(
+				checker,
+				interface_ident,
+				"variable with '%s' attribute requires an explicit location to be specified",
 				interface_kind_names[decl.interface],
 			)
 		}
@@ -1558,6 +1624,7 @@ check_with_types :: proc(
 ) -> (checker: Checker, errors: []Error) {
 	checker_init(&checker, defines, types, libraries, flags, allocator, error_allocator)
 	check_stmt_list(&checker, stmts)
+	check_scope_end(&checker)
 	return checker, checker.errors[:]
 }
 
@@ -2221,9 +2288,12 @@ check_expr_internal :: proc(
 					e := check_expr(checker, v.args[0].value)
 					ok: bool
 					cond, ok = e.value.(bool)
-					if !ok {
+					if ok {
+						break
+					}
+					cond = true
+					if e.mode != .Invalid {
 						error(checker, v.args[0].value, "expected a constant boolean in #assert")
-						cond = true
 					}
 				}
 				if !cond {
@@ -2335,6 +2405,9 @@ check_expr_internal :: proc(
 			value := check_expr(checker, v.args[0].value)
 			if !castable(value.type, fn.type) {
 				error(checker, v, "can not cast expression from type %v to %v", value.type, fn.type)
+			}
+			if .Vet_Cast in checker.flags && type_equal(value.type, fn.type) {
+				error(checker, v, "uneeded cast to identical type '%v'", value.type)
 			}
 			operand.type = fn.type
 			operand.mode = .RValue
@@ -2785,6 +2858,9 @@ check_expr_internal :: proc(
 		operand.type = check_type(checker, v.type_expr)
 		if !castable(value.type, operand.type) {
 			error(checker, v, "can not cast expression from type %v to %v", value.type, operand.type)
+		}
+		if .Vet_Cast in checker.flags && type_equal(value.type, operand.type) {
+			error(checker, v, "uneeded cast to identical type '%v'", value.type)
 		}
 		operand.mode = .RValue
 	case ^Expr_Unary:

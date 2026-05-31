@@ -869,7 +869,11 @@ parse_stmt :: proc(parser: ^Parser, label: ^Expr_Ident = nil, attributes: []Ast_
 		if len(attributes) != 0 {
 			error(parser, token, "only one set of attributes can be applied to a statement")
 		}
-		return parse_stmt(parser, label, parse_attributes(parser) or_return)
+		stmt, ok = parse_stmt(parser, label, parse_attributes(parser) or_return)
+		if stmt != nil {
+			stmt.start = token.location
+		}
+		return
 	case .Return, .Continue, .Break, .String_Literal, .Open_Paren, .Cast, .Dollar, .Directive:
 		return parse_simple_stmt(parser, attributes)
 	case .Import:
