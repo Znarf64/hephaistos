@@ -1264,7 +1264,7 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 		}
 	}
 
-	if .Enable_Reflection not_in checker.flags && d.shader_stage != nil {
+	if .Enable_Reflection in checker.flags && d.shader_stage != nil {
 		type    := type.variant.(^Type_Proc)
 		inputs  := make([]Reflection_Info, len(type.args),    checker.allocator)
 		outputs := make([]Reflection_Info, len(type.returns), checker.allocator)
