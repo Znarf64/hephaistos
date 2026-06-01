@@ -66,8 +66,8 @@ check_library :: proc(
 		return
 	}
 
-	library.entities = c.scope.entities
-	library.stmts    = stmts
+	library.scope = c.scope
+	library.stmts = stmts
 	return
 }
 

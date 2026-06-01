@@ -632,6 +632,6 @@ ast_new :: proc($T: typeid, start, end: Location, allocator: mem.Allocator) -> ^
 }
 
 Library :: struct {
-	entities: map[string]^Entity,
+	scope:   ^Scope,
 	stmts: []^Ast_Stmt,
 }

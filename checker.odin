@@ -270,7 +270,26 @@ check_assignment :: proc(checker: ^Checker, lhs, rhs: ^Type, node: ^Ast_Node, co
 	return
 }
 
+@(require_results)
 check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
+	if checker.scope.kind == .Global {
+		#partial switch v in stmt.derived_stmt {
+		case ^Decl_Value, ^Decl_Import, ^Decl_Extension, ^Stmt_When:
+		case ^Stmt_Expr:
+			call, ok := v.expr.derived.(^Expr_Call)
+			if !ok {
+				error(checker, stmt, "only declaration are allowed at file scope")
+				break
+			}
+
+			if _, ok := call.lhs.derived.(^Expr_Directive); !ok {
+				error(checker, stmt, "only declaration are allowed at file scope")
+			}
+		case:
+			error(checker, stmt, "only declaration are allowed at file scope")
+		}
+	}
+
 	switch v in stmt.derived_stmt {
 	case ^Stmt_Return:
 		proc_type, ok := lookup_proc_type(checker)
@@ -369,7 +388,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 		defer scope_pop(checker)
 
 		if v.init != nil {
-			check_stmt(checker, v.init)
+			diverging := check_stmt(checker, v.init)
+			if diverging {
+				error(checker, v.init, "for loop init statement can not be diverging")
+			}
 		}
 
 		if v.cond != nil {
@@ -380,7 +402,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 		}
 
 		if v.post != nil {
-			check_stmt(checker, v.post)
+			diverging := check_stmt(checker, v.post)
+			if diverging {
+				error(checker, v.init, "for loop post statement can not be diverging")
+			}
 		}
 
 		v.scope = scope_push(checker, .Block)
@@ -397,7 +422,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 		defer scope_pop(checker)
 
 		if v.init != nil {
-			check_stmt(checker, v.init)
+			diverging := check_stmt(checker, v.init)
+			if diverging {
+				error(checker, v.init, "if statement init statement can not be diverging")
+			}
 		}
 
 		cond := check_expr(checker, v.cond)
@@ -432,7 +460,10 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 		defer scope_pop(checker)
 
 		if v.init != nil {
-			check_stmt(checker, v.init)
+			diverging := check_stmt(checker, v.init)
+			if diverging {
+				error(checker, v.init, "if statement init statement can not be diverging")
+			}
 		}
 
 		cond            := check_expr(checker, v.cond)
@@ -520,7 +551,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 
 	case ^Stmt_Expr:
 		operand := check_expr(checker, v.expr, allow_no_value = true)
-		if !operand.is_call {
+		if !operand.is_call && operand.mode != .Invalid {
 			error(checker, v.expr, "expression is not used")
 		}
 		if operand.diverging {
@@ -1372,7 +1403,7 @@ checker_init :: proc(
 	find_or_create_lib :: proc(checker: ^Checker, name: string) -> (library: ^Library) {
 		library = &checker.libraries[name]
 		if library == nil {
-			checker.libraries[name] = { entities = make(map[string]^Entity, checker.allocator), }
+			checker.libraries[name] = { scope = scope_new(nil, .Global, checker.allocator), }
 			library                 = &checker.libraries[name]
 		}
 		return
@@ -1380,7 +1411,7 @@ checker_init :: proc(
 
 	create_library_type :: proc(checker: ^Checker, library: ^Library, type: ^Type, type_expr := #caller_expression(type)) {
 		name := strings.trim_prefix(type_expr, "t_")
-		library.entities[name] = entity_new_no_ident(checker, .Type, name, type, flags = { .Resolved, })
+		library.scope.entities[name] = entity_new_no_ident(checker, .Type, name, type, flags = { .Resolved, })
 	}
 
 	for name, builtin in builtin_names {
@@ -1398,13 +1429,13 @@ checker_init :: proc(
 		name     := name
 		dot      := strings.index(name, ".")
 		if dot >= 0 {
-			lib               := find_or_create_lib(checker, name[:dot])
-			name               = name[dot + 1:]
-			lib.entities[name] = create_builtin_proc(checker, name, builtin)
+			lib                     := find_or_create_lib(checker, name[:dot])
+			name                     = name[dot + 1:]
+			lib.scope.entities[name] = create_builtin_proc(checker, name, builtin)
 		} else {
 			lib                         := find_or_create_lib(checker, "base:builtin")
 			e                           := create_builtin_proc(checker, name, builtin)
-			lib.entities[name]           = e
+			lib.scope.entities[name]     = e
 			checker.scope.entities[name] = e
 		}
 	}
@@ -2167,15 +2198,11 @@ check_expr_internal :: proc(
 		}
 
 		if lhs.mode == .Library {
-			if e, ok := lhs.library.entities[v.selector.text]; ok {
-				entity_to_operand(checker, e, &operand)
-				v.selector.entity = e
-				if .Enable_References in checker.flags && e!= nil {
-					append(&e.references, v.selector)
-				}
-			} else {
-				error(checker, v.selector, "'%s' is not declared by library", v.selector.text)
+			e, ok := check_ident(checker, v.selector, lhs.library.scope)
+			if !ok {
+				return
 			}
+			entity_to_operand(checker, e, &operand)
 			return
 		}
 
