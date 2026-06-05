@@ -409,7 +409,7 @@ Decl_Import :: struct {
 	using node: Ast_Decl,
 	path:      ^Expr_Constant,
 	alias:     ^Expr_Ident,
-	name:       string,
+	entity:    ^Entity,
 }
 
 Decl_Extension :: struct {

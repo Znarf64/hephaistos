@@ -16,14 +16,14 @@ Const_Value :: union {
 
 Type_Struct :: struct {
 	using base: Type,
-	fields:     []^Entity,
-	scope:      ^Scope,
+	fields:  []^Entity,
+	scope:     ^Scope,
 }
 
 Type_Array :: struct {
 	using base: Type,
-	count:      int,
-	elem:       ^Type,
+	count:      i64,
+	elem:      ^Type,
 }
 
 Type_Complex :: struct {
@@ -33,14 +33,14 @@ Type_Complex :: struct {
 
 Type_Buffer :: struct {
 	using base: Type,
-	elem:       ^Type,
+	elem:      ^Type,
 	physical:   bool,
 }
 
 Type_Matrix :: struct {
 	using base: Type,
-	cols:       int,
-	col_type:   ^Type_Array,
+	cols:       i64,
+	col_type:  ^Type_Array,
 }
 
 Type_Proc :: struct {
@@ -59,7 +59,7 @@ Type_Proc_Group :: struct {
 
 Type_Image :: struct {
 	using base: Type,
-	dimensions: int,
+	dimensions: i64,
 	texel_type: ^Type,
 	format:     string,
 }
@@ -119,8 +119,8 @@ Type_Kind :: enum {
 
 Type :: struct {
 	kind:    Type_Kind,
-	size:    int,
-	align:   int,
+	size:    i64,
+	align:   i64,
 	variant: union {
 		^Type_Struct,
 		^Type_Matrix,
@@ -333,7 +333,7 @@ type_print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 		type_print_writer(w, v.elem, indent)
 	case .Buffer:
 		v := type.variant.(^Type_Buffer)
-		fmt.wprintf(w, "[^]")
+		fmt.wprintf(w, "[^]" if v.physical else "[]")
 		type_print_writer(w, v.elem, indent)
 	case .Proc:
 		b := type.variant.(^Type_Proc)
@@ -794,7 +794,7 @@ type_is_integer :: proc(type: ^Type) -> bool {
 }
 
 @(require_results)
-type_array_len :: proc(type: ^Type) -> int {
+type_array_len :: proc(type: ^Type) -> i64 {
 	return type.variant.(^Type_Array).count
 }
 
@@ -906,7 +906,14 @@ type_matrix_is_square :: proc(t: ^Type) -> bool {
 }
 
 @(require_results)
-type_array_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Type_Array {
+align_forward_i64 :: #force_inline proc(ptr, align: i64) -> i64 {
+	assert(align & (align - 1) == 0)
+	return i64((u64(ptr) + u64(align) - 1) & ~(u64(align) - 1))
+}
+
+
+@(require_results)
+type_array_new :: proc(elem: ^Type, count: i64, allocator: mem.Allocator) -> ^Type_Array {
 	assert(elem      != nil)
 	assert(elem.size != 0)
 
@@ -914,7 +921,7 @@ type_array_new :: proc(elem: ^Type, count: int, allocator: mem.Allocator) -> ^Ty
 	type.elem  = elem
 	type.count = count
 	type.align = elem.align
-	type.size  = mem.align_forward_int(count * elem.size, type.align)
+	type.size  = align_forward_i64(count * elem.size, type.align)
 
 	return type
 }
@@ -960,7 +967,7 @@ type_buffer_new :: proc(elem: ^Type, physical: bool, allocator: mem.Allocator) -
 }
 
 @(require_results)
-type_sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allocator) -> ^Type_Image {
+type_sampler_new :: proc(texel_type: ^Type, dimensions: i64, allocator: mem.Allocator) -> ^Type_Image {
 	assert(texel_type      != nil)
 	assert(texel_type.size != 0 || texel_type.kind == .Invalid)
 
@@ -972,7 +979,7 @@ type_sampler_new :: proc(texel_type: ^Type, dimensions: int, allocator: mem.Allo
 }
 
 @(require_results)
-type_image_new :: proc(texel_type: ^Type, dimensions: int, format: string, allocator: mem.Allocator) -> ^Type_Image {
+type_image_new :: proc(texel_type: ^Type, dimensions: i64, format: string, allocator: mem.Allocator) -> ^Type_Image {
 	assert(texel_type      != nil)
 	assert(texel_type.size != 0 || texel_type.kind == .Invalid)
 
@@ -985,7 +992,7 @@ type_image_new :: proc(texel_type: ^Type, dimensions: int, format: string, alloc
 }
 
 @(require_results)
-type_matrix_new :: proc(col_type: ^Type_Array, cols: int, allocator: mem.Allocator) -> ^Type_Matrix {
+type_matrix_new :: proc(col_type: ^Type_Array, cols: i64, allocator: mem.Allocator) -> ^Type_Matrix {
 	assert(col_type      != nil)
 	assert(col_type.size != 0)
 

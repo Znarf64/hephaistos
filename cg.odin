@@ -41,6 +41,7 @@ Type_Key :: struct {
 	types, annotations: string, // really []u32, but strings can be hashed and compared
 }
 
+@(require_results)
 get_type_cache_key :: proc(type: ^Type, flags: Type_Flags) -> (key: Type_Cache_Key) {
 	#partial switch type.kind {
 	case .Invalid:
@@ -48,10 +49,16 @@ get_type_cache_key :: proc(type: ^Type, flags: Type_Flags) -> (key: Type_Cache_K
 	case .Uint, .Int, .Bool, .Float:
 		return { variant = Type_Cache_Key_Basic{ size = type.size, kind = type.kind, }, }
 	case .Array:
-		elem := type_array_elem(type)
+		v    := type.variant.(^Type_Array)
+		elem := v.elem
 		#partial switch elem.kind {
 		case .Uint, .Int, .Bool, .Float:
-			return { variant = Type_Cache_Key_Array{ size = type.size, elem_kind = elem.kind, }, }
+			return {
+				variant = Type_Cache_Key_Array{
+					count = v.count,
+					elem  = { size = elem.size, kind = elem.kind, },
+				},
+			}
 		}
 	}
 
@@ -62,13 +69,13 @@ get_type_cache_key :: proc(type: ^Type, flags: Type_Flags) -> (key: Type_Cache_K
 }
 
 Type_Cache_Key_Basic :: struct {
-	size: int,
+	size: i64,
 	kind: Type_Kind,
 }
 
 Type_Cache_Key_Array :: struct {
-	size:      int, // elem_size * count
-	elem_kind: Type_Kind,
+	count: i64,
+	elem:  Type_Cache_Key_Basic,
 }
 
 Type_Cache_Key :: struct {
@@ -1415,7 +1422,7 @@ cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Cg_Value) -> spv.I
 		ctx.capabilities[.StorageImageReadWithoutFormat] = {}
 
 		texel_type: ^Type
-		vector_len: int
+		vector_len: i64
 		if type_is_numeric(value.type) {
 			vector_len = 1
 			texel_type = type_array_new(value.type, 4, context.temp_allocator)
@@ -1578,6 +1585,10 @@ cg_expr_binary :: proc(
 				binary_op_proc = spv.OpBitwiseAnd
 			case .Xor:
 				binary_op_proc = spv.OpBitwiseXor
+			case .Shift_Left:
+				binary_op_proc = spv.OpShiftLeftLogical
+			case .Shift_Right:
+				binary_op_proc = spv.OpShiftRightArithmetic
 			}
 		case .Uint:
 			#partial switch op {
@@ -1597,6 +1608,10 @@ cg_expr_binary :: proc(
 				binary_op_proc = spv.OpBitwiseAnd
 			case .Xor:
 				binary_op_proc = spv.OpBitwiseXor
+			case .Shift_Left:
+				binary_op_proc = spv.OpShiftLeftLogical
+			case .Shift_Right:
+				binary_op_proc = spv.OpShiftRightLogical
 			}
 		case .Bit_Set:
 			#partial switch op {
@@ -1911,6 +1926,9 @@ cg_cast :: proc(
 		zero := cg_nil_value(ctx, ti)
 		return spv.OpCompositeInsert(builder, ti.type, value.id, zero, 0)
 	case .Array:
+		if type_is_complex(v_type) {
+			return value.id
+		}
 		type := type.variant.(^Type_Array)
 		if type_is_numeric(v_type) {
 			values := make([]spv.Id, type.count, context.temp_allocator)
@@ -2471,7 +2489,7 @@ cg_expr_internal :: proc(
 			columns    := make([]spv.Id, type.cols,           context.temp_allocator)
 			row_values := make([]spv.Id, type.col_type.count, context.temp_allocator)
 
-			row_i, col_i: int
+			row_i, col_i: i64
 			for field in v.fields {
 				value            := cg_expr(ctx, builder, field.value)
 				row_values[row_i] = cg_cast(ctx, builder, value, elem)
@@ -2537,7 +2555,7 @@ cg_expr_internal :: proc(
 				if len(field.swizzle) == 1 {
 					values[field.swizzle[0]] = cg_cast(ctx, builder, val, vector.elem)
 				} else {
-					vec := type_array_new(vector.elem, len(field.swizzle), context.temp_allocator)
+					vec := type_array_new(vector.elem, i64(len(field.swizzle)), context.temp_allocator)
 					val := cg_cast(ctx, builder, val, vec)
 
 					for dst_coord, src_coord in field.swizzle {
@@ -2581,8 +2599,8 @@ cg_expr_internal :: proc(
 		}
 
 		if type_is_sampler(lhs.type) {
-			sampler    := lhs.type.variant.(^Type_Image)
-			count      := 1
+			sampler := lhs.type.variant.(^Type_Image)
+			count: i64 = 1
 			texel_type := sampler.texel_type
 			if v, ok := sampler.texel_type.variant.(^Type_Array); ok {
 				count = v.count
@@ -2611,8 +2629,8 @@ cg_expr_internal :: proc(
 		}
 
 		if type_is_image(lhs.type) {
-			sampler    := lhs.type.variant.(^Type_Image)
-			count      := 1
+			sampler := lhs.type.variant.(^Type_Image)
+			count: i64 = 1
 			texel_type := sampler.texel_type
 			if v, ok := sampler.texel_type.variant.(^Type_Array); ok {
 				count = v.count
@@ -3076,8 +3094,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^Ast_Stmt, global :=
 
 				lhs := cg_expr(ctx, builder, v.lhs[lhs_i], deref = false)
 
-				if lhs.explicit_layout {
-					type := lhs.type.variant.(^Type_Struct)
+				if type, ok := lhs.type.variant.(^Type_Struct); ok && lhs.explicit_layout {
 					// TODO: handle members that are structs
 					for f, i in type.fields {
 						assert(f.type.kind != .Struct)

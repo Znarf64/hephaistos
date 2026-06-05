@@ -1018,6 +1018,7 @@ collect_decls :: proc(checker: ^Checker, stmts: []^Ast_Stmt, global: bool, entit
 		e.library = library
 		e.decl    = v
 		e.flags   = { .Resolved, }
+		v.entity  = e
 		scope_insert_entity(checker, e)
 	}
 
@@ -1529,7 +1530,7 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 	case reflect.Type_Info_Procedure:
 		return
 	case reflect.Type_Info_Array:
-		return type_array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
+		return type_array_new(type_info_to_type(v.elem, allocator) or_return, i64(v.count), allocator), true
 	case reflect.Type_Info_Enumerated_Array:
 		unimplemented()
 	case reflect.Type_Info_Dynamic_Array, reflect.Type_Info_Fixed_Capacity_Dynamic_Array:
@@ -1572,8 +1573,8 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 			scope.entities[f.name] = f
 		}
 		s       := type_new(.Struct, Type_Struct, allocator)
-		s.size   = ti.size
-		s.align  = ti.align
+		s.size   = i64(ti.size)
+		s.align  = i64(ti.align)
 		s.fields = fields
 		s.scope  = scope
 		return s, true
@@ -1604,11 +1605,11 @@ type_info_to_type :: proc(ti: ^reflect.Type_Info, allocator := context.allocator
 	case reflect.Type_Info_Bit_Set:
 		return type_info_to_type(v.underlying, allocator)
 	case reflect.Type_Info_Simd_Vector:
-		return type_array_new(type_info_to_type(v.elem, allocator) or_return, v.count, allocator), true
+		return type_array_new(type_info_to_type(v.elem, allocator) or_return, i64(v.count), allocator), true
 	case reflect.Type_Info_Matrix:
 		elem := type_info_to_type(v.elem, allocator) or_return
-		col  := type_array_new(elem, v.row_count, allocator)
-		return type_matrix_new(col, v.column_count, allocator), true
+		col  := type_array_new(elem, i64(v.row_count), allocator)
+		return type_matrix_new(col, i64(v.column_count), allocator), true
 	case reflect.Type_Info_Soa_Pointer:
 		return
 	case reflect.Type_Info_Bit_Field:
@@ -1633,9 +1634,9 @@ shared_types_from_typeids :: proc(typeids: []typeid, allocator := context.alloca
 check :: proc(
 	stmts:     []^Ast_Stmt,
 	defines:   map[string]Const_Value = {},
-	types:     []typeid                     = {},
-	libraries: map[string]Library       = {},
-	flags:     Checker_Flags                        = {},
+	types:     []typeid               = {},
+	libraries: map[string]Library     = {},
+	flags:     Checker_Flags          = {},
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []Error) {
@@ -1648,8 +1649,8 @@ check_with_types :: proc(
 	stmts:     []^Ast_Stmt,
 	defines:   map[string]Const_Value = {},
 	types:     map[string]^Type       = {},
-	libraries: map[string]Library       = {},
-	flags:     Checker_Flags                        = {},
+	libraries: map[string]Library     = {},
+	flags:     Checker_Flags          = {},
 	allocator       := context.allocator,
 	error_allocator := context.allocator,
 ) -> (checker: Checker, errors: []Error) {
@@ -2235,7 +2236,7 @@ check_expr_internal :: proc(
 			duplicates := false
 			seen: [4]bool
 			for char in selector {
-				index: int = -1
+				index: i64 = -1
 				switch char {
 				case 'r', 'x':
 					index = 0
@@ -2266,13 +2267,13 @@ check_expr_internal :: proc(
 				operand.mode = .RValue
 			}
 
-			switch len(selector) {
+			switch i64(len(selector)) {
 			case 1:
 				operand.type = array.elem
 			case array.count:
 				operand.type = array
 			case:
-				operand.type = type_array_new(array.elem, len(selector), checker.allocator)
+				operand.type = type_array_new(array.elem, i64(len(selector)), checker.allocator)
 			}
 
 			return
@@ -2674,10 +2675,10 @@ check_expr_internal :: proc(
 					name    := field.name.text
 					indices := make([dynamic]u32, 0, len(name), checker.allocator)
 
-					coords: [4]int
-					n := len(name)
+					coords: [4]i64
+					n := i64(len(name))
 					for char, i in name {
-						index: int = -1
+						index: i64 = -1
 						switch char {
 						case 'r', 'x':
 							index = 0
@@ -2718,7 +2719,7 @@ check_expr_internal :: proc(
 				return
 			}
 
-			n_values := 0
+			n_values: i64
 			for field in v.fields {
 				f := check_expr(checker, field.value, type_hint = type.elem, allow_ellipsis = true)
 				t := f.type
@@ -2753,7 +2754,7 @@ check_expr_internal :: proc(
 				error(checker, v, "named values are not supported for matrix literals")
 				return
 			}
-			if len(v.fields) != type.col_type.count * type.cols {
+			if i64(len(v.fields)) != type.col_type.count * type.cols {
 				error(checker, v, "expected %d values in compound literal but got %d", type.col_type.count * type.cols, len(v.fields))
 				return
 			}
@@ -2807,6 +2808,12 @@ check_expr_internal :: proc(
 			}
 			operand.type = type_matrix_elem(lhs.type)
 		case .Array:
+			len := type_array_len(lhs.type)
+			if value, ok := rhs.value.(i64); ok {
+				if value >= len || len < 0 {
+					error(checker, rhs, "array index out of bounds: %d ..< %d, got %d", 0, len, value)
+				}
+			}
 			if !type_is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
@@ -2959,15 +2966,15 @@ check_expr_internal :: proc(
 		if rows.mode != .Const || (rows.type.kind != .Int && rows.type.kind != .Uint) {
 			error(checker, rows, "expected a constant integer")
 		}
-		cols: int
+		cols: i64
 		if v.cols == nil {
-			cols = int(rows.value.(i64) or_else 0)
+			cols = rows.value.(i64) or_else 0
 		} else {
 			cols_expr := check_expr(checker, v.cols)
 			if cols_expr.mode != .Const || (cols_expr.type.kind != .Int && cols_expr.type.kind != .Uint) {
 				error(checker, cols_expr, "expected a constant integer")
 			} else {
-				cols = int(cols_expr.value.(i64))
+				cols = cols_expr.value.(i64)
 			}
 		}
 
@@ -2976,7 +2983,7 @@ check_expr_internal :: proc(
 			return
 		}
 
-		col_type    := type_array_new(default_type(elem), int(rows.value.(i64) or_else 0), checker.allocator)
+		col_type    := type_array_new(default_type(elem), rows.value.(i64) or_else 0, checker.allocator)
 		operand.type = type_matrix_new(col_type, cols, checker.allocator)
 		operand.mode = .Type
 	case ^Expr_Type_Array:
@@ -2998,7 +3005,7 @@ check_expr_internal :: proc(
 					error(checker, count, "array size has to be a positive integer, got %d", c)
 					return
 				}
-				operand.type = type_array_new(elem, int(c), checker.allocator)
+				operand.type = type_array_new(elem, c, checker.allocator)
 				operand.mode = .Type
 			} else {
 				error(checker, count, "expected a constant integer as the count of an array")
@@ -3009,11 +3016,11 @@ check_expr_internal :: proc(
 		operand.mode          = .Type
 		operand.type_distinct = true
 
-		type        := type_new(.Struct, Type_Struct, checker.allocator)
-		fields      := make([dynamic]^Entity, 0, len(v.fields), checker.allocator)
-		scope       := scope_new(nil, .Struct, checker.allocator)
-		offset      := 0
-		align       := 1
+		type   := type_new(.Struct, Type_Struct, checker.allocator)
+		fields := make([dynamic]^Entity, 0, len(v.fields), checker.allocator)
+		scope  := scope_new(nil, .Struct, checker.allocator)
+		offset := i64(0)
+		align  := i64(1)
 		for i := 0; i < len(v.fields); {
 			start := i
 			type: ^Type
@@ -3036,7 +3043,7 @@ check_expr_internal :: proc(
 			}
 
 			if type.align != 0 {
-				offset = mem.align_forward_int(offset, type.align)
+				offset = align_forward_i64(offset, type.align)
 			}
 
 			align = max(align, type.align)
@@ -3048,12 +3055,12 @@ check_expr_internal :: proc(
 				scope_insert_entity(checker, entity, scope)
 
 				offset += type.size
-				offset  = mem.align_forward_int(offset, align)
+				offset  = align_forward_i64(offset, align)
 			}
 		}
 
 		type.fields  = fields[:]
-		type.size    = mem.align_forward_int(offset, align)
+		type.size    = align_forward_i64(offset, align)
 		type.align   = align
 		type.scope   = scope
 
@@ -3143,9 +3150,9 @@ check_expr_internal :: proc(
 		}
 
 		if v.is_sampler {
-			operand.type = type_sampler_new(texel_type, int(dim), checker.allocator)
+			operand.type = type_sampler_new(texel_type, dim, checker.allocator)
 		} else {
-			operand.type = type_image_new(texel_type, int(dim), v.format.text, checker.allocator)
+			operand.type = type_image_new(texel_type, dim, v.format.text, checker.allocator)
 		}
 		operand.mode = .Type
 	case ^Expr_Type_Bit_Set:
