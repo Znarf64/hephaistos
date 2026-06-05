@@ -1198,7 +1198,7 @@ cg_type_internal :: proc(
 		}
 	case .Opaque:
 		type   := type.variant.(^Type_Opaque)
-		opcode := reflect.enum_from_name(spv.Op, type.name) or_else fmt.panicf("Invalid opaque type: '%s' (this needs a better error message)", type.name)
+		opcode := spirv_op_names[type.name] or_else fmt.panicf("Invalid opaque type: '%s' (this needs a better error message)", type.name)
 		append(&type_builder.data, u32(opcode) | u32(2 << 16))
 		id := spv.next_id(type_builder)
 		append(&type_builder.data, id)
@@ -2084,7 +2084,7 @@ cg_expr_internal :: proc(
 			#partial switch v.lhs.derived.(^Expr_Directive).directive {
 			case .Capability:
 				ident := v.args[0].value.derived.(^Expr_Ident)
-				cap   := reflect.enum_from_name(spv.Capability, ident.text) or_else fmt.panicf("Invalid capability: '%s' (this needs a better error message)", ident.text)
+				cap   := spirv_capability_names[ident.text] or_else fmt.panicf("Invalid capability: '%s' (this needs a better error message)", ident.text)
 				ctx.capabilities[cap] = {}
 			}
 			return
@@ -3197,7 +3197,7 @@ cg_extension :: proc(ctx: ^Context, extension: ^Decl_Extension) {
 
 	for decl in extension.body {
 		v      := decl.derived.(^Decl_Value)
-		opcode := reflect.enum_from_name(spv.Op, v.lhs[0].text) or_else fmt.panicf("Invalid extension operation: '%s' (this needs a better error message)", v.lhs[0].text)
+		opcode := spirv_op_names[v.lhs[0].text] or_else fmt.panicf("Invalid extension operation: '%s' (this needs a better error message)", v.lhs[0].text)
 		ctx.entities[v.lhs[0].entity] = { extension_op = opcode, }
 	}
 }
@@ -3252,4 +3252,26 @@ cg_deconstruct_tuple :: proc(ctx: ^Context, builder: ^spv.Builder, type: ^Type, 
 			id   = spv.OpCompositeExtract(builder, ti.type, v.id, u32(i)),
 		}
 	}
+}
+
+spirv_op_names:         map[string]spv.Op
+spirv_builtin_names:    map[string]spv.BuiltIn
+spirv_capability_names: map[string]spv.Capability
+
+@(init)
+spirv_name_tables_init :: proc "contextless" () {
+	context = runtime.default_context()
+
+	get_enum_names :: proc(m: ^map[string]$E, allocator: runtime.Allocator) {
+		ti  := runtime.type_info_base(type_info_of(E))
+		eti := ti.variant.(runtime.Type_Info_Enum)
+		m^  = make(map[string]E, len(eti.names), allocator)
+		for name, i in eti.names {
+			m[name] = E(eti.values[i])
+		}
+	}
+
+	get_enum_names(&spirv_op_names,         context.allocator)
+	get_enum_names(&spirv_builtin_names,    context.allocator)
+	get_enum_names(&spirv_capability_names, context.allocator)
 }

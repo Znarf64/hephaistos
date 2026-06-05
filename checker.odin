@@ -840,7 +840,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 			}
 			value := check_expr(checker, a.value)
 			if val, ok := value.value.(string); ok {
-				decl.builtin, ok = reflect.enum_from_name(spv.BuiltIn, val)
+				decl.builtin, ok = spirv_builtin_names[val]
 				if !ok {
 					error(checker, value, "'%s' is not a valid builtin", val)
 				}
