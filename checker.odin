@@ -1201,6 +1201,8 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 			size = size_of(Type_Opaque)
 		case ^Type_Named:
 			size = size_of(Type_Named)
+		case ^Type_Fixed:
+			size = size_of(Type_Fixed)
 		}
 		mem.copy(dst, src, size)
 	}
@@ -2801,14 +2803,17 @@ check_expr_internal :: proc(
 
 		operand.mode = lhs.mode
 		operand.type = t_invalid
-		#partial switch lhs.type.kind {
+
+		lhs_type := base_type(lhs.type)
+
+		#partial switch lhs_type.kind {
 		case .Matrix:
 			if !type_is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = type_matrix_elem(lhs.type)
+			operand.type = type_matrix_elem(lhs_type)
 		case .Array:
-			len := type_array_len(lhs.type)
+			len := type_array_len(lhs_type)
 			if value, ok := rhs.value.(i64); ok {
 				if value >= len || len < 0 {
 					error(checker, rhs, "array index out of bounds: %d ..< %d, got %d", 0, len, value)
@@ -2817,14 +2822,14 @@ check_expr_internal :: proc(
 			if !type_is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = type_array_elem(lhs.type)
+			operand.type = type_array_elem(lhs_type)
 		case .Buffer:
 			if !type_is_integer(rhs.type) {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
-			operand.type = type_buffer_elem(lhs.type)
+			operand.type = type_buffer_elem(lhs_type)
 		case .Sampler:
-			sampler := lhs.type.variant.(^Type_Image)
+			sampler := lhs_type.variant.(^Type_Image)
 			if sampler.dimensions == 1 {
 				if !type_is_numeric(rhs.type) {
 					error(
@@ -2851,7 +2856,7 @@ check_expr_internal :: proc(
 			operand.type = sampler.texel_type
 			operand.mode = .RValue
 		case .Image:
-			image := lhs.type.variant.(^Type_Image)
+			image := lhs_type.variant.(^Type_Image)
 			if image.dimensions == 1 {
 				if !type_is_integer(rhs.type) {
 					error(
@@ -2883,7 +2888,7 @@ check_expr_internal :: proc(
 		}
 
 		if operand.type.kind == .Invalid {
-			error(checker, v, "expression of type %v can not be indexed", lhs.type)
+			error(checker, v, "expression of type %v can not be indexed", lhs_type)
 			return
 		}
 
@@ -3173,6 +3178,32 @@ check_expr_internal :: proc(
 		operand.type          = check_type(checker, v.backing)
 		operand.mode          = .Type
 		operand.type_distinct = true
+
+	case ^Expr_Type_Fixed:
+		type                := type_new(.Fixed, Type_Fixed, checker.allocator)
+		type.signed          = v.signed
+		type.fractional_bits = v.fractional_bits
+		required_bits       := v.integral_bits + v.fractional_bits
+
+		switch required_bits {
+		case 8:
+			type.backing = t_i8  if v.signed else t_u8
+		case 16:
+			type.backing = t_i16 if v.signed else t_u16
+		case 32:
+			type.backing = t_i32 if v.signed else t_u32
+		case 64:
+			type.backing = t_i64 if v.signed else t_u64
+		case:
+			error(checker, v, "invalid number of bits in fixed point type: '%d'", required_bits)
+			return
+		}
+
+		type.size  = type.backing.size
+		type.align = type.backing.align
+
+		operand.type = type
+		operand.mode = .Type
 
 	case ^Expr_Directive:
 		error(checker, v, "invalid use of directive")

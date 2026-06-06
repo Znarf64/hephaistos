@@ -459,3 +459,13 @@ test_structs :: proc() {
 		b = 3,
 	}
 }
+
+Complex_i24_8 :: distinct [2]fixed[+24.8]
+
+complex_fixed_24_8_mul :: proc(a, b: Complex_i24_8) -> Complex_i24_8 {
+	return { a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0], }
+}
+
+test_fixed :: proc(a, b: [2]fixed[24.8]) -> [2]fixed[24.8] {
+	return a * b + b * a
+}

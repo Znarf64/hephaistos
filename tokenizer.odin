@@ -91,6 +91,7 @@ Token_Kind :: enum u16 {
 	Image,
 	Distinct,
 	Opaque,
+	Fixed,
 
 	Cast,
 }
@@ -550,6 +551,7 @@ token_strings := #sparse[Token_Kind]string {
 	.Image           = "image",
 	.Distinct        = "distinct",
 	.Opaque          = "opaque",
+	.Fixed           = "fixed",
 
 	.Cast            = "cast",
 }

@@ -3,6 +3,7 @@ package hephaistos
 import "base:runtime"
 
 import "core:strconv"
+import "core:strings"
 
 Parser :: struct {
 	current:         int,
@@ -56,6 +57,14 @@ token_expect :: proc(parser: ^Parser, kind: Token_Kind, after: string = "") -> (
 		return
 	}
 	ok = true
+	return
+}
+
+@(require_results)
+token_allow :: proc(parser: ^Parser, kind: Token_Kind) -> (token: Token, ok: bool) {
+	if token_peek(parser).kind == kind {
+		return token_advance(parser), true
+	}
 	return
 }
 
@@ -401,6 +410,27 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 		type     := parse_expr(parser) or_return
 		d        := ast_new(Expr_Type_Distinct, token.location, parser.end_location, parser.allocator)
 		d.backing = type
+		return d, true
+
+	case .Fixed:
+		token_advance(parser)
+		token_expect(parser, .Open_Bracket, "`fixed`") or_return
+		signed: bool
+		if u, ok := token_allow(parser, .Add); ok {
+			signed = true
+		}
+		bits := token_expect(parser, .Float_Literal, "`fixed`") or_return
+		token_expect(parser, .Close_Bracket, "`fixed`") or_return
+
+		d       := ast_new(Expr_Type_Fixed, token.location, parser.end_location, parser.allocator)
+		d.signed = signed
+		i, _, f := strings.partition(bits.text, ".")
+		if d.integral_bits, ok = strconv.parse_i64(i); !ok {
+			error(parser, bits, "expected a decimal number literal of the for `a.b` in fixed point type expression, got '%s'", bits.text)
+		}
+		if d.fractional_bits, ok = strconv.parse_i64(f); !ok {
+			error(parser, bits, "expected a decimal number literal of the for `a.b` in fixed point type expression, got '%s'", bits.text)
+		}
 		return d, true
 
 	case .Open_Paren:

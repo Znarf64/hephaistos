@@ -355,6 +355,13 @@ Expr_Type_Distinct :: struct {
 	backing:   ^Ast_Expr,
 }
 
+Expr_Type_Fixed :: struct {
+	using node:      Ast_Expr,
+	signed:          bool,
+	integral_bits:   i64,
+	fractional_bits: i64,
+}
+
 
 Interface_Kind :: enum {
 	None = 0,
@@ -540,6 +547,7 @@ Any_Node :: union {
 	^Expr_Type_Bit_Set,
 	^Expr_Type_Opaque,
 	^Expr_Type_Distinct,
+	^Expr_Type_Fixed,
 
 	^Stmt_Return,
 	^Stmt_Break,
@@ -585,6 +593,7 @@ Any_Expr :: union {
 	^Expr_Type_Bit_Set,
 	^Expr_Type_Opaque,
 	^Expr_Type_Distinct,
+	^Expr_Type_Fixed,
 }
 
 Any_Decl :: union {

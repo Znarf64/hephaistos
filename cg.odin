@@ -3,6 +3,7 @@ package hephaistos
 import "base:runtime"
 
 import "core:fmt"
+import "core:math"
 import "core:reflect"
 import "core:slice"
 import "core:strings"
@@ -134,6 +135,7 @@ Context :: struct {
 	type_registry:       Type_Registry,
 	type_void:           spv.Id,
 	type_void_proc:      spv.Id,
+	mul_extended_cache:  map[spv.Id]spv.Id,
 
 	runtime_procs:       [Runtime_Proc]spv.Id,
 
@@ -801,7 +803,8 @@ cg_file :: proc(
 
 @(require_results)
 cg_constant :: proc(ctx: ^Context, value: Const_Value, type: ^Type) -> Cg_Value {
-	type := type
+	type  := type
+	value := value
 
 	if type == nil {
 		switch v in value {
@@ -834,7 +837,7 @@ cg_constant :: proc(ctx: ^Context, value: Const_Value, type: ^Type) -> Cg_Value 
 		     .Opaque,
 		     .Any,
 		     .Named:
-			fmt.panicf("Tried to generate constant with type", type)
+			fmt.panicf("Tried to generate constant with type '%v'", type)
 
 		case .Matrix:
 			type = type_matrix_elem(type)
@@ -842,6 +845,18 @@ cg_constant :: proc(ctx: ^Context, value: Const_Value, type: ^Type) -> Cg_Value 
 			type = type_array_elem(type)
 		case .Complex:
 			type = type_complex_elem(type)
+		case .Fixed:
+			fixed := type.variant.(^Type_Fixed)
+			type   = fixed.backing
+
+			switch v in value {
+			case i64:
+				value = i64(v * (1 << uint(fixed.fractional_bits)))
+			case f64:
+				value = i64(math.round(v * f64(i64(1) << uint(fixed.fractional_bits))))
+			case bool, string:
+				panic("invalid fixed point constant")
+			}
 		}
 	}
 
@@ -1205,6 +1220,8 @@ cg_type_internal :: proc(
 		info.type = spv.Id(id)
 	case .Complex, .Quaternion:
 		return cg_type_internal(ctx, type_builder, annotation_builder, type.variant.(^Type_Complex).array, flags)
+	case .Fixed:
+		return cg_type_internal(ctx, type_builder, annotation_builder, type.variant.(^Type_Fixed).backing, flags)
 	case .Invalid, .Enum, .Bit_Set, .Proc_Group, .Any, .Named:
 		unreachable()
 	}
@@ -1553,15 +1570,29 @@ cg_expr_binary :: proc(
 		panic("")
 	}
 
-	type^ = op_result_type(lhs_type, rhs_type, op == .Multiply, context.temp_allocator)
+	type^        = op_result_type(lhs_type, rhs_type, op == .Multiply, context.temp_allocator)
+	result_type := cg_type(ctx, type^).type
 
+	if op == .Multiply {
+		switch ([2]bool{ lhs_value.type.kind == .Matrix, rhs_value.type.kind == .Matrix, }) {
+		case { true,  true,  }:
+			return spv.OpMatrixTimesMatrix(builder, result_type, lhs, rhs)
+		case { true,  false, }:
+			return spv.OpMatrixTimesVector(builder, result_type, lhs, rhs)
+		case { false, true, }:
+			unimplemented()
+		}
+	}
+
+	@(require_results)
 	cg_binary_op :: proc(
-		ctx:         ^Context,
-		builder:     ^spv.Builder,
+		ctx:        ^Context,
+		builder:    ^spv.Builder,
 		result_type: spv.Id,
-		lhs, rhs:    Cg_Value,
-		type:        ^Type,
+		lhs, rhs:    spv.Id,
+		type:       ^Type,
 		op:          Token_Kind,
+		vector_len:  i64,
 	) -> spv.Id {
 		runtime_proc:   Runtime_Proc
 		binary_op_proc: proc(builder: ^spv.Builder, result_type: spv.Id, operand_1, operand_2: spv.Id) -> (result: spv.Id)
@@ -1613,13 +1644,84 @@ cg_expr_binary :: proc(
 			case .Shift_Right:
 				binary_op_proc = spv.OpShiftRightLogical
 			}
+		case .Fixed:
+			@(require_results)
+			cg_mul_extended_type :: proc(ctx: ^Context, type: spv.Id) -> spv.Id {
+				if type not_in ctx.mul_extended_cache {
+					ctx.mul_extended_cache[type] = spv.OpTypeStruct(&ctx.types, type, type)
+				}
+				return ctx.mul_extended_cache[type]
+			}
+
+			type := type.variant.(^Type_Fixed)
+			if type.signed {
+				#partial switch op {
+				case .Add:
+					binary_op_proc = spv.OpIAdd
+				case .Subtract:
+					binary_op_proc = spv.OpISub
+				case .Multiply:
+					mul_type := cg_mul_extended_type(ctx, result_type)
+					mul_full := spv.OpSMulExtended(builder, mul_type, lhs, rhs)
+					lo       := spv.OpCompositeExtract(builder, result_type, mul_full, 0)
+					hi       := spv.OpCompositeExtract(builder, result_type, mul_full, 1)
+
+					lo        = spv.OpShiftRightArithmetic(builder, result_type, lo, cg_constant(ctx, type.fractional_bits, nil).id)
+					hi        = spv.OpShiftLeftLogical(    builder, result_type, hi, cg_constant(ctx, type.size * 8 - type.fractional_bits, nil).id)
+					return spv.OpBitwiseOr(builder, result_type, lo, hi)
+				case .Divide:
+					unimplemented("Fixed point division")
+				case .Modulo:
+					unimplemented("Fixed point modulo")
+				case .Bit_Or:
+					binary_op_proc = spv.OpBitwiseOr
+				case .Bit_And:
+					binary_op_proc = spv.OpBitwiseAnd
+				case .Xor:
+					binary_op_proc = spv.OpBitwiseXor
+				case .Shift_Left:
+					binary_op_proc = spv.OpShiftLeftLogical
+				case .Shift_Right:
+					binary_op_proc = spv.OpShiftRightArithmetic
+				}
+			} else {
+				#partial switch op {
+				case .Add:
+					binary_op_proc = spv.OpIAdd
+				case .Subtract:
+					binary_op_proc = spv.OpISub
+				case .Multiply:
+					mul_type := cg_mul_extended_type(ctx, result_type)
+					mul_full := spv.OpUMulExtended(builder, mul_type, lhs, rhs)
+					lo       := spv.OpCompositeExtract(builder, result_type, mul_full, 0)
+					hi       := spv.OpCompositeExtract(builder, result_type, mul_full, 1)
+
+					lo        = spv.OpShiftRightArithmetic(builder, result_type, lo, cg_constant(ctx, type.fractional_bits, nil).id)
+					hi        = spv.OpShiftLeftLogical(    builder, result_type, hi, cg_constant(ctx, type.size * 8 - type.fractional_bits, nil).id)
+					return spv.OpBitwiseOr(builder, result_type, lo, hi)
+				case .Divide:
+					unimplemented("Fixed point division")
+				case .Modulo:
+					unimplemented("Fixed point modulo")
+				case .Bit_Or:
+					binary_op_proc = spv.OpBitwiseOr
+				case .Bit_And:
+					binary_op_proc = spv.OpBitwiseAnd
+				case .Xor:
+					binary_op_proc = spv.OpBitwiseXor
+				case .Shift_Left:
+					binary_op_proc = spv.OpShiftLeftLogical
+				case .Shift_Right:
+					binary_op_proc = spv.OpShiftRightLogical
+				}
+			}
 		case .Bit_Set:
 			#partial switch op {
 			case .Add:
 				binary_op_proc = spv.OpBitwiseOr
 			case .Subtract:
 				// lhs - rhs === lhs & ~rhs
-				return spv.OpBitwiseAnd(builder, result_type, lhs.id, spv.OpNot(builder, result_type, rhs.id))
+				return spv.OpBitwiseAnd(builder, result_type, lhs, spv.OpNot(builder, result_type, rhs))
 			case .Bit_Or:
 				binary_op_proc = spv.OpBitwiseOr
 			case .Bit_And:
@@ -1653,53 +1755,41 @@ cg_expr_binary :: proc(
 				binary_op_proc = spv.OpMatrixTimesMatrix
 			}
 		case .Array:
-			if lhs.type.kind == .Matrix || rhs.type.kind == .Matrix {
-				assert(op == .Multiply)
+			len := type_array_len(type)
 
-				if lhs.type.kind == .Matrix {
-					binary_op_proc = spv.OpMatrixTimesVector
-					break
-				} else {
-					panic("")
-					// assert(rhs_type.kind == .Matrix)
-					// return spv.OpVectorTimesMatrix(builder, type_info.type, lhs, rhs)
-				}
+			if len < 4 {
+				return cg_binary_op(
+					ctx,
+					builder,
+					result_type,
+					lhs,
+					rhs,
+					type_array_elem(type),
+					op,
+					len,
+				)
 			}
 
-			if lhs.type.kind == .Array && rhs.type.kind == .Array {
-				len := type_array_len(lhs.type)
+			elem    := type_array_elem(type)
+			elem_id := cg_type(ctx, elem).type
 
-				if len < 4 {
-					return cg_binary_op(
-						ctx,
-						builder,
-						result_type,
-						{ id = lhs.id, type = type_array_elem(lhs.type), },
-						{ id = rhs.id, type = type_array_elem(rhs.type), },
-						type_array_elem(type),
-						op,
-					)
-				}
-
-				elem    := type_array_elem(type)
-				elem_id := cg_type(ctx, elem).type
-
-				values := make([]spv.Id, len, context.temp_allocator)
-				for i in 0 ..< len {
-					l        := spv.OpCompositeExtract(builder, elem_id, lhs.id, u32(i))
-					r        := spv.OpCompositeExtract(builder, elem_id, rhs.id, u32(i))
-					values[i] = cg_binary_op(
-						ctx,
-						builder,
-						elem_id,
-						{ id = l, type = elem, },
-						{ id = r, type = elem, },
-						elem,
-						op,
-					)
-				}
-				return spv.OpCompositeConstruct(builder, result_type, ..values)
+			// TODO: emit a loop
+			values := make([]spv.Id, len, context.temp_allocator)
+			for i in 0 ..< len {
+				l        := spv.OpCompositeExtract(builder, elem_id, lhs, u32(i))
+				r        := spv.OpCompositeExtract(builder, elem_id, rhs, u32(i))
+				values[i] = cg_binary_op(
+					ctx,
+					builder,
+					elem_id,
+					l,
+					r,
+					elem,
+					op,
+					0,
+				)
 			}
+			return spv.OpCompositeConstruct(builder, result_type, ..values)
 		case .Complex:
 			#partial switch op {
 			case .Add, .Subtract:
@@ -1707,10 +1797,11 @@ cg_expr_binary :: proc(
 					ctx,
 					builder,
 					result_type,
-					{ id = lhs.id, type = type_complex_elem(lhs.type), },
-					{ id = rhs.id, type = type_complex_elem(rhs.type), },
+					lhs,
+					rhs,
 					type_complex_elem(type),
 					op,
+					2,
 				)
 			case .Multiply:
 				switch type_complex_elem(type).size {
@@ -1735,10 +1826,11 @@ cg_expr_binary :: proc(
 					ctx,
 					builder,
 					result_type,
-					{ id = lhs.id, type = type_complex_elem(lhs.type), },
-					{ id = rhs.id, type = type_complex_elem(rhs.type), },
+					lhs,
+					rhs,
 					type_complex_elem(type),
 					op,
+					4,
 				)
 			case .Multiply:
 				switch type_complex_elem(type).size {
@@ -1758,18 +1850,18 @@ cg_expr_binary :: proc(
 		}
 
 		if binary_op_proc != nil {
-			return binary_op_proc(builder, result_type, lhs.id, rhs.id)
+			return binary_op_proc(builder, result_type, lhs, rhs)
 		}
 
 		if runtime_proc != nil {
 			runtime_proc_id := get_runtime_proc(ctx, runtime_proc)
-			return spv.OpFunctionCall(builder, result_type, runtime_proc_id, lhs.id, rhs.id)
+			return spv.OpFunctionCall(builder, result_type, runtime_proc_id, lhs, rhs)
 		}
 
 		panic("Failed to generated binary operation")
 	}
 
-	return cg_binary_op(ctx, builder, cg_type(ctx, type^).type, lhs_value, rhs_value, type^, op)
+	return cg_binary_op(ctx, builder, result_type, lhs, rhs, type^, op, 0)
 }
 
 @(require_results)
@@ -1865,58 +1957,90 @@ cg_cast :: proc(
 		return value.id
 	}
 
-	ti := cg_type(ctx, type)
-
-	Cast_Op_Proc :: proc(builder: ^spv.Builder, result_type: spv.Id, value: spv.Id) -> (result: spv.Id)
-	numeric_cast_op_inst :: proc(from, to: ^Type) -> Cast_Op_Proc {
+	@(require_results)
+	numeric_cast :: proc(ctx: ^Context, builder: ^spv.Builder, from, to: ^Type, result_type, value: spv.Id) -> spv.Id {
 		if from.size == to.size && type_is_integer(from) && type_is_integer(to) {
-			return spv.OpBitcast
+			return spv.OpBitcast(builder, result_type, value)
 		}
 
 		#partial switch to.kind {
 		case .Float:
 			#partial switch from.kind {
 			case .Float:
-				return spv.OpFConvert
+				return spv.OpFConvert(   builder, result_type, value)
 			case .Uint:
-				return spv.OpConvertUToF
+				return spv.OpConvertUToF(builder, result_type, value)
 			case .Int:
-				return spv.OpConvertSToF
+				return spv.OpConvertSToF(builder, result_type, value)
+			case .Fixed:
+				// TODO: This should be better
+				fixed := from.variant.(^Type_Fixed)
+				float := numeric_cast(ctx, builder, fixed.backing, to, result_type, value)
+				return spv.OpFMul(builder, result_type, float, cg_constant(ctx, 1 / f64(i64(1) << u64(fixed.fractional_bits)), nil).id)
 			case:
 				unreachable()
 			}
 		case .Int:
 			#partial switch from.kind {
 			case .Float:
-				return spv.OpConvertFToS
+				return spv.OpConvertFToS(builder, result_type, value)
 			case .Uint:
-				return spv.OpSConvert
+				return spv.OpSConvert(   builder, result_type, value)
 			case .Int:
-				return spv.OpSConvert
+				return spv.OpSConvert(   builder, result_type, value)
+			case .Fixed:
+				fixed   := from.variant.(^Type_Fixed)
+				shifted := spv.OpShiftRightLogical(builder, result_type, value, cg_constant(ctx, fixed.fractional_bits, nil).id)
+				return numeric_cast(ctx, builder, fixed.backing, to, result_type, shifted)
 			case:
 				unreachable()
 			}
 		case .Uint:
 			#partial switch from.kind {
 			case .Float:
-				return spv.OpConvertFToU
+				return spv.OpConvertFToU(builder, result_type, value)
 			case .Uint:
-				return spv.OpUConvert
+				return spv.OpUConvert(   builder, result_type, value)
 			case .Int:
-				return spv.OpSConvert
+				return spv.OpSConvert(   builder, result_type, value)
+			case .Fixed:
+				fixed   := from.variant.(^Type_Fixed)
+				shifted := spv.OpShiftRightLogical(builder, result_type, value, cg_constant(ctx, fixed.fractional_bits, nil).id)
+				return numeric_cast(ctx, builder, fixed.backing, to, result_type ,shifted)
 			case:
 				unreachable()
 			}
 		case .Opaque:
 			unimplemented()
+		case .Fixed:
+			fixed := to.variant.(^Type_Fixed)
+			#partial switch from.kind {
+			case .Float:
+				unimplemented("Fixed point casts")
+				// return spv.OpConvertFToU(builder, result_type, value)
+			case .Uint:
+				u := spv.OpUConvert(builder, result_type, value)
+				return spv.OpShiftLeftLogical(builder, result_type, u, cg_constant(ctx, fixed.fractional_bits, nil).id)
+			case .Int:
+				i := spv.OpSConvert(builder, result_type, value)
+				return spv.OpShiftLeftLogical(builder, result_type, i, cg_constant(ctx, fixed.fractional_bits, nil).id)
+			case .Fixed:
+				unimplemented("Fixed point casts")
+			case:
+				unreachable()
+			}
 		}
-		return nil
+
+		return 0
 	}
 
-	op_inst := numeric_cast_op_inst(v_type, type)
-	if op_inst != nil {
-		return op_inst(builder, ti.type, value.id)
+	result_type := cg_type(ctx, type).type
+
+	if numeric := numeric_cast(ctx, builder, v_type, type, result_type, value.id); numeric != 0 {
+		return numeric
 	}
+
+	ti := cg_type(ctx, type)
 
 	#partial switch type.kind {
 	case .Complex:
@@ -1938,9 +2062,7 @@ cg_cast :: proc(
 			}
 			return spv.OpCompositeConstruct(builder, ti.type, ..values)
 		} else {
-			op_inst := numeric_cast_op_inst(type_array_elem(v_type), type.elem)
-			assert(op_inst != nil)
-			return op_inst(builder, ti.type, value.id)
+			return numeric_cast(ctx, builder, type_array_elem(v_type), type.elem, result_type, value.id)
 		}
 	case .Matrix:
 		assert(type_is_numeric(v_type))
@@ -2592,14 +2714,16 @@ cg_expr_internal :: proc(
 		lhs := cg_expr(ctx, builder, v.lhs, false)
 		rhs := cg_expr(ctx, builder, v.rhs)
 
-		if type_is_array(lhs.type) && len(lhs.swizzle) != 0 {
+		lhs_type := base_type(lhs.type)
+
+		if type_is_array(lhs_type) && len(lhs.swizzle) != 0 {
 			lhs.id            = cg_deref(ctx, builder, lhs)
 			lhs.storage_class = {}
 			lhs.swizzle       = {}
 		}
 
-		if type_is_sampler(lhs.type) {
-			sampler := lhs.type.variant.(^Type_Image)
+		if type_is_sampler(lhs_type) {
+			sampler := lhs_type.variant.(^Type_Image)
 			count: i64 = 1
 			texel_type := sampler.texel_type
 			if v, ok := sampler.texel_type.variant.(^Type_Array); ok {
@@ -2628,8 +2752,8 @@ cg_expr_internal :: proc(
 			}
 		}
 
-		if type_is_image(lhs.type) {
-			sampler := lhs.type.variant.(^Type_Image)
+		if type_is_image(lhs_type) {
+			sampler := lhs_type.variant.(^Type_Image)
 			count: i64 = 1
 			texel_type := sampler.texel_type
 			if v, ok := sampler.texel_type.variant.(^Type_Array); ok {
@@ -2648,8 +2772,8 @@ cg_expr_internal :: proc(
 			}
 		}
 
-		if type_is_buffer(lhs.type) {
-			buffer := lhs.type.variant.(^Type_Buffer)
+		if type_is_buffer(lhs_type) {
+			buffer := lhs_type.variant.(^Type_Buffer)
 			elem   := cg_type(ctx, buffer.elem, { .Explicit_Layout, })
 
 			if buffer.physical {
@@ -2685,7 +2809,7 @@ cg_expr_internal :: proc(
 			}
 		}
 
-		type := type_array_elem(lhs.type.variant.(^Type_Array))
+		type := type_array_elem(lhs_type.variant.(^Type_Array))
 		return {
 			id   = spv.OpVectorExtractDynamic(builder, cg_type(ctx, type).type, lhs.id, rhs.id),
 			type = type,
@@ -2729,7 +2853,7 @@ cg_expr_internal :: proc(
 		then_value := cg_expr(ctx, builder, v.then_expr).id
 		else_value := cg_expr(ctx, builder, v.else_expr).id
 		return { id = spv.OpSelect(builder, cg_type(ctx, v.type).type, cond, then_value, else_value), }
-	case ^Expr_Type_Struct, ^Expr_Type_Array, ^Expr_Type_Matrix, ^Expr_Type_Image, ^Expr_Type_Enum, ^Expr_Type_Bit_Set, ^Expr_Type_Opaque, ^Expr_Type_Distinct:
+	case ^Expr_Type_Struct, ^Expr_Type_Array, ^Expr_Type_Matrix, ^Expr_Type_Image, ^Expr_Type_Enum, ^Expr_Type_Bit_Set, ^Expr_Type_Opaque, ^Expr_Type_Distinct, ^Expr_Type_Fixed:
 		panic("tried to cg type as expression")
 	case ^Expr_Directive:
 		panic("tried to cg directive as expression")

@@ -90,6 +90,13 @@ Type_Named :: struct {
 	type:      ^Type,
 }
 
+Type_Fixed :: struct {
+	using base:      Type,
+	fractional_bits: i64,
+	signed:          bool,
+	backing:        ^Type,
+}
+
 Type_Kind :: enum {
 	Invalid,
 
@@ -113,6 +120,7 @@ Type_Kind :: enum {
 	Quaternion,
 	Opaque,
 	Named,
+	Fixed,
 
 	Tuple,
 }
@@ -134,6 +142,7 @@ Type :: struct {
 		^Type_Complex,
 		^Type_Opaque,
 		^Type_Named,
+		^Type_Fixed,
 	},
 }
 
@@ -433,6 +442,13 @@ type_print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 	case .Named:
 		type := type.variant.(^Type_Named)
 		fmt.wprint(w, type.name)
+	case .Fixed:
+		type := type.variant.(^Type_Fixed)
+		fmt.wprint(w, "fixed[")
+		if type.signed {
+			fmt.wprint(w, "+")
+		}
+		fmt.wprintf(w, "%d.%d]", type.size * 8 - type.fractional_bits, type.fractional_bits)
 	}
 }
 
@@ -597,6 +613,15 @@ type_equal :: proc(a, b: ^Type) -> bool {
 		b := b.variant.(^Type_Named)
 
 		return a.name == b.name
+	case .Fixed:
+		a := a.variant.(^Type_Fixed)
+		b := b.variant.(^Type_Fixed)
+
+		(a.size            == b.size)            or_return
+		(a.fractional_bits == b.fractional_bits) or_return
+		(a.signed          == b.signed)          or_return
+
+		return true
 	case:
 		unreachable()
 	}
@@ -778,7 +803,7 @@ castable :: proc(from, to: ^Type) -> bool {
 @(require_results)
 type_is_numeric :: proc(type: ^Type) -> bool {
 	#partial switch type.kind {
-	case .Float, .Int, .Uint:
+	case .Float, .Int, .Uint, .Fixed:
 		return true
 	}
 	return false
