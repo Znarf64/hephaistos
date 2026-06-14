@@ -446,7 +446,11 @@ Foo :: distinct i32
 Bar :: distinct i32
 
 do_thing :: proc(foo: Foo, bar: Bar) -> i32 {
-	return i32(foo) + i32(bar)
+	if foo > 0 {
+		return i32(foo) - i32(bar)
+	} else {
+		return i32(foo) + i32(bar)
+	}
 }
 
 test_structs :: proc() {
@@ -460,12 +464,14 @@ test_structs :: proc() {
 	}
 }
 
-Complex_i24_8 :: distinct [2]fixed[+24.8]
+// Complex_i24_8 :: distinct [2]fixed[+24.8]
 
-complex_fixed_24_8_mul :: proc(a, b: Complex_i24_8) -> Complex_i24_8 {
-	return { a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0], }
-}
+// complex_fixed_24_8_mul :: proc(a, b: Complex_i24_8) -> Complex_i24_8 {
+// 	return { a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0], }
+// }
 
-test_fixed :: proc(a, b: [2]fixed[24.8]) -> [2]fixed[24.8] {
-	return a * b + b * a
-}
+// test_fixed :: proc(a, b: [2]fixed[24.8]) -> [2]fixed[24.8] {
+// 	return a * b + b * a
+// }
+
+A :: f32(123 / 1232)

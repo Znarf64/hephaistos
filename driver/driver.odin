@@ -75,6 +75,7 @@ main :: proc() {
 		vet_unused_variables:  bool            `usage:"Checks for unused variables"`,
 		vet_unused_procedures: bool            `usage:"Checks for unused procedures"`,
 		vet_unused_imports:    bool            `usage:"Checks for unused imports"`,
+		vet_unused_results:    bool            `usage:"Checks for unused results from function calls"`,
 		vet_unused:            bool            `usage:"Checks for unused declarations"`,
 		vet_shadowing:         bool            `usage:"Checks for shadowing in procedure bodies"`,
 		vet_cast:              bool            `usage:"Checks for casts that do not change the type"`,
@@ -158,7 +159,10 @@ main :: proc() {
 	if options.vet_unused_imports {
 		flags |= { .Vet_Unused_Imports, }
 	}
-	VET_FLAGS_UNUSED: hep.Checker_Flags : { .Vet_Unused_Parameters, .Vet_Unused_Variables, .Vet_Unused_Procedures, .Vet_Unused_Imports, }
+	if options.vet_unused_results {
+		flags |= { .Vet_Unused_Results, }
+	}
+	VET_FLAGS_UNUSED: hep.Checker_Flags : { .Vet_Unused_Parameters, .Vet_Unused_Variables, .Vet_Unused_Procedures, .Vet_Unused_Imports, .Vet_Unused_Results, }
 	if options.vet_unused {
 		flags |= VET_FLAGS_UNUSED
 	}

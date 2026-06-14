@@ -672,6 +672,8 @@ implicitly_castable :: proc(from, to: ^Type) -> bool {
 		return false
 	}
 
+	to := base_type(to) if from.size == 0 else to
+
 	if from.size == 0 && type_is_numeric(to) {
 		if type_is_integer(to) && from.kind == .Float {
 			return false
@@ -1099,6 +1101,8 @@ type_is_comparable :: proc(type: ^Type) -> bool{
 
 @(require_results)
 operator_applicable :: proc(type: ^Type, op: Token_Kind) -> bool {
+	type := base_type(type)
+
 	if type_is_invalid(type) {
 		return true
 	}

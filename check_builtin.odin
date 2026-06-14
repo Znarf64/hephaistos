@@ -492,16 +492,15 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		operand.mode         = .RValue
 		operand.type         = type
 	case .Discard:
-		operand.diverging = true
+		operand.flags |= { .Diverging, }
 		fallthrough
 	case .Barrier:
 		if len(v.args) != 0 {
 			error(checker, v, "builtin '%s' expects no arguments, got %d", builtin_names[v.builtin], len(v.args))
 			return
 		}
-		operand.type    = t_invalid
-		operand.mode    = .No_Value
-		operand.is_call = true
+		operand.type = t_invalid
+		operand.mode = .No_Value
 	case .Texture_Size:
 		if len(v.args) != 1 {
 			error(checker, v, "builtin 'texture_size' expects one argument, got %d", len(v.args))

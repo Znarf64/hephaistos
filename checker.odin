@@ -22,6 +22,7 @@ Checker_Flag :: enum {
 	Vet_Unused_Parameters,
 	Vet_Unused_Variables,
 	Vet_Unused_Imports,
+	Vet_Unused_Results,
 	Vet_Shadowing,
 	Vet_Cast,
 }
@@ -92,18 +93,23 @@ addressing_mode_string := [Addressing_Mode]string {
 	.Label      = "label",
 }
 
+Operand_Flag :: enum {
+	Diverging,
+	Constant_Compound,
+	Type_Distinct,
+}
+
+Operand_Flags :: bit_set[Operand_Flag]
+
 Operand :: struct {
-	expr:             ^Ast_Expr,
-	type:             ^Type,
-	mode:              Addressing_Mode,
-	value:             Const_Value,
-	builtin_id:        Builtin_Id,
-	library:          ^Library,
-	scope:            ^Scope,
-	is_call:           bool,
-	diverging:         bool,
-	constant_compound: bool,
-	type_distinct:     bool,
+	expr:      ^Ast_Expr,
+	type:      ^Type,
+	mode:       Addressing_Mode,
+	value:      Const_Value,
+	builtin_id: Builtin_Id,
+	library:   ^Library,
+	scope:     ^Scope,
+	flags:      Operand_Flags,
 }
 
 @(require_results)
@@ -396,8 +402,8 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 
 		if v.cond != nil {
 			cond := check_expr(checker, v.cond)
-			if cond.type.kind != .Bool {
-				error(checker, cond, "expected a boolean expression in if statement condition but got: %v", cond.type)
+			if cond.type.kind != .Bool && cond.mode != .Invalid {
+				error(checker, cond, "expected a boolean expression in for loop condition but got: %v", cond.type)
 			}
 		}
 
@@ -429,7 +435,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 		}
 
 		cond := check_expr(checker, v.cond)
-		if cond.type.kind != .Bool {
+		if cond.type.kind != .Bool && cond.mode != .Invalid {
 			error(checker, cond, "expected a boolean expression in if statement condition but got expression of type %v", cond.type)
 		}
 
@@ -450,7 +456,7 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 			} else {
 				return check_stmt_list(checker, v.else_block, true)
 			}
-		} else {
+		} else if cond.mode != .Invalid {
 			error(checker, cond, "expected a constant boolean expression in when statement condition")
 		}
 		return false
@@ -551,12 +557,17 @@ check_stmt :: proc(checker: ^Checker, stmt: ^Ast_Stmt) -> (diverging: bool) {
 
 	case ^Stmt_Expr:
 		operand := check_expr(checker, v.expr, allow_no_value = true)
-		if !operand.is_call && operand.mode != .Invalid {
+		if operand.mode == .Invalid {
+			return
+		}
+		if .Vet_Unused_Results in checker.flags && operand.mode != .No_Value {
 			error(checker, v.expr, "expression is not used")
+		} else {
+			if _, ok := v.expr.derived.(^Expr_Call); !ok {
+				error(checker, v.expr, "expression is not used")
+			}
 		}
-		if operand.diverging {
-			return true
-		}
+		return .Diverging in operand.flags
 
 	case ^Decl_Value:
 		if checker.scope.kind == .Global || !v.mutable {
@@ -1117,7 +1128,7 @@ check_decl_init_value :: proc(checker: ^Checker, value: Operand, expect_constant
 	switch value.mode {
 	case .Const:
 	case .RValue, .LValue:
-		if value.constant_compound || !expect_constant {
+		if .Constant_Compound in value.flags || !expect_constant {
 			break
 		}
 		error(checker, value, "expected a constant expression in global variable declaration")
@@ -1237,7 +1248,7 @@ decl_resolve :: proc(checker: ^Checker, e: ^Entity) {
 			break
 		}
 		e.kind = .Type
-		if v.type_distinct {
+		if .Type_Distinct in v.flags {
 			v.type = type_named_new(e.name, v.type, checker.allocator)
 		}
 	case .Proc:
@@ -1345,8 +1356,8 @@ check_stmt_list :: proc(checker: ^Checker, stmts: []^Ast_Stmt, ignore_constants 
 		d := check_stmt(checker, stmt)
 		if d && !diverging && i != len(stmts) - 1 {
 			error(checker, stmt, "statements after this statement are never executed")
-			diverging = true
 		}
+		diverging ||= d
 	}
 
 	return diverging
@@ -1672,7 +1683,7 @@ op_is_relation :: proc(token_kind: Token_Kind) -> bool {
 }
 
 @(require_results)
-evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: Const_Value, expr: ^Expr_Binary) -> Const_Value {
+evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: Const_Value, expr: ^Expr_Binary, truncating_integer_division: ^bool) -> Const_Value {
 	assert(lhs != nil)
 	assert(rhs != nil)
 
@@ -1722,6 +1733,7 @@ evaluate_const_binary_op :: proc(checker: ^Checker, lhs, rhs: Const_Value, expr:
 				error(checker, expr, "division by zero")
 				return nil
 			}
+			truncating_integer_division^ = l % r != 0
 			return l / r
 		case .Modulo:
 			if r == 0 {
@@ -2052,8 +2064,12 @@ check_expr_internal :: proc(
 		}
 
 		if lhs.mode == .Const && rhs.mode == .Const {
+			truncating_integer_division: bool
+			operand.value = evaluate_const_binary_op(checker, lhs.value, rhs.value, v, &truncating_integer_division)
 			operand.mode  = .Const
-			operand.value = evaluate_const_binary_op(checker, lhs.value, rhs.value, v)
+			if truncating_integer_division && type_hint != nil && implicitly_castable(t_float, type_hint) {
+				error(checker, v, "result of integer division is being implicitly converted to floating point, consider explicitly casting the expression to '%v'", type_hint)
+			}
 		}
 
 	case ^Expr_Ident:
@@ -2118,7 +2134,11 @@ check_expr_internal :: proc(
 		v.scope = scope_push(checker, .Block)
 		defer scope_pop(checker)
 
-		check_stmt_list(checker, v.body)
+		diverging := check_stmt_list(checker, v.body)
+
+		if !diverging && len(type.returns) != 0 {
+			error(checker, v.end, "procedure is missing a return statement")
+		}
 
 	case ^Expr_Proc_Sig:
 		operand.type = check_proc_type(checker, v, false)
@@ -2329,8 +2349,7 @@ check_expr_internal :: proc(
 				if !cond {
 					error(checker, v, "Compile time assertion failure: %v", message)
 				}
-				operand.mode    = .No_Value
-				operand.is_call = true
+				operand.mode = .No_Value
 			case .Panic:
 				message: string
 				switch len(v.args) {
@@ -2348,8 +2367,7 @@ check_expr_internal :: proc(
 					}
 				}
 				error(checker, v, "Compile time panic: %v", message)
-				operand.mode    = .No_Value
-				operand.is_call = true
+				operand.mode = .No_Value
 			case .Import:
 				if len(v.args) != 1 {
 					error(checker, v, "#import directive expects one argument, got %d", len(v.args))
@@ -2410,8 +2428,7 @@ check_expr_internal :: proc(
 					operand.value = definition
 				}
 			case .Capability:
-				operand.mode    = .No_Value
-				operand.is_call = true
+				operand.mode = .No_Value
 			}
 			return
 		}
@@ -2421,7 +2438,6 @@ check_expr_internal :: proc(
 			for arg in v.args {
 				_ = check_expr(checker, arg.value)
 			}
-			operand.is_call = true
 			return
 		case .Builtin:
 			return check_builtin(checker, v, fn)
@@ -2441,6 +2457,10 @@ check_expr_internal :: proc(
 			}
 			operand.type = fn.type
 			operand.mode = .RValue
+			if value.mode == .Const && type_is_numeric(core_type(fn.type)){
+				operand.value = value.value
+				operand.mode  = .Const
+			}
 		case .Proc_Group:
 			group      := fn.type.variant.(^Type_Proc_Group)
 			candidates := make([dynamic]^Type_Proc, len(group.members), context.temp_allocator)
@@ -2520,9 +2540,8 @@ check_expr_internal :: proc(
 					}
 				}
 
-				operand.mode    = .RValue
-				operand.type    = candidates[0].return_type
-				operand.is_call = true
+				operand.mode = .RValue
+				operand.type = candidates[0].return_type
 				return
 			case:
 				error(checker, fn, "ambigous overloads in procedure group: %v", group)
@@ -2530,7 +2549,6 @@ check_expr_internal :: proc(
 
 			operand.type = t_invalid
 			operand.mode = .Invalid
-			operand.is_call = true
 			return
 
 		case:
@@ -2573,13 +2591,14 @@ check_expr_internal :: proc(
 				error(checker, v, "expected %d arguments but got %d", len(proc_type.args), arg_index)
 			}
 
-			operand.mode      = len(proc_type.returns) == 0 ? .No_Value : .RValue
-			operand.type      = proc_type.return_type
-			operand.is_call   = true
-			operand.diverging = proc_type.diverging
+			operand.mode = len(proc_type.returns) == 0 ? .No_Value : .RValue
+			operand.type = proc_type.return_type
+			if proc_type.diverging {
+				operand.flags |= { .Diverging, }
+			}
 		}
 	case ^Expr_Compound:
-		defer v.constant = operand.constant_compound
+		defer v.constant = .Constant_Compound in operand.flags
 
 		type: ^Type
 		if v.type_expr != nil {
@@ -2596,7 +2615,7 @@ check_expr_internal :: proc(
 		operand.type = type
 		operand.mode = .RValue
 		if len(v.fields) == 0 { // {}
-			operand.constant_compound = true
+			operand.flags |= { .Constant_Compound, }
 			return
 		}
 
@@ -2622,7 +2641,7 @@ check_expr_internal :: proc(
 		case .Struct:
 			type := base.variant.(^Type_Struct)
 
-			operand.constant_compound = true
+			operand.flags |= { .Constant_Compound, }
 
 			if named {
 				seen := make(map[string]struct{}, context.temp_allocator)
@@ -2640,7 +2659,9 @@ check_expr_internal :: proc(
 					entity := check_ident(checker, field.name, type.scope) or_continue
 
 					field_operand := check_expr(checker, field.value, type_hint = entity.type)
-					operand.constant_compound &&= field_operand.mode == .Const
+					if field_operand.mode != .Const && .Constant_Compound not_in field_operand.flags {
+						operand.flags -= { .Constant_Compound, }
+					}
 					check_assignment(checker, entity.type, field_operand.type, field.value, "struct literal")
 
 					field.value.type = entity.type
@@ -2655,14 +2676,16 @@ check_expr_internal :: proc(
 					struct_field := type.fields[i]
 
 					field_operand := check_expr(checker, field.value, type_hint = struct_field.type)
-					operand.constant_compound &&= field_operand.mode == .Const
+					if field_operand.mode != .Const && .Constant_Compound not_in field_operand.flags {
+						operand.flags -= { .Constant_Compound, }
+					}
 					check_assignment(checker, struct_field.type, field_operand.type, field.value, "struct literal")
 
 					field.value.type = struct_field.type
 				}
 			}
 		case .Array:
-			operand.constant_compound = true
+			operand.flags |= { .Constant_Compound, }
 
 			type := base.variant.(^Type_Array)
 			if named {
@@ -2713,7 +2736,9 @@ check_expr_internal :: proc(
 					field.name.type = expected_type
 
 					value := check_expr(checker, field.value, type_hint = expected_type)
-					operand.constant_compound &&= value.mode == .Const
+					if value.mode != .Const && .Constant_Compound not_in value.flags {
+						operand.flags -= { .Constant_Compound, }
+					}
 					check_assignment(checker, expected_type, value.type, field.value, "array literal")
 					field.value.type = expected_type
 					field.swizzle    = indices[:]
@@ -2730,9 +2755,13 @@ check_expr_internal :: proc(
 					t         = v.elem
 					n_values += v.count
 
-					operand.constant_compound &&= f.constant_compound
+					if f.mode != .Const && .Constant_Compound not_in f.flags {
+						operand.flags -= { .Constant_Compound, }
+					}
 				} else {
-					operand.constant_compound &&= f.mode == .Const || f.constant_compound
+					if f.mode != .Const && .Constant_Compound not_in f.flags {
+						operand.flags -= { .Constant_Compound, }
+					}
 
 					if type_is_tuple(t) {
 						error(checker, field.value, "multi valued expression found where single value was expected")
@@ -3018,8 +3047,8 @@ check_expr_internal :: proc(
 		}
 
 	case ^Expr_Type_Struct:
-		operand.mode          = .Type
-		operand.type_distinct = true
+		operand.mode   = .Type
+		operand.flags |= { .Type_Distinct, }
 
 		type   := type_new(.Struct, Type_Struct, checker.allocator)
 		fields := make([dynamic]^Entity, 0, len(v.fields), checker.allocator)
@@ -3072,8 +3101,8 @@ check_expr_internal :: proc(
 		operand.type = type
 		operand.mode = .Type
 	case ^Expr_Type_Enum:
-		operand.mode          = .Type
-		operand.type_distinct = true
+		operand.mode   = .Type
+		operand.flags |= { .Type_Distinct, }
 
 		type   := type_new(.Enum, Type_Enum, checker.allocator)
 		values := make([dynamic]^Entity, 0, len(v.values), checker.allocator)
@@ -3175,9 +3204,9 @@ check_expr_internal :: proc(
 		operand.mode = .Type
 
 	case ^Expr_Type_Distinct:
-		operand.type          = check_type(checker, v.backing)
-		operand.mode          = .Type
-		operand.type_distinct = true
+		operand.type   = check_type(checker, v.backing)
+		operand.mode   = .Type
+		operand.flags |= { .Type_Distinct, }
 
 	case ^Expr_Type_Fixed:
 		type                := type_new(.Fixed, Type_Fixed, checker.allocator)
