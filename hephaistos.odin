@@ -228,3 +228,118 @@ check_core_libraries :: proc(
 
 	return
 }
+
+Target_Env :: enum {
+	Vulkan,
+	Vulkan_1_0,
+	Vulkan_1_1,
+	Vulkan_1_2,
+	Vulkan_1_3,
+	Vulkan_1_4,
+	OpenGL,
+}
+
+Command_Line_Options :: struct {
+	input:                 string                 `args:"pos=0,required" usage:"Input file."`,
+	output:                string                 `usage:"Output file. Defaults to 'a.spv'."`,
+	check:                 bool                   `usage:"Stop after type-checking and don't emit a SPIR-V file."`,
+	target_env:            Target_Env             `usage:"The target environment."`,
+	defines:               map[string]Const_Value `args:"name=define" usage:"Define compile time constants."`,
+	libraries:             map[string]string      `args:"name=library" usage:"Path to a library."`,
+
+	vet_unused_parameters: bool                   `usage:"Checks for unused parameters"`,
+	vet_unused_variables:  bool                   `usage:"Checks for unused variables"`,
+	vet_unused_procedures: bool                   `usage:"Checks for unused procedures"`,
+	vet_unused_imports:    bool                   `usage:"Checks for unused imports"`,
+	vet_unused_results:    bool                   `usage:"Checks for unused results from function calls"`,
+	vet_unused:            bool                   `usage:"Checks for unused declarations"`,
+	vet_shadowing:         bool                   `usage:"Checks for shadowing in procedure bodies"`,
+	vet_cast:              bool                   `usage:"Checks for casts that do not change the type"`,
+	vet:                   bool                   `usage:"Enables all -vet-* checks"`,
+}
+
+import "core:flags"
+import "core:strconv"
+
+@(require_results)
+parse_options :: proc(args: []string, allocator := context.allocator) -> (options: Command_Line_Options, error: flags.Error) {
+	parse_const_value :: proc(
+		data:           rawptr,
+		data_type:      typeid,
+		unparsed_value: string,
+		args_tag:       string,
+	) -> (
+		error:       string,
+		handled:     bool,
+		alloc_error: runtime.Allocator_Error,
+	) {
+		if data_type != Const_Value {
+			return
+		}
+		handled = true
+
+		data := (^Const_Value)(data)
+
+		switch unparsed_value {
+		case "true":
+			data^ = true
+			return
+		case "false":
+			data^ = false
+			return
+		}
+
+		if strings.contains(unparsed_value, ".") {
+			v, ok := strconv.parse_f64(unparsed_value)
+			if !ok {
+				error = "Failed to parse argument as float"
+				return
+			}
+			data^ = v
+		} else {
+			v, ok := strconv.parse_i64(unparsed_value)
+			if !ok {
+				error = "Failed to parse argument as integer"
+				return
+			}
+			data^ = v
+		}
+
+		return
+	}
+	flags.register_type_setter(parse_const_value)
+	
+	flags.parse(&options, args[1:], allocator = allocator) or_return
+
+	return
+}
+
+@(require_results)
+checker_flags_from_options :: proc(options: Command_Line_Options) -> (flags: Checker_Flags) {
+	options := options
+
+	if options.vet {
+		options.vet_unused    = true
+		options.vet_cast      = true
+		options.vet_shadowing = true
+	}
+
+	if options.vet_unused {
+		options.vet_unused_parameters = true
+		options.vet_unused_variables  = true
+		options.vet_unused_procedures = true
+		options.vet_unused_imports    = true
+		options.vet_unused_results    = true
+	}
+	
+	flags |= { .Vet_Unused_Parameters, } if options.vet_unused_parameters else {}
+	flags |= { .Vet_Unused_Variables,  } if options.vet_unused_variables  else {}
+	flags |= { .Vet_Unused_Procedures, } if options.vet_unused_procedures else {}
+	flags |= { .Vet_Unused_Imports,    } if options.vet_unused_imports    else {}
+	flags |= { .Vet_Unused_Results,    } if options.vet_unused_results    else {}
+
+	flags |= { .Vet_Cast,              } if options.vet_cast              else {}
+	flags |= { .Vet_Shadowing,         } if options.vet_shadowing         else {}
+
+	return
+}

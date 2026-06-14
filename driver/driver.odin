@@ -7,84 +7,17 @@ import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
-import "core:strconv"
 import "core:strings"
 
 import hep ".."
 
-parse_const_value :: proc(
-	data:           rawptr,
-	data_type:      typeid,
-	unparsed_value: string,
-	args_tag:       string,
-) -> (
-	error:       string,
-	handled:     bool,
-	alloc_error: runtime.Allocator_Error,
-) {
-	if data_type != hep.Const_Value {
-		return
-	}
-	handled = true
-
-	data := (^hep.Const_Value)(data)
-
-	switch unparsed_value {
-	case "true":
-		data^ = true
-		return
-	case "false":
-		data^ = false
-		return
-	}
-
-	if strings.contains(unparsed_value, ".") {
-		v, ok := strconv.parse_f64(unparsed_value)
-		if !ok {
-			error = "Failed to parse argument as float"
-			return
-		}
-		data^ = v
-	} else {
-		v, ok := strconv.parse_i64(unparsed_value)
-		if !ok {
-			error = "Failed to parse argument as integer"
-			return
-		}
-		data^ = v
-	}
-
-	return
-}
-
 main :: proc() {
-	Target_Env :: enum {
-		OpenGL,
-		Vulkan,
+	options, error := hep.parse_options(os.args)
+	flags.print_errors(hep.Command_Line_Options, error, os.args[0])
+	if error != nil {
+		_, help := error.(flags.Help_Request)
+		os.exit(help ? 0 : 1)
 	}
-
-	Options :: struct {
-		input:      string                     `args:"pos=0,required" usage:"Input file."`,
-		output:     string                     `usage:"Output file. Defaults to 'a.spv'."`,
-		check:      bool                       `usage:"Stop after type-checking and don't emit a SPIR-V file."`,
-		target_env: Target_Env                 `usage:"The target environment."`,
-		defines:    map[string]hep.Const_Value `args:"name=define" usage:"Define compile time constants."`,
-		libraries:  map[string]string          `args:"name=library" usage:"Path to a library."`,
-
-		vet_unused_parameters: bool            `usage:"Checks for unused parameters"`,
-		vet_unused_variables:  bool            `usage:"Checks for unused variables"`,
-		vet_unused_procedures: bool            `usage:"Checks for unused procedures"`,
-		vet_unused_imports:    bool            `usage:"Checks for unused imports"`,
-		vet_unused_results:    bool            `usage:"Checks for unused results from function calls"`,
-		vet_unused:            bool            `usage:"Checks for unused declarations"`,
-		vet_shadowing:         bool            `usage:"Checks for shadowing in procedure bodies"`,
-		vet_cast:              bool            `usage:"Checks for casts that do not change the type"`,
-		vet:                   bool            `usage:"Enables all -vet-* checks"`,
-	}
-
-	options: Options
-	flags.register_type_setter(parse_const_value)
-	flags.parse_or_exit(&options, os.args)
 
 	libraries: map[string]hep.Library
 	for name, path in options.libraries {
@@ -143,39 +76,16 @@ main :: proc() {
 	case .OpenGL:
 		spirv_version = hep.SPIR_V_VERSION_1_0
 		flags         = { .Auto_Map_Locations, .Auto_Bind_Uniforms, }
-	case .Vulkan:
+	case .Vulkan, .Vulkan_1_0:
+		spirv_version = hep.SPIR_V_VERSION_1_0
+	case .Vulkan_1_1:
+		spirv_version = hep.SPIR_V_VERSION_1_3
+	case .Vulkan_1_2:
+		spirv_version = hep.SPIR_V_VERSION_1_5
+	case .Vulkan_1_3:
 		spirv_version = hep.SPIR_V_VERSION_1_6
-	}
-
-	if options.vet_unused_parameters {
-		flags |= { .Vet_Unused_Parameters, }
-	}
-	if options.vet_unused_variables {
-		flags |= { .Vet_Unused_Variables, }
-	}
-	if options.vet_unused_procedures {
-		flags |= { .Vet_Unused_Procedures, }
-	}
-	if options.vet_unused_imports {
-		flags |= { .Vet_Unused_Imports, }
-	}
-	if options.vet_unused_results {
-		flags |= { .Vet_Unused_Results, }
-	}
-	VET_FLAGS_UNUSED: hep.Checker_Flags : { .Vet_Unused_Parameters, .Vet_Unused_Variables, .Vet_Unused_Procedures, .Vet_Unused_Imports, .Vet_Unused_Results, }
-	if options.vet_unused {
-		flags |= VET_FLAGS_UNUSED
-	}
-
-	if options.vet_cast {
-		flags |= { .Vet_Cast, }
-	}
-	if options.vet_shadowing {
-		flags |= { .Vet_Shadowing, }
-	}
-
-	if options.vet {
-		flags |= VET_FLAGS_UNUSED | { .Vet_Shadowing, .Vet_Cast, }
+	case .Vulkan_1_4:
+		spirv_version = hep.SPIR_V_VERSION_1_6
 	}
 
 	checker: hep.Checker

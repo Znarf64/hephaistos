@@ -105,6 +105,7 @@ Type_Kind :: enum {
 	Bool,
 	Float,
 	Any,
+	String,
 
 	Struct,
 	Matrix,
@@ -159,6 +160,7 @@ t_bool    := &Type{ kind = .Bool,    size = 1, align = 1, }
 t_int     := &Type{ kind = .Int,     size = 0, align = 0, }
 t_uint    := &Type{ kind = .Uint,    size = 0, align = 0, }
 t_float   := &Type{ kind = .Float,   size = 0, align = 0, }
+t_string  := &Type{ kind = .String,  size = 0, align = 0, }
 
 t_i8      := &Type{ kind = .Int,     size = 1, align = 1, }
 t_i16     := &Type{ kind = .Int,     size = 2, align = 2, }
@@ -263,6 +265,8 @@ type_print_writer :: proc(w: io.Writer, type: ^Type, indent := min(int)) {
 	switch type.kind {
 	case .Invalid:
 		fmt.wprint(w, "invalid type")
+	case .String:
+		fmt.wprint(w, "string")
 	case .Struct:
 		s := type.variant.(^Type_Struct)
 		if len(s.fields) == 0 {
@@ -624,6 +628,8 @@ type_equal :: proc(a, b: ^Type) -> bool {
 		return true
 	case:
 		unreachable()
+	case .String:
+		return true
 	}
 }
 

@@ -836,7 +836,8 @@ cg_constant :: proc(ctx: ^Context, value: Const_Value, type: ^Type) -> Cg_Value 
 		     .Quaternion,
 		     .Opaque,
 		     .Any,
-		     .Named:
+		     .Named,
+		     .String:
 			fmt.panicf("Tried to generate constant with type '%v'", type)
 
 		case .Matrix:
@@ -1222,7 +1223,7 @@ cg_type_internal :: proc(
 		return cg_type_internal(ctx, type_builder, annotation_builder, type.variant.(^Type_Complex).array, flags)
 	case .Fixed:
 		return cg_type_internal(ctx, type_builder, annotation_builder, type.variant.(^Type_Fixed).backing, flags)
-	case .Invalid, .Enum, .Bit_Set, .Proc_Group, .Any, .Named:
+	case .Invalid, .Enum, .Bit_Set, .Proc_Group, .Any, .Named, .String:
 		unreachable()
 	}
 

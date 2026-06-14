@@ -782,7 +782,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 				break
 			}
 			value := check_expr(checker, a.value)
-			if val, ok := value.value.(i64); ok && val >= 0 {
+			if val, ok := value.value.(i64); ok && val >= 0 || value.mode == .Invalid {
 				decl.binding = val
 			} else {
 				error(checker, value, "'binding' attribute value must be a constant non-negative integer")
@@ -793,7 +793,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 				break
 			}
 			value := check_expr(checker, a.value)
-			if val, ok := value.value.(i64); ok && val >= 0 {
+			if val, ok := value.value.(i64); ok && val >= 0 || value.mode == .Invalid {
 				decl.location = val
 			} else {
 				error(checker, value, "'location' attribute value must be a constant non-negative integer")
@@ -804,7 +804,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 				break
 			}
 			value := check_expr(checker, a.value)
-			if val, ok := value.value.(i64); ok && val >= 0 {
+			if val, ok := value.value.(i64); ok && val >= 0 || value.mode == .Invalid {
 				decl.descriptor_set = val
 			} else {
 				error(checker, value, "'descriptor_set' attribute value must be a constant non-negative integer")
@@ -815,10 +815,11 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 				break
 			}
 			value := check_expr(checker, a.value)
+			(value.mode != .Invalid) or_break
 			if val, ok := value.value.(string); ok {
 				decl.link_name = val
 			} else {
-				error(checker, value, "'descriptor_set' attribute value must be a constant string")
+				error(checker, value, "'link_name' attribute value must be a constant string")
 			}
 		case "local_size":
 			if a.value == nil {
@@ -832,6 +833,9 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 				}
 				for field, i in comp.fields {
 					value := check_expr(checker, field.value)
+					if value.mode == .Invalid {
+						value.value = 1
+					}
 					if x, ok := value.value.(i64); ok {
 						if x <= 0 {
 							error(checker, field.value, "'local_size' values must be positive integers, got %v", x)
@@ -850,6 +854,7 @@ check_decl_attributes :: proc(checker: ^Checker, decl: ^Decl_Value, constant: bo
 				break
 			}
 			value := check_expr(checker, a.value)
+			(value.mode != .Invalid) or_break
 			if val, ok := value.value.(string); ok {
 				decl.builtin, ok = spirv_builtin_names[val]
 				if !ok {
@@ -983,9 +988,8 @@ collect_decls :: proc(checker: ^Checker, stmts: []^Ast_Stmt, global: bool, entit
 			return
 		}
 
-		path  := v.path.value.(string)
-		name  := path
-		valid := true
+		path := v.path.value.(string)
+		name := path
 		if v.alias != nil {
 			name = v.alias.text
 		} else {
@@ -994,37 +998,36 @@ collect_decls :: proc(checker: ^Checker, stmts: []^Ast_Stmt, global: bool, entit
 				name = name[cut + 1:]
 			}
 
+			name_valid := true
 			for char in name {
 				switch char {
 				case '0' ..= '9', 'a' ..= 'z', 'A' ..= 'Z', '_':
 					continue
 				}
-				valid = false
+				name_valid = false
 				break
 			}
 
-			valid &&= len(name) > 0
+			name_valid &&= len(name) > 0
 
-			if !valid {
+			if !name_valid {
 				error(checker, v.path, "'%s' is not a valid package name, consider renaming the imported package: `import foo \"%s\"`", name, path)
+				continue
 			}
 		}
 
 		library := &checker.libraries[path]
+		entity_kind := Entity_Kind.Library
 		if library == nil {
 			error(checker, v.path, "Imported library does not exist: \"%v\"", path)
-			continue
-		}
-
-		if !valid {
-			continue
+			entity_kind = .Invalid
 		}
 
 		e: ^Entity
 		if v.alias != nil {
-			e = entity_new(checker, .Library, v.alias, t_invalid)
+			e = entity_new(checker, entity_kind, v.alias, t_invalid)
 		} else {
-			e = entity_new_no_ident(checker, .Library, name, t_invalid)
+			e = entity_new_no_ident(checker, entity_kind, name, t_invalid)
 		}
 		e.library = library
 		e.decl    = v
@@ -1953,18 +1956,22 @@ check_proc_type :: proc(checker: ^Checker, p: ^Expr_Proc_Sig, is_entry_point: bo
 
 @(require_results)
 check_expr_internal :: proc(
-	checker:           ^Checker,
-	expr:              ^Ast_Expr,
-	attributes:        []Ast_Field,
-	type_hint:         ^Type = nil,
-	check_proc_bodies: bool  = true,
-	is_entry_point:    bool  = false,
+	checker:          ^Checker,
+	expr:             ^Ast_Expr,
+	attributes:      []Ast_Field,
+	type_hint:        ^Type = nil,
+	check_proc_bodies: bool = true,
+	is_entry_point:    bool = false,
 ) -> (operand: Operand) {
 	operand.expr = expr
 	operand.mode = .Invalid
 	operand.type = t_invalid
 
 	defer {
+		#partial switch operand.mode {
+		case .RValue, .LValue, .Const, .Type:
+			assert(operand.type.kind != .Invalid)
+		}
 		expr.type        = operand.type
 		expr.const_value = operand.value
 	}
@@ -1982,7 +1989,7 @@ check_expr_internal :: proc(
 			operand.type  = t_bool
 			operand.value = val
 		case string:
-			operand.type  = t_invalid
+			operand.type  = t_string
 			operand.value = val
 		}
 
@@ -2006,8 +2013,13 @@ check_expr_internal :: proc(
 			operand.type = t_bool
 			operand.mode = .RValue
 
+			if rhs.mode == .Invalid {
+				_ = check_expr(checker, v.lhs, type_hint = t_invalid)
+				return
+			}
+
 			if !type_is_bit_set(base) {
-				error(checker, v, "in expressions are only allowed for bit sets")
+				error(checker, v, "'in' expressions are only allowed on bit sets")
 				return
 			}
 			bits := base.variant.(^Type_Bit_Set)
@@ -2022,6 +2034,14 @@ check_expr_internal :: proc(
 
 		lhs := check_expr(checker, v.lhs, type_hint = type_hint)
 		rhs := check_expr(checker, v.rhs, type_hint = lhs.type)
+
+		if lhs.mode == .Invalid && rhs.mode == .Invalid {
+			if op_is_relation(v.op) {
+				operand.type = t_bool
+				operand.mode = .RValue
+			}
+			return
+		}
 
 		if type_is_invalid(lhs.type) {
 			operand.mode = .RValue
@@ -2191,6 +2211,10 @@ check_expr_internal :: proc(
 				return
 			}
 
+			if type_hint.kind == .Invalid {
+				return
+			}
+
 			base := base_type(type_hint)
 
 			if base.kind != .Enum {
@@ -2217,6 +2241,8 @@ check_expr_internal :: proc(
 			return
 		case .No_Value:
 			error(checker, operand, "expected an expression, got no value")
+			return
+		case .Invalid:
 			return
 		}
 
@@ -2385,8 +2411,6 @@ check_expr_internal :: proc(
 				type, ok := checker.shared_types[name]
 				if !ok {
 					error(checker, v.args[0].value, "unknown shared type: %s", name)
-					operand.mode = .Type
-					operand.type = t_invalid
 					return
 				}
 
@@ -2436,7 +2460,7 @@ check_expr_internal :: proc(
 		#partial switch fn.mode {
 		case .Invalid:
 			for arg in v.args {
-				_ = check_expr(checker, arg.value)
+				_ = check_expr(checker, arg.value, type_hint = t_invalid)
 			}
 			return
 		case .Builtin:
@@ -2616,6 +2640,9 @@ check_expr_internal :: proc(
 		operand.mode = .RValue
 		if len(v.fields) == 0 { // {}
 			operand.flags |= { .Constant_Compound, }
+			if type.kind == .Invalid {
+				operand.mode = .Invalid
+			}
 			return
 		}
 
@@ -2819,6 +2846,7 @@ check_expr_internal :: proc(
 				operand.value = const_value
 			}
 		case .Invalid:
+			operand.mode = .Invalid
 		case:
 			error(checker, v, "illegal type in compound literal: %v", type)
 		}
@@ -3393,6 +3421,13 @@ entity_to_operand :: proc(checker: ^Checker, e: ^Entity, operand: ^Operand) {
 		operand.type = e.type
 	case .Struct_Field, .Enum_Value:
 		unreachable()
+	}
+
+	if operand.type.kind == .Invalid {
+		#partial switch operand.mode {
+		case .RValue, .LValue, .Const, .Type:
+			operand.mode = .Invalid
+		}
 	}
 }
 

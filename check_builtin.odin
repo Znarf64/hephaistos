@@ -178,9 +178,11 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 			error(checker, v, "builtin 'dot' expects two arguments, got %d", len(v.args))
 			break
 		}
-		a    := args[0]
-		b    := args[1]
+		a, b := args[0], args[1]
 		type := op_result_type(a.type, b.type)
+		if type.kind == .Invalid {
+			return
+		}
 		if !type_is_array(type) {
 			error(checker, v, "builtin 'dot' expects two vectors of the same type, got %v and %v", a.type, b.type)
 			break
@@ -194,9 +196,11 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 			error(checker, v, "builtin 'cross' expects two arguments, got %d", len(v.args))
 			break
 		}
-		a    := args[0]
-		b    := args[1]
+		a, b := args[0], args[1]
 		type := op_result_type(a.type, b.type)
+		if type.kind == .Invalid {
+			return
+		}
 		if vec, ok := type.variant.(^Type_Array); !ok || vec.count != 3 {
 			error(checker, v, "builtin 'cross' expects two 3 dimensional vectors, got %v and %v", a.type, b.type)
 			break
@@ -212,6 +216,8 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		}
 		type := args[0].type
 		for arg in args[1:] {
+			(arg.type.kind != .Invalid) or_continue
+
 			prev := type
 			type  = op_result_type(type, arg.type)
 			if type.kind == .Invalid {
@@ -221,6 +227,9 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		}
 		for &arg in v.args {
 			arg.value.type = type
+		}
+		if type.kind == .Invalid {
+			return
 		}
 		if !type_is_numeric(type) && !type_is_array(type) {
 			error(checker, v, "builtin '%s' expects at least two vectors or scalars of the same type, got %v", builtin_names[v.builtin], type)
@@ -235,12 +244,21 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		}
 		type := args[0].type
 		for arg in args[1:] {
+			(arg.type.kind != .Invalid) or_continue
+
+			if type.kind == .Invalid {
+				type = arg.type
+			}
+
 			prev := type
 			type  = op_result_type(type, arg.type)
 			if type.kind == .Invalid {
 				error(checker, arg, "builtin 'clamp' expects all arguments to be of the same type, expected %v, got %v", prev, arg.type)
 				return
 			}
+		}
+		if type.kind == .Invalid {
+			return
 		}
 		if !type_is_numeric(type) && !type_is_array(type) {
 			error(checker, v, "builtin 'clamp' expects 3 vectors or scalars of the same type, got %v", type)
@@ -629,6 +647,9 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 	    case .Type_Is_Named:      operand.value = type_is_named(args[0].type)
 		}
 	case .Card:
+		operand.type = t_i32
+		operand.mode = .RValue
+
 		if len(v.args) != 1 {
 			error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(v.args))
 			return
@@ -636,10 +657,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		type := args[0].type
 		if !type_is_bit_set(type) {
 			error(checker, v, "builtin '%s' expects a bit_set, got %v", builtin_names[v.builtin], type)
-			return
 		}
-		operand.type = t_i32
-		operand.mode = .RValue
 	}
 
 	return
