@@ -34,7 +34,8 @@ Checker :: struct {
 	errors:           [dynamic]Error,
 	error_allocator:  runtime.Allocator,
 
-	libraries:        map[string]Library,
+	libraries:        map[string]^Library,
+	used_libraries:   map[^Library]string,
 	shared_types:     map[string]^Type,
 	config_vars:      map[string]Const_Value,
 	flags:            Checker_Flags,
@@ -1016,12 +1017,14 @@ collect_decls :: proc(checker: ^Checker, stmts: []^Ast_Stmt, global: bool, entit
 			}
 		}
 
-		library := &checker.libraries[path]
+		library     := checker.libraries[path]
 		entity_kind := Entity_Kind.Library
 		if library == nil {
 			error(checker, v.path, "Imported library does not exist: \"%v\"", path)
 			entity_kind = .Invalid
 		}
+
+		checker.used_libraries[library] = path
 
 		e: ^Entity
 		if v.alias != nil {
@@ -1382,7 +1385,8 @@ checker_init :: proc(
 	checker.error_allocator                   = error_allocator
 	checker.errors                            = make([dynamic]Error, error_allocator)
 	checker.flags                             = flags
-	checker.libraries                         = make(map[string]Library, allocator)
+	checker.libraries                         = make(map[string]^Library, allocator)
+	checker.used_libraries                    = make(map[^Library]string, allocator)
 
 	_ = scope_push(checker, .Global)
 
@@ -1417,11 +1421,12 @@ checker_init :: proc(
 
 	create_builtin_type(checker, t_any)
 
+	@(require_results)
 	find_or_create_lib :: proc(checker: ^Checker, name: string) -> (library: ^Library) {
-		library = &checker.libraries[name]
+		library = checker.libraries[name]
 		if library == nil {
-			checker.libraries[name] = { scope = scope_new(nil, .Global, checker.allocator), }
-			library                 = &checker.libraries[name]
+			checker.libraries[name] = new_clone(Library{ scope = scope_new(nil, .Global, checker.allocator), })
+			library                 = checker.libraries[name]
 		}
 		return
 	}
@@ -1457,9 +1462,9 @@ checker_init :: proc(
 		}
 	}
 
-	for name, lib in libraries {
+	for name, &lib in libraries {
 		assert(name not_in checker.libraries, "base libraries can not be overwritten")
-		checker.libraries[name] = lib
+		checker.libraries[name] = &lib
 	}
 
 	file_scope              := scope_push(checker, .Global)

@@ -576,7 +576,7 @@ cg_file :: proc(
 
 	b: spv.Builder = { current_id = &ctx.current_id, }
 
-	for name, lib in checker.libraries {
+	for lib, name in checker.used_libraries {
 		cg_scope_push(&ctx, kind = .Block)
 		defer cg_scope_pop(&ctx)
 
@@ -1128,7 +1128,7 @@ cg_type_internal :: proc(
 		}
 	case .Array:
 		type := type.variant.(^Type_Array)
-		if type.count >= 2 && type.count <= 4 && type_is_numeric(type.elem) {
+		if type.count >= 2 && type.count <= 4 && (type_is_numeric(type.elem) || type_is_bool(type.elem)) {
 			info.type = spv.OpTypeVector(type_builder, cg_type(ctx, type.elem).type, u32(type.count))
 		} else {
 			info.type = spv.OpTypeArray(type_builder, cg_type(ctx, type.elem).type, cg_constant(ctx, i64(type.count), nil).id)
@@ -2055,7 +2055,7 @@ cg_cast :: proc(
 			return value.id
 		}
 		type := type.variant.(^Type_Array)
-		if type_is_numeric(v_type) {
+		if type_is_numeric(v_type) || type_is_bool(v_type) {
 			values := make([]spv.Id, type.count, context.temp_allocator)
 			casted := cg_cast(ctx, builder, value, type.elem)
 			for &v in values {
@@ -2741,7 +2741,7 @@ cg_expr_internal :: proc(
 
 			switch count {
 			case 1:
-				return { id = spv.OpCompositeExtract(builder, cg_type(ctx, v.type).type, texel, 0), }
+				return { id = spv.OpCompositeExtract(builder, cg_type(ctx, sampler.texel_type).type, texel, 0), type = sampler.texel_type, }
 			case 2:
 				indices := [2]u32{ 0, 1, }
 				return { id = spv.OpVectorShuffle(builder, cg_type(ctx, v.type).type, texel, texel, ..indices[:]), }
@@ -2819,40 +2819,45 @@ cg_expr_internal :: proc(
 	case ^Expr_Cast:
 		return { id = cg_cast(ctx, builder, cg_expr(ctx, builder, v.value), v.type), }
 	case ^Expr_Unary:
-		e    := cg_expr(ctx, builder, v.expr)
+		e    := cg_cast(ctx, builder, cg_expr(ctx, builder, v.expr), v.type)
 		type := core_type(expr.type, complex_to_array = true)
 		ti   := cg_type(ctx, type)
 		#partial switch v.op {
 		case .Xor:
-			return { id = spv.OpNot(builder, ti.type, e.id), }
+			return { id = spv.OpNot(builder, ti.type, e), }
 		case .Subtract:
 			#partial switch type.kind {
 			case .Matrix:
 				#partial switch type_matrix_elem(type).kind {
 				case .Int, .Uint:
-					return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+					return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e), }
 				case .Float:
-					return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+					return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e), }
 				}
 			case .Array:
 				#partial switch type_array_elem(type).kind {
 				case .Int, .Uint:
-					return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+					return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e), }
 				case .Float:
-					return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+					return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e), }
 				}
 			case .Int, .Uint:
-				return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+				return { id = spv.OpISub(builder, ti.type, cg_nil_value(ctx, ti), e), }
 			case .Float:
-				return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e.id), }
+				return { id = spv.OpFSub(builder, ti.type, cg_nil_value(ctx, ti), e), }
 			}
 		case .Add:
-			return e
+			return { id = e, }
 		}
 	case ^Expr_Ternary:
 		cond       := cg_expr(ctx, builder, v.cond).id
 		then_value := cg_expr(ctx, builder, v.then_expr).id
 		else_value := cg_expr(ctx, builder, v.else_expr).id
+
+		if type_is_array(v.type) {
+			type := type_array_new(v.cond.type, type_array_len(v.type), context.temp_allocator)
+			cond  = cg_cast(ctx, builder, { id = cond, type = v.cond.type, }, type)
+		}
 		return { id = spv.OpSelect(builder, cg_type(ctx, v.type).type, cond, then_value, else_value), }
 	case ^Expr_Type_Struct, ^Expr_Type_Array, ^Expr_Type_Matrix, ^Expr_Type_Image, ^Expr_Type_Enum, ^Expr_Type_Bit_Set, ^Expr_Type_Opaque, ^Expr_Type_Distinct, ^Expr_Type_Fixed:
 		panic("tried to cg type as expression")
