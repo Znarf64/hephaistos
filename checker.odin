@@ -2870,7 +2870,7 @@ check_expr_internal :: proc(
 
 		#partial switch lhs_type.kind {
 		case .Matrix:
-			if !type_is_integer(rhs.type) {
+			if !type_is_integer(rhs.type) && rhs.mode != .Invalid {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
 			operand.type = type_matrix_elem(lhs_type)
@@ -2881,29 +2881,29 @@ check_expr_internal :: proc(
 					error(checker, rhs, "array index out of bounds: %d ..< %d, got %d", 0, len, value)
 				}
 			}
-			if !type_is_integer(rhs.type) {
+			if !type_is_integer(rhs.type) && rhs.mode != .Invalid {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
 			operand.type = type_array_elem(lhs_type)
 		case .Buffer:
-			if !type_is_integer(rhs.type) {
+			if !type_is_integer(rhs.type) && rhs.mode != .Invalid {
 				error(checker, rhs, "expected an integer as the index, but got %v", rhs.type)
 			}
 			operand.type = type_buffer_elem(lhs_type)
 		case .Sampler:
 			sampler := lhs_type.variant.(^Type_Image)
-			if sampler.dimensions == 1 {
-				if !type_is_numeric(rhs.type) {
-					error(
-						checker,
-						rhs,
-						"expected a scalar to sample texture of type %v, got: %v",
-						sampler,
-						rhs.type,
-					)
-				}
-			} else {
-				if !type_is_array(rhs.type) || type_array_len(rhs.type) != sampler.dimensions {
+			if rhs.mode != .Invalid {
+				if sampler.dimensions == 1 {
+					if !type_is_numeric(rhs.type) {
+						error(
+							checker,
+							rhs,
+							"expected a scalar to sample texture of type %v, got: %v",
+							sampler,
+							rhs.type,
+						)
+					}
+				} else if !type_is_array(rhs.type) || type_array_len(rhs.type) != sampler.dimensions {
 					error(
 						checker,
 						rhs,
@@ -2919,28 +2919,30 @@ check_expr_internal :: proc(
 			operand.mode = .RValue
 		case .Image:
 			image := lhs_type.variant.(^Type_Image)
-			if image.dimensions == 1 {
-				if !type_is_integer(rhs.type) {
-					error(
-						checker,
-						rhs,
-						"expected an integer to access texel from image of type %v, got: %v",
-						image,
-						rhs.type,
-					)
-				}
-			} else {
-				if type_is_integer(rhs.type) {
-					v.rhs.type = type_array_new(default_type(rhs.type), image.dimensions, checker.allocator)
-				} else if !type_is_array(rhs.type) || !type_is_numeric(type_array_elem(rhs.type)) || type_array_len(rhs.type) != image.dimensions {
-					error(
-						checker,
-						rhs,
-						"expected a %d dimensional vector of integers to access texel from image of type %v, got: %v",
-						image.dimensions,
-						image,
-						rhs.type,
-					)
+			if rhs.mode != .Invalid {
+				if image.dimensions == 1 {
+					if !type_is_integer(rhs.type) {
+						error(
+							checker,
+							rhs,
+							"expected an integer to access texel from image of type %v, got: %v",
+							image,
+							rhs.type,
+						)
+					}
+				} else {
+					if type_is_integer(rhs.type) {
+						v.rhs.type = type_array_new(default_type(rhs.type), image.dimensions, checker.allocator)
+					} else if !type_is_array(rhs.type) || !type_is_numeric(type_array_elem(rhs.type)) || type_array_len(rhs.type) != image.dimensions {
+						error(
+							checker,
+							rhs,
+							"expected a %d dimensional vector of integers to access texel from image of type %v, got: %v",
+							image.dimensions,
+							image,
+							rhs.type,
+						)
+					}
 				}
 			}
 
