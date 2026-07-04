@@ -1425,7 +1425,7 @@ checker_init :: proc(
 	find_or_create_lib :: proc(checker: ^Checker, name: string) -> (library: ^Library) {
 		library = checker.libraries[name]
 		if library == nil {
-			checker.libraries[name] = new_clone(Library{ scope = scope_new(nil, .Global, checker.allocator), })
+			checker.libraries[name] = new_clone(Library{ scope = scope_new(nil, .Global, checker.allocator), }, checker.allocator)
 			library                 = checker.libraries[name]
 		}
 		return
