@@ -475,3 +475,7 @@ test_structs :: proc() {
 // }
 
 A :: f32(123 / 1232)
+
+test_copy_sign :: proc(x, y: [8]f32) -> [8]f32 {
+	return copy_sign(x, y)
+}

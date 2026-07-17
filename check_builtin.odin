@@ -47,6 +47,7 @@ builtin_names: [Builtin_Id]string = {
 	.Inverse_Sqrt         = "inverse_sqrt",
 	.Abs                  = "abs",
 	.Sign                 = "sign",
+	.Copy_Sign            = "copy_sign",
 
 	.Card                 = "card",
 
@@ -389,9 +390,9 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		v.args[0].value.type = type
 		operand.mode         = .RValue
 		operand.type         = type
-	case .Atan2:
+	case .Atan2, .Copy_Sign:
 		if len(v.args) != 2 {
-			error(checker, v, "builtin '%s' expects one argument, got %d", builtin_names[v.builtin], len(args))
+			error(checker, v, "builtin '%s' expects two arguments, got %d", builtin_names[v.builtin], len(args))
 			break
 		}
 		type := op_result_type(args[0].type, args[1].type)
@@ -400,9 +401,10 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 			elem = type_array_elem(type)
 		}
 		if elem.kind == .Invalid || elem.kind != .Float {
-			error(checker, v, "builtin '%s' expects a float or vector, got %v", builtin_names[v.builtin], type)
+			error(checker, v, "builtin '%s' expect two floats or vectors, got %v", builtin_names[v.builtin], type)
 			return
 		}
+		type                 = default_type(type)
 		v.args[0].value.type = type
 		v.args[1].value.type = type
 		operand.type         = type

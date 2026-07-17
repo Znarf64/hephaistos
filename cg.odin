@@ -1128,7 +1128,7 @@ cg_type_internal :: proc(
 		}
 	case .Array:
 		type := type.variant.(^Type_Array)
-		if type.count >= 2 && type.count <= 4 && (type_is_numeric(type.elem) || type_is_bool(type.elem)) {
+		if cg_array_can_be_vector(type) {
 			info.type = spv.OpTypeVector(type_builder, cg_type(ctx, type.elem).type, u32(type.count))
 		} else {
 			info.type = spv.OpTypeArray(type_builder, cg_type(ctx, type.elem).type, cg_constant(ctx, i64(type.count), nil).id)
@@ -2088,10 +2088,17 @@ cg_cast :: proc(
 	unreachable()
 }
 
+@(require_results)
 spv_version :: proc(major, minor: u32) -> u32 {
 	return (major << 16) | (minor << 8)
 }
 
+@(require_results)
+cg_array_can_be_vector :: proc(type: ^Type_Array) -> bool {
+	return type.count >= 2 && type.count <= 4 && (type_is_numeric(type.elem) || type_is_bool(type.elem))
+}
+
+@(require_results)
 cg_expr_internal :: proc(
 	ctx:     ^Context,
 	builder: ^spv.Builder,
@@ -2340,6 +2347,79 @@ cg_expr_internal :: proc(
 				y := cg_expr(ctx, builder, v.args[0].value).id
 				x := cg_expr(ctx, builder, v.args[1].value).id
 				return { id = spv_glsl.OpAtan2(builder, ti.type, y, x), }
+			case .Copy_Sign:
+				y := cg_expr(ctx, builder, v.args[0].value).id
+				x := cg_expr(ctx, builder, v.args[1].value).id
+
+				is_array: bool
+
+				elem := v.type
+				n: i64
+				if elem.kind == .Array {
+					a       := elem.variant.(^Type_Array)
+					n        = a.count
+					elem     = a.elem
+					is_array = !cg_array_can_be_vector(a)
+				}
+
+				unsigned: ^Type
+				switch elem.size {
+				case 1:
+					unsigned = t_u8
+				case 2:
+					unsigned = t_u16
+				case 4:
+					unsigned = t_u32
+				case 8:
+					unsigned = t_u64
+				case:
+					unreachable()
+				}
+
+				if n != 0 && !is_array {
+					unsigned = type_array_new(unsigned, n, context.temp_allocator)
+				}
+
+				unsigned_id := cg_type(ctx, unsigned).type
+
+				bits           := elem.size * 8
+				sign_mask      := cg_cast(ctx, builder, cg_constant(ctx, (i64(1) << uint(bits - 1)) - 1, unsigned), unsigned)
+				magnitute_mask := cg_cast(ctx, builder, cg_constant(ctx, (i64(1) << uint(bits - 1)),     unsigned), unsigned)
+
+				if is_array {
+					// TODO: emit a loop
+					elem_id := cg_type(ctx, elem).type
+
+					values := make([]spv.Id, n, context.temp_allocator)
+					for i in 0 ..< n {
+						x := spv.OpCompositeExtract(builder, elem_id, x, u32(i))
+						y := spv.OpCompositeExtract(builder, elem_id, y, u32(i))
+
+						x = spv.OpBitcast(builder, unsigned_id, x)
+						y = spv.OpBitcast(builder, unsigned_id, y)
+
+						r := spv.OpIAdd(
+							builder,
+							unsigned_id,
+							spv.OpBitwiseAnd(builder, unsigned_id, x, sign_mask),
+							spv.OpBitwiseAnd(builder, unsigned_id, y, magnitute_mask),
+						)
+						values[i] = spv.OpBitcast(builder, elem_id, r)
+					}
+					return { id = spv.OpCompositeConstruct(builder, ti.type, ..values), }
+				} else {
+					x = spv.OpBitcast(builder, unsigned_id, x)
+					y = spv.OpBitcast(builder, unsigned_id, y)
+
+					r := spv.OpIAdd(
+						builder,
+						unsigned_id,
+						spv.OpBitwiseAnd(builder, unsigned_id, x, sign_mask),
+						spv.OpBitwiseAnd(builder, unsigned_id, y, magnitute_mask),
+					)
+
+					return { id = spv.OpBitcast(builder, ti.type, r), }
+				}
 			case .Exp:
 				return { id = spv_glsl.OpExp(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Log:

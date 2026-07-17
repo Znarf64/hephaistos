@@ -200,6 +200,7 @@ Builtin_Id :: enum {
 	Inverse_Sqrt,
 	Abs,
 	Sign,
+	Copy_Sign,
 	Card,
 
 	Smooth_Step,
