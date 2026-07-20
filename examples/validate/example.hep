@@ -117,7 +117,7 @@ when SHADOW_PASS {
 	) {
 		b := some_buffer[69]
 
-		img[0] = 1
+		// img[0].rg += 1
 		texel := img[0]
 
 		v_normal := normalize(v_normal)

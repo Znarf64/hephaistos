@@ -1412,69 +1412,75 @@ cg_proc_lit :: proc(ctx: ^Context, p: ^Expr_Proc_Lit, shader_stage: Shader_Stage
 }
 
 @(require_results)
-cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Cg_Value) -> spv.Id {
-	if len(value.swizzle) != 0 {
-		id := value.id
-		if value.storage_class != .By_Value {
-			id = spv.OpLoad(builder, cg_type(ctx, value.real_type).type, value.id)
-		}
-		return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, id, id, ..value.swizzle)
-	}
-	if value.explicit_layout && type_is_struct(value.type) {
-		type    := value.type.variant.(^Type_Struct)
-		members := make([dynamic]spv.Id, 0, len(type.fields), context.temp_allocator)
-		// TODO: handle members that are structs
-		for f, i in type.fields {
-			field_ti  := cg_type(ctx, f.type)
-			field_ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, field_ti, value.storage_class), value.id, cg_constant(ctx, i64(i), nil).id)
-			if value.storage_class == .Physical_Storage_Buffer {
-				append(&members, spv.OpLoad(builder, field_ti.type, field_ptr, spv.MemoryAccess{ .Aligned, }, u32(f.type.align)))
-			} else {
-				append(&members, spv.OpLoad(builder, field_ti.type, field_ptr))
+cg_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Cg_Value, ignore_swizzle := false) -> spv.Id {
+	_deref :: proc(ctx: ^Context, builder: ^spv.Builder, value: Cg_Value) -> spv.Id {
+		if value.explicit_layout && type_is_struct(value.type) {
+			type    := value.type.variant.(^Type_Struct)
+			members := make([dynamic]spv.Id, 0, len(type.fields), context.temp_allocator)
+			// TODO: handle members that are structs
+			for f, i in type.fields {
+				field_ti  := cg_type(ctx, f.type)
+				field_ptr := spv.OpAccessChain(builder, cg_type_ptr(ctx, field_ti, value.storage_class), value.id, cg_constant(ctx, i64(i), nil).id)
+				if value.storage_class == .Physical_Storage_Buffer {
+					append(&members, spv.OpLoad(builder, field_ti.type, field_ptr, spv.MemoryAccess{ .Aligned, }, u32(f.type.align)))
+				} else {
+					append(&members, spv.OpLoad(builder, field_ti.type, field_ptr))
+				}
 			}
+			return spv.OpCompositeConstruct(builder, cg_type(ctx, value.type).type, ..members[:])
 		}
-		return spv.OpCompositeConstruct(builder, cg_type(ctx, value.type).type, ..members[:])
-	}
-	#partial switch value.storage_class {
-	case .Image:
-		ctx.capabilities[.StorageImageReadWithoutFormat] = {}
+		#partial switch value.storage_class {
+		case .Image:
+			ctx.capabilities[.StorageImageReadWithoutFormat] = {}
 
-		texel_type: ^Type
-		vector_len: i64
-		if type_is_numeric(value.type) {
-			vector_len = 1
-			texel_type = type_array_new(value.type, 4, context.temp_allocator)
-		} else if type_is_array(value.type) {
-			vector_len = type_array_len(value.type)
-			if vector_len == 4 {
-				texel_type = value.type
+			texel_type: ^Type
+			vector_len: i64
+			if type_is_numeric(value.type) {
+				vector_len = 1
+				texel_type = type_array_new(value.type, 4, context.temp_allocator)
+			} else if type_is_array(value.type) {
+				vector_len = type_array_len(value.type)
+				if vector_len == 4 {
+					texel_type = value.type
+				} else {
+					texel_type = type_array_new(type_array_elem(value.type), 4, context.temp_allocator)
+				}
 			} else {
-				texel_type = type_array_new(type_array_elem(value.type), 4, context.temp_allocator)
+				panic("")
 			}
-		} else {
-			panic("")
-		}
-		texel := spv.OpImageRead(builder, cg_type(ctx, texel_type).type, value.id, value.coord)
-		switch vector_len {
-		case 1:
-			return spv.OpCompositeExtract(builder, cg_type(ctx, value.type).type, texel, 0)
-		case 2:
-			indices := [2]u32{ 0, 1, }
-			return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, texel, texel, ..indices[:])
-		case 3:
-			indices := [3]u32{ 0, 1, 2, }
-			return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, texel, texel, ..indices[:])
-		case 4:
+			texel := spv.OpImageRead(builder, cg_type(ctx, texel_type).type, value.id, value.coord)
+			switch vector_len {
+			case 1:
+				return spv.OpCompositeExtract(builder, cg_type(ctx, value.type).type, texel, 0)
+			case 2:
+				indices := [2]u32{ 0, 1, }
+				return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, texel, texel, ..indices[:])
+			case 3:
+				indices := [3]u32{ 0, 1, 2, }
+				return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, texel, texel, ..indices[:])
+			case 4:
+				return texel
+			}
 			return texel
+		case .By_Value:
+			return value.id
+		case .Physical_Storage_Buffer:
+			return spv.OpLoad(builder, cg_type(ctx, value.type).type, value.id, spv.MemoryAccess { .Aligned, }, u32(value.type.align))
+		case:
+			return spv.OpLoad(builder, cg_type(ctx, value.type).type, value.id)
 		}
-		return texel
-	case .By_Value:
-		return value.id
-	case .Physical_Storage_Buffer:
-		return spv.OpLoad(builder, cg_type(ctx, value.type).type, value.id, spv.MemoryAccess { .Aligned, }, u32(value.type.align))
-	case:
-		return spv.OpLoad(builder, cg_type(ctx, value.type).type, value.id)
 	}
+
+	if len(value.swizzle) == 0 {
+		return _deref(ctx, builder, value)
+	}
+	v     := value
+	v.type = value.real_type
+	id    := _deref(ctx, builder, v)
+	if ignore_swizzle {
+		return id
+	}
+	return spv.OpVectorShuffle(builder, cg_type(ctx, value.type).type, id, id, ..value.swizzle)
 }
 
 @(require_results)
@@ -3305,6 +3311,7 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^Ast_Stmt, global :=
 				lhs := cg_expr(ctx, builder, v.lhs[lhs_i], deref = false)
 
 				if type, ok := lhs.type.variant.(^Type_Struct); ok && lhs.explicit_layout {
+					assert(v.op == nil)
 					// TODO: handle members that are structs
 					for f, i in type.fields {
 						assert(f.type.kind != .Struct)
@@ -3320,68 +3327,44 @@ cg_stmt :: proc(ctx: ^Context, builder: ^spv.Builder, stmt: ^Ast_Stmt, global :=
 					continue
 				}
 
+				value: spv.Id
 				if len(lhs.swizzle) != 0 {
-					type := cg_type(ctx, lhs.real_type)
-					elem := cg_type(ctx, type_array_elem(lhs.real_type))
+					unswizzled_lhs := cg_deref(ctx, builder, lhs, ignore_swizzle = true)
 
-					lhs_ptr       := lhs.id
-					storage_class := lhs.storage_class
-					if lhs.storage_class == .Image {
-						lhs_ptr  = spv.OpVariable(&ctx.functions, cg_type_ptr(ctx, type, .Function), .Function)
-						read    := spv.OpImageRead(builder, type.type, lhs.id, lhs.coord)
-						spv.OpStore(builder, lhs_ptr, read)
-						spv.OpName(&ctx.debug_b, lhs_ptr, "__tmp_image_texel")
-
-						storage_class = .Function
+					if v.op == nil {
+						value = cg_cast(ctx, builder, rhs, lhs.type)
+					} else {
+						t: ^Type
+						swizzled_lhs := spv.OpVectorShuffle(builder, cg_type(ctx, lhs.type).type, unswizzled_lhs, unswizzled_lhs, ..lhs.swizzle)
+						value         = cg_expr_binary(ctx, builder, v.op, { id = swizzled_lhs, type = lhs.type, }, rhs, &t)
 					}
 
-					elem_ptr := cg_type_ptr(ctx, elem, storage_class)
-					if len(lhs.swizzle) == 1 {
-						ptr := spv.OpAccessChain(builder, elem_ptr, lhs_ptr, cg_constant(ctx, i64(lhs.swizzle[0]), nil).id)
-						spv.OpStore(builder, ptr, rhs.id)
-					} else {
-						for dst_component, src_component in lhs.swizzle {
-							value := spv.OpCompositeExtract(builder, elem.type, rhs.id, u32(src_component))
-							ptr   := spv.OpAccessChain(builder, elem_ptr, lhs_ptr, cg_constant(ctx, i64(dst_component), nil).id)
-							spv.OpStore(builder, ptr, value)
+					real_type_info := cg_type(ctx, lhs.real_type)
+					elem_type_info := cg_type(ctx, type_array_elem(lhs.real_type))
+					for lhs_component, rhs_component in lhs.swizzle {
+						value := value
+						if len(lhs.swizzle) != 1 {
+							value = spv.OpCompositeExtract(builder, elem_type_info.type, value, u32(rhs_component))
 						}
+						unswizzled_lhs = spv.OpCompositeInsert(builder, real_type_info.type, value, unswizzled_lhs, lhs_component)
 					}
-
-					if lhs.storage_class == .Image {
-						ctx.capabilities[.StorageImageWriteWithoutFormat] = {}
-						spv.OpImageWrite(builder, lhs.id, lhs.coord, spv.OpLoad(builder, type.type, lhs_ptr))
-					}
-
-					continue
-				}
-
-				if lhs.storage_class == .Image {
-					ctx.capabilities[.StorageImageWriteWithoutFormat] = {}
-					spv.OpImageWrite(builder, lhs.id, lhs.coord, rhs.id)
-					continue
-				}
-
-				if v.op == nil {
-					if lhs.storage_class == .Physical_Storage_Buffer {
-						spv.OpStore(builder, lhs.id, cg_cast(ctx, builder, rhs, lhs.type), spv.MemoryAccess{ .Aligned, }, u32(lhs.type.align))
-					} else {
-						spv.OpStore(builder, lhs.id, cg_cast(ctx, builder, rhs, lhs.type))
-					}
-					continue
-				}
-
-				t: ^Type
-				value := cg_expr_binary(
-					ctx,
-					builder,
-					v.op,
-					{ id = cg_deref(ctx, builder, lhs), type = lhs.type, },
-					rhs,
-					&t,
-				)
-				if lhs.storage_class == .Physical_Storage_Buffer {
-					spv.OpStore(builder, lhs.id, value, spv.MemoryAccess{ .Aligned, }, u32(lhs.type.align))
+					value = unswizzled_lhs
 				} else {
+					if v.op == nil {
+						value = cg_cast(ctx, builder, rhs, lhs.type)
+					} else {
+						t: ^Type
+						value = cg_expr_binary(ctx, builder, v.op, { id = cg_deref(ctx, builder, lhs), type = lhs.type, }, rhs, &t)
+					}
+				}
+
+				#partial switch lhs.storage_class {
+				case .Image:
+					ctx.capabilities[.StorageImageWriteWithoutFormat] = {}
+					spv.OpImageWrite(builder, lhs.id, lhs.coord, value)
+				case .Physical_Storage_Buffer:
+					spv.OpStore(builder, lhs.id, value, spv.MemoryAccess{ .Aligned, }, u32(lhs.type.align))
+				case:
 					spv.OpStore(builder, lhs.id, value)
 				}
 			}

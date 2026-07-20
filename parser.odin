@@ -416,7 +416,7 @@ parse_operand :: proc(parser: ^Parser, allow_compound_literals: bool) -> (expr: 
 		token_advance(parser)
 		token_expect(parser, .Open_Bracket, "`fixed`") or_return
 		signed: bool
-		if u, ok := token_allow(parser, .Add); ok {
+		if _, ok := token_allow(parser, .Add); ok {
 			signed = true
 		}
 		bits := token_expect(parser, .Float_Literal, "`fixed`") or_return
