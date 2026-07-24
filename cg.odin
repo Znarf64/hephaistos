@@ -2527,6 +2527,8 @@ cg_expr_internal :: proc(
 				return { id = spv.OpDPdx(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Ddy:
 				return { id = spv.OpDPdy(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
+			case .Fwidth:
+				return { id = spv.OpFwidth(builder, ti.type, cg_expr(ctx, builder, v.args[0].value).id), }
 			case .Discard:
 				spv.OpKill(builder)
 				return { diverging = true, }

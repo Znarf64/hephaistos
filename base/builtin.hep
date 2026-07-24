@@ -62,8 +62,9 @@ image_size   :: proc(i: $I/image[$N]$E)   -> [N]i32 ---
 
 discard :: proc() -> ! ---
 
-ddx :: proc($T) -> T ---
-ddy :: proc($T) -> T ---
+ddx    :: proc($T) -> T ---
+ddy    :: proc($T) -> T ---
+fwidth :: proc($T) -> T ---
 
 size_of  :: proc(T: $typeid) -> int ---
 align_of :: proc(T: $typeid) -> int ---

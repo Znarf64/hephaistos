@@ -219,6 +219,7 @@ Builtin_Id :: enum {
 
 	Ddx,
 	Ddy,
+	Fwidth,
 
 	Size_Of,
 	Align_Of,

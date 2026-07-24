@@ -67,6 +67,7 @@ builtin_names: [Builtin_Id]string = {
 
 	.Ddx                  = "ddx",
 	.Ddy                  = "ddy",
+	.Fwidth               = "fwidth",
 
 	.Size_Of              = "size_of",
 	.Align_Of             = "align_of",
@@ -347,7 +348,7 @@ check_builtin :: proc(checker: ^Checker, v: ^Expr_Call, fn: Operand) -> (operand
 		}
 		operand.type = type_matrix_elem(type)
 		operand.mode = .RValue
-	case .Ddx, .Ddy:
+	case .Ddx, .Ddy, .Fwidth:
 		if checker.shader_stage != .Fragment {
 			error(checker, v, "builtin '%s' can only be used in fragment shaders", builtin_names[v.builtin])
 			break
