@@ -121,10 +121,10 @@ instance_create :: proc() -> (instance: vk.Instance) {
 		pApplicationInfo        = &{
 		    sType              = .APPLICATION_INFO,
 		    pApplicationName   = "Hephaistos Compute Shader Example",
-		    applicationVersion = cast(u32)Vulkan_Version{ major = 1, },
+		    applicationVersion = transmute(u32)Vulkan_Version{ major = 1, },
 		    pEngineName        = "No Engine",
-		    engineVersion      = cast(u32)Vulkan_Version{ major = 1, },
-		    apiVersion         = cast(u32)Vulkan_Version{ major = 1, minor = 4, },
+		    engineVersion      = transmute(u32)Vulkan_Version{ major = 1, },
+		    apiVersion         = transmute(u32)Vulkan_Version{ major = 1, minor = 4, },
 		},
 		ppEnabledExtensionNames = raw_data(extensions),
 		enabledExtensionCount   = u32(len(extensions)),
